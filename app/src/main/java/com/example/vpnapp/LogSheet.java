@@ -61,7 +61,9 @@ public class LogSheet extends BottomSheetDialogFragment {
         String log = DiagLog.dump();
         if (log.isEmpty()) return getString(R.string.log_empty);
         String pt = PtController.logTail();
+        String sf = SnowflakeClient.logTail(requireContext());
         return log + (pt.isEmpty() ? "" : "\n--- IPtProxy ---\n" + pt)
+                + (sf.isEmpty() ? "" : "\n--- Snowflake ---\n" + sf)
                 + "\n--- " + Build.MANUFACTURER + " " + Build.MODEL + ", API " + Build.VERSION.SDK_INT;
     }
 

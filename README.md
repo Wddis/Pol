@@ -4,7 +4,7 @@ Android-приложение: выбираете страну → нажимае
 с выходным узлом в этой стране. Своих серверов нет, используется сеть Tor.
 
 Статус: **этапы 2–5** — Tor внутри приложения, VPN для всего телефона, мосты, журнал диагностики,
-Tor без перезапусков (версия 0.5).
+Tor без перезапусков, свой Snowflake с маскировкой DTLS (версия 0.6).
 
 ## Как это работает
 - Кнопка → системный запрос «Разрешить VPN» → запускается Tor
@@ -34,7 +34,7 @@ Tor без перезапусков (версия 0.5).
 | Режим | Что делает |
 |---|---|
 | **Авто** (по умолчанию) | 1) последний сработавший мост; 2) **Snowflake** (сначала через Google AMP, затем CDN77); 3) **другие мосты сразу**: от Moat, свои, meek — Tor берёт первый ответивший; 4) встроенные obfs4; 5) DNSTT; 6) без мостов. Не прошедшие в этой сети способы (без мостов, obfs4) в следующий раз идут в конце |
-| Snowflake | snowflake через CDN77 и через Google AMP |
+| Snowflake | snowflake через CDN77 и через Google AMP, с маскировкой DTLS (см. ниже) |
 | obfs4 | Встроенные obfs4 (часто заблокированы) |
 | meek | Маскировка под CDN, медленно |
 | DNSTT | Туннель через DNS Google, очень медленно |
@@ -46,6 +46,23 @@ Moat — служба Tor Project, которая выдаёт мосты под
 Moat только при самом первом запуске в сети без блокировок; в остальных случаях Moat
 спрашивается в фоне, и свежие мосты добавляются в план после текущей попытки.
 В России, Беларуси, Китае, Иране, Туркменистане и Мьянме прямое подключение всегда последнее.
+
+### Snowflake с маскировкой DTLS
+С весны 2026 ТСПУ в России узнаёт Snowflake по первому пакету DTLS-рукопожатия (отпечаток JA3/JA4).
+Клиент Snowflake умеет маскировать это рукопожатие под Chrome/Firefox (covert-dtls,
+`covertdtls-config`), но Snowflake внутри IPtProxy этот параметр не читает. Поэтому с версии 0.6
+в APK лежит свой клиент Snowflake Tor Project (`libsnowflake.so`, собирается в CI скриптом
+`scripts/build-snowflake.sh`). Tor запускает его сам (`ClientTransportPlugin snowflake exec …`)
+с `-covertdtls-config randomizemimic` и `-max 3`. Если в строке моста есть свой
+`covertdtls-config=…`, он важнее. Если клиента в APK нет или он не запускается на телефоне,
+берётся Snowflake из IPtProxy — в журнале это видно первой строкой «Snowflake: …».
+Журнал клиента — в конце экрана «ЖУРНАЛ» (блок «Snowflake»); строки Tor вида
+`Managed proxy "snowflake": broker failure …` значат, что не отвечает брокер (сигнальный сервер),
+а не DTLS.
+
+Важно при чтении журнала: с мостами (pluggable transport) Tor пишет 10% «Connected to a relay»,
+как только подключился к **локальному** транспорту, ещё до связи с мостом. «Мост ответил» —
+это строка `ORCONN … CONNECTED`.
 
 Таймауты: пока ни один мост не ответил — 30–120 с (Snowflake 90 с, DNSTT 120 с без роста).
 Как только с мостом прошло рукопожатие, канал считается рабочим, и попытка не обрывается
@@ -102,6 +119,10 @@ APK собирает GitHub Actions после каждого push. Компью
 - minSdk 24, targetSdk 36, compileSdk 37.2.
 - tor-android 0.4.9.14, jtorctl 0.4.5.7, IPtProxy 5.7.0, androidx.webkit 1.18.0,
   hev-socks5-tunnel 2.19.3 (git-сабмодуль `app/src/main/jni/hev-socks5-tunnel`).
+- Клиент Snowflake v2.15.2 (Go, исходники из прокси модулей Go с проверкой по sum.golang.org):
+  `scripts/build-snowflake.sh` собирает `app/src/main/jniLibs/<abi>/libsnowflake.so` через NDK.
+  Локально без Go и NDK можно собирать и без него (тогда Snowflake из IPtProxy).
+  Библиотеки распаковываются из APK (`useLegacyPackaging`), иначе Tor не сможет запустить клиент.
 - Workflow: `.github/workflows/build.yml`.
 
 База GeoIP (`app/src/main/assets/geoip`) — из Tor, данные IPFire Location
@@ -113,7 +134,8 @@ APK собирает GitHub Actions после каждого push. Компью
 2. Tor внутри приложения (tor-android), SOCKS5, выбор страны выхода, проверка IP. ✓
 3. Весь трафик телефона: VpnService + tun2socks, DNS через Tor, kill switch. ✓
 4. Мосты: snowflake, obfs4, webtunnel, meek, Moat, свои мосты. ✓
-5. Tor без перезапусков, Snowflake первым, таймауты по состоянию канала. ✓ (проверяется)
+5. Tor без перезапусков, Snowflake первым, таймауты по состоянию канала. ✓
+6. Свой клиент Snowflake с маскировкой DTLS (covert-dtls). ✓ (проверяется)
 
 ## Как устроен код
 
@@ -135,6 +157,7 @@ APK собирает GitHub Actions после каждого push. Компью
 | `VpnTunnelService.java` | Foreground VpnService: поднимает tun, по очереди выполняет попытки из плана, запускает tun2socks, проверяет IP |
 | `TorController.java` | Один Tor на процесс (`TorService` из tor-android): запуск с выключенной сетью, смена мостов и страны через control port, готовность по `status/circuit-established`, таймауты |
 | `PtController.java` | Мосты через IPtProxy (snowflake, obfs4, webtunnel, meek, dnstt); все вызовы под одной блокировкой |
+| `SnowflakeClient.java` | Свой клиент Snowflake с маскировкой DTLS: проверка запуска, строка `ClientTransportPlugin … exec`, журнал клиента |
 | `ConnectPlan.java` | Порядок способов подключения для выбранного режима |
 | `MoatClient.java` | Запрос рекомендованных мостов у Moat |
 | `BridgeSet.java`, `BridgeParser.java`, `BuiltInBridges.java` | Наборы строк мостов, разбор вставленного текста, встроенные мосты из `assets/builtin-bridges.json` |
@@ -164,7 +187,8 @@ APK собирает GitHub Actions после каждого push. Компью
 
 ## Как продолжить работу в новом чате Claude
 1. Откройте новый чат Claude Code и подключите репозиторий **Wddis/Pol**.
-2. Попросите прочитать этот README и код в ветке `claude/tor-vpn-android-app-9uk713`
-   (или `main`, если pull request уже влит).
+2. Попросите прочитать этот README и код в рабочей ветке (последняя — та, где лежит версия 0.6;
+   или `main`, если pull request уже влит).
 3. Опишите задачу своими словами и приложите свежий журнал из приложения («ЖУРНАЛ» → «КОПИРОВАТЬ»).
-4. Сборка: любой push запускает GitHub Actions, APK — в Artifacts как `vpn-app-debug`.
+4. Сборка: push в `main` и `claude/**` запускает GitHub Actions; для других веток —
+   Actions → Build APK → Run workflow с выбором ветки. APK — в Artifacts как `vpn-app-debug`.

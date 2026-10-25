@@ -28,10 +28,25 @@ jobs:
       # NDK для tun2socks: Android Gradle Plugin сам ставит нужную версию
       # через sdkmanager, если её нет на раннере.
 
+      # Свой клиент Snowflake с маскировкой DTLS (covert-dtls): Go + NDK раннера
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: '1.26'
+          cache: false
+
+      - name: Build Snowflake client
+        run: bash scripts/build-snowflake.sh
+
       - name: Build debug APK
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
+
+      - name: Check Snowflake client in APK
+        run: |
+          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep libsnowflake.so
+          test "$(unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -c libsnowflake.so)" -eq 2
 
       - name: Upload APK
         uses: actions/upload-artifact@v7

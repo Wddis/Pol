@@ -8,3 +8,5 @@ local.properties
 captures/
 .cxx/
 .externalNativeBuild/
+# Собирается в CI: scripts/build-snowflake.sh
+/app/src/main/jniLibs/

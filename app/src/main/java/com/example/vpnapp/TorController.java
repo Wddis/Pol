@@ -75,6 +75,8 @@ final class TorController {
     private static final Pattern TAG_NAME = Pattern.compile("TAG=(\\S+)");
     private static final Pattern FIRST_HOP = Pattern.compile(" BUILT \\$([0-9A-Fa-f]{40})");
     private static final Pattern PORT = Pattern.compile(":(\\d+)\"?(\\s|$)");
+    // Путь к своему клиенту Snowflake в сообщениях Tor: в журнале достаточно имени
+    private static final Pattern PT_PATH = Pattern.compile("/\\S*/lib(\\w+)\\.so");
 
     // ---------- Общее для процесса: один Tor ----------
 
@@ -133,7 +135,8 @@ final class TorController {
             }
             return;
         }
-        DiagLog.add("tor " + keyword + ": " + data);
+        DiagLog.add("tor " + keyword + ": "
+                + (data != null ? PT_PATH.matcher(data).replaceAll("$1") : null));
     };
 
     private static void onTorDied() {

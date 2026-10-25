@@ -23,7 +23,8 @@ import IPtProxy.OnTransportEvents;
 
 /**
  * Pluggable transports (IPtProxy): локальные SOCKS-прокси obfs4, snowflake, webtunnel, meek, dnstt.
- * Tor подключается к ним через ClientTransportPlugin.
+ * Tor подключается к ним через ClientTransportPlugin. Snowflake — свой клиент с маскировкой DTLS
+ * (SnowflakeClient), если он есть в APK.
  */
 final class PtController {
 
@@ -62,7 +63,10 @@ final class PtController {
             return torrc;
         }
         String snowflake = set.firstLine(IPtProxy.Snowflake);
-        if (snowflake != null) {
+        // Свой клиент Snowflake с маскировкой DTLS, если он есть в APK; иначе — IPtProxy
+        String snowflakeExec = snowflake != null
+                ? SnowflakeClient.torrcLine(context, SNOWFLAKE_PEERS) : null;
+        if (snowflake != null && snowflakeExec == null) {
             synchronized (LOCK) {
                 configureSnowflake(controller(context), snowflake);
             }
@@ -70,11 +74,13 @@ final class PtController {
 
         Map<String, Long> ports = new LinkedHashMap<>();
         for (String transport : set.transports()) {
+            if (snowflakeExec != null && IPtProxy.Snowflake.equals(transport)) continue;
             long port = acquire(transport);
             if (port <= 0 || port > 65535) throw new IllegalStateException("No port for " + transport);
             ports.put(transport, port);
         }
         torrc.add("UseBridges 1");
+        if (snowflakeExec != null) torrc.add(snowflakeExec);
         for (Map.Entry<String, Long> e : ports.entrySet()) {
             torrc.add("ClientTransportPlugin " + e.getKey() + " socks5 127.0.0.1:" + e.getValue());
         }
