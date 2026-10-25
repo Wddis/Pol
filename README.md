@@ -3,13 +3,13 @@
 Android-приложение: выбираете страну → нажимаете кнопку → трафик идёт через Tor
 с выходным узлом в этой стране. Своих серверов нет, используется сеть Tor.
 
-Статус: **этапы 2–3** — Tor внутри приложения и VPN для всего телефона.
+Статус: **этапы 2–4** — Tor внутри приложения, VPN для всего телефона, мосты.
 
 ## Как это работает
 - Кнопка → системный запрос «Разрешить VPN» → запускается Tor
   (`info.guardianproject:tor-android`) с `ExitNodes {страна}` и `StrictNodes 1`.
 - Пока Tor загружается (до 100%), VPN уже поднят и **блокирует** трафик,
-  чтобы ничего не ушло мимо Tor. Таймаут — 60 секунд.
+  чтобы ничего не ушло мимо Tor.
 - Весь TCP-трафик телефона: VPN-интерфейс → tun2socks
   ([hev-socks5-tunnel](https://github.com/heiher/hev-socks5-tunnel), собирается
   через NDK) → SOCKS5 Tor.
@@ -22,11 +22,27 @@ Android-приложение: выбираете страну → нажимае
   для ODA «Постоянная VPN» и «Блокировать соединения без VPN».
 - «Проверить в браузере» — встроенный WebView через Tor (check.torproject.org).
 
+## Мосты (если Tor заблокирован)
+Если провайдер блокирует Tor, прогресс застревает на 5–15%. Тогда нужны мосты
+([IPtProxy](https://github.com/tladesignz/IPtProxy): snowflake, obfs4, webtunnel, meek).
+Кнопка «МОСТЫ» внизу экрана:
+
+| Режим | Что делает |
+|---|---|
+| **Авто** (по умолчанию) | Последний рабочий способ → мосты от Moat (Tor Project подбирает рабочие для вашей сети, запрос идёт через meek) → snowflake → obfs4 → meek → без мостов. Если прогресс стоит 60 с, переходит к следующему |
+| Snowflake | Только snowflake |
+| obfs4 | Встроенные obfs4 (часто заблокированы) |
+| meek | Маскировка под CDN, медленно |
+| Свои мосты | Строки из Telegram-бота **@GetBridgesBot** или с bridges.torproject.org (лучше webtunnel/obfs4) |
+| Без мостов | Прямое подключение |
+
+Под кнопкой видно, какой способ пробуется: «2/7 Snowflake · Tor 35%».
+
 ### Ограничения
-- Если провайдер блокирует Tor, подключение не дойдёт до 100% — нужны мосты
-  (obfs4/snowflake), они будут добавлены отдельно.
 - В странах с малым числом выходных узлов (JP, FI, CH) подключение медленнее.
 - Многие сайты показывают капчу или блокируют Tor.
+- Если оператор включил «белые списки» (мобильный интернет только к разрешённым
+  сайтам), не поможет ни один мост.
 
 ## Как получить APK на телефоне
 
@@ -66,15 +82,16 @@ APK собирает GitHub Actions после каждого push. Компью
 - Gradle 9.8.2 (wrapper), Android Gradle Plugin 9.4.1. Исходники — Java 17,
   сборка в CI на JDK 25 (библиотека tor-android 0.4.9.14 собрана под Java 24+).
 - minSdk 24, targetSdk 36, compileSdk 37.2.
-- tor-android 0.4.9.14, jtorctl 0.4.5.7, androidx.webkit 1.18.0,
+- tor-android 0.4.9.14, jtorctl 0.4.5.7, IPtProxy 5.7.0, androidx.webkit 1.18.0,
   hev-socks5-tunnel 2.19.3 (git-сабмодуль `app/src/main/jni/hev-socks5-tunnel`).
 - Workflow: `.github/workflows/build.yml`.
 
 База GeoIP (`app/src/main/assets/geoip`) — из Tor, данные IPFire Location
-(CC BY-SA 4.0).
+(CC BY-SA 4.0). Встроенные мосты (`assets/builtin-bridges.json`) — список Tor Project
+(тот же, что в Tor Browser и Orbot).
 
 ## Этапы
 1. Каркас и интерфейс без сети. ✓
-2. Tor внутри приложения (tor-android), SOCKS5, выбор страны выхода, проверка IP. ← сейчас
-3. Весь трафик телефона: VpnService + tun2socks, DNS через Tor, kill switch. ← сейчас
-4. Мосты obfs4 / snowflake (позже).
+2. Tor внутри приложения (tor-android), SOCKS5, выбор страны выхода, проверка IP. ✓
+3. Весь трафик телефона: VpnService + tun2socks, DNS через Tor, kill switch. ✓
+4. Мосты: snowflake, obfs4, webtunnel, meek, Moat, свои мосты. ✓

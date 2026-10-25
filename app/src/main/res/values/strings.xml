@@ -14,12 +14,15 @@
     <string name="detail_bootstrap">Tor %1$d%%</string>
     <string name="detail_checking">Проверка IP…</string>
     <string name="detail_switching">Смена страны…</string>
+    <string name="detail_moat">Поиск рабочих мостов…</string>
+    <string name="detail_attempt">%1$d/%2$d %3$s</string>
     <string name="detail_ip">IP %1$s · %2$s</string>
     <string name="detail_ip_unknown">Tor работает, IP не определён</string>
 
     <!-- Ссылки -->
     <string name="link_check">ПРОВЕРИТЬ В БРАУЗЕРЕ</string>
     <string name="link_kill_switch">KILL SWITCH</string>
+    <string name="link_bridges">МОСТЫ: %1$s</string>
     <string name="kill_switch_hint">Включите для ODA «Постоянная VPN» и «Блокировать соединения без VPN»</string>
 
     <!-- Ошибки -->
@@ -27,12 +30,32 @@
     <string name="error_vpn_other">Другая VPN мешает запуску. Отключите её в настройках</string>
     <string name="error_tun">Не удалось создать VPN-интерфейс</string>
     <string name="error_tun2socks">Не удалось запустить туннель</string>
-    <string name="error_timeout">Tor не подключился за 60 с. Попробуйте другую страну или позже</string>
+    <string name="error_timeout">Tor не подключился вовремя</string>
+    <string name="error_blocked">Tor заблокирован в вашей сети. Откройте «МОСТЫ» → «Свои мосты» и вставьте мосты из @GetBridgesBot</string>
+    <string name="error_no_custom_bridges">Добавьте свои мосты в «МОСТЫ» или выберите «Авто»</string>
     <string name="error_tor_stopped">Tor неожиданно остановился</string>
     <string name="error_tor_start">Не удалось запустить Tor</string>
     <string name="error_country">Не удалось сменить страну</string>
     <string name="error_foreground">Система не дала запустить VPN в фоне</string>
     <string name="error_revoked">VPN отключён системой</string>
+
+    <!-- Режимы мостов -->
+    <string name="bridges_title">Мосты</string>
+    <string name="mode_auto">Авто</string>
+    <string name="mode_auto_hint">Подбирает рабочий способ сам. Рекомендуется</string>
+    <string name="mode_snowflake">Snowflake</string>
+    <string name="mode_snowflake_hint">Через браузеры добровольцев, обходит большинство блокировок</string>
+    <string name="mode_obfs4">obfs4</string>
+    <string name="mode_obfs4_hint">Встроенные мосты Tor, часто заблокированы</string>
+    <string name="mode_meek">meek</string>
+    <string name="mode_meek_hint">Маскировка под CDN, медленно, но надёжно</string>
+    <string name="mode_custom">Свои мосты</string>
+    <string name="mode_custom_hint">obfs4 или webtunnel из @GetBridgesBot</string>
+    <string name="mode_direct">Без мостов</string>
+    <string name="mode_direct_hint">Только если Tor не заблокирован</string>
+    <string name="bridges_input_hint">obfs4 1.2.3.4:443 ABCD… cert=… iat-mode=0</string>
+    <string name="bridges_where">Получить мосты: Telegram-бот @GetBridgesBot или bridges.torproject.org (тип webtunnel или obfs4). По одной строке на мост</string>
+    <string name="bridges_save">СОХРАНИТЬ</string>
 
     <!-- Уведомление -->
     <string name="notif_channel">VPN</string>

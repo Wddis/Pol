@@ -1,6 +1,7 @@
 package com.example.vpnapp;
 
 import android.app.Notification;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
@@ -9,30 +10,42 @@ import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.ParcelFileDescriptor;
+import android.telephony.TelephonyManager;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
 import androidx.core.app.ServiceCompat;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 
 /**
  * VPN: весь трафик телефона → tun → tun2socks → SOCKS5 Tor.
- * Вся работа идёт в отдельном потоке worker, UI узнаёт о состоянии через StatusBus.
+ * Если Tor заблокирован, по очереди пробуются мосты (см. ConnectPlan).
+ * Вся логика идёт в потоке worker, UI узнаёт о состоянии через StatusBus.
  */
 public class VpnTunnelService extends VpnService implements TorController.Listener {
 
     public static final String ACTION_START = "com.example.vpnapp.action.START";
     public static final String ACTION_STOP = "com.example.vpnapp.action.STOP";
     public static final String ACTION_COUNTRY = "com.example.vpnapp.action.COUNTRY";
+    public static final String ACTION_RECONNECT = "com.example.vpnapp.action.RECONNECT";
 
     private static final String TAG = "VpnTunnelService";
     private static final int IP_CHECK_ATTEMPTS = 2;
+    // Без мостов: 60 с на подключение, при застревании прогресса — 40 с
+    private static final long DIRECT_STALL_MS = 40_000;
+    private static final long DIRECT_HARD_MS = 60_000;
+    // Мосты (особенно snowflake) загружаются дольше
+    private static final long BRIDGE_STALL_MS = 60_000;
+    private static final long BRIDGE_HARD_MS = 150_000;
 
     private HandlerThread thread;
     private Handler worker;
     private TorController tor;
+    private PtController pt;
     private Prefs prefs;
 
     // Поля ниже меняются только в потоке worker
@@ -40,7 +53,9 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     private boolean active;
     private boolean tunnelRunning;
     private int socksPort;
-    private int generation;  // защита от устаревших результатов проверки IP
+    private int generation;  // отсекает устаревшие результаты фоновых задач
+    private List<BridgeSet> plan = new ArrayList<>();
+    private int attempt;
 
     @Override
     public void onCreate() {
@@ -50,6 +65,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         thread.start();
         worker = new Handler(thread.getLooper());
         tor = new TorController(this, worker);
+        pt = new PtController(this);
         VpnNotification.ensureChannel(this);
     }
 
@@ -68,6 +84,8 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         }
         if (ACTION_COUNTRY.equals(action)) {
             worker.post(this::changeCountry);
+        } else if (ACTION_RECONNECT.equals(action)) {
+            worker.post(this::reconnect);
         } else {
             // ACTION_START или запуск системой («Постоянная VPN»)
             worker.post(this::connect);
@@ -102,8 +120,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     private void connect() {
         if (active) return;
         active = true;
-        generation++;
-        publish(ConnectionState.CONNECTING, getString(R.string.detail_bootstrap, 0), "");
+        int gen = ++generation;
         // Интерфейс поднимаем сразу: пока Tor не готов, трафик блокируется, а не уходит мимо
         try {
             tun = establishTun();
@@ -112,7 +129,78 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
             fail(R.string.error_tun);
             return;
         }
-        tor.start(prefs.getCountry(), this);
+        if (!ConnectPlan.needsMoat(prefs.getMode())) {
+            startPlan(ConnectPlan.build(this, prefs, null));
+            return;
+        }
+        // Режим «Авто»: спрашиваем у Moat, какие мосты работают в этой сети
+        publish(ConnectionState.CONNECTING, getString(R.string.detail_moat), "");
+        Context app = getApplicationContext();
+        String country = networkCountry();
+        new Thread(() -> {
+            MoatClient.Result moat = null;
+            try {
+                moat = MoatClient.fetch(new PtController(app), country);
+                if (!moat.sets.isEmpty()) prefs.setMoatCache(moat.sets);
+            } catch (Exception e) {
+                Log.w(TAG, "moat: " + e);
+            }
+            MoatClient.Result result = moat;
+            worker.post(() -> {
+                if (!active || gen != generation) return;
+                startPlan(ConnectPlan.build(this, prefs, result));
+            });
+        }, "oda-moat").start();
+    }
+
+    private void reconnect() {
+        if (active) teardown();
+        connect();
+    }
+
+    private void startPlan(List<BridgeSet> newPlan) {
+        if (newPlan.isEmpty()) {
+            fail(prefs.getMode() == BridgeMode.CUSTOM
+                    ? R.string.error_no_custom_bridges : R.string.error_tor_start);
+            return;
+        }
+        plan = newPlan;
+        attempt = 0;
+        startAttempt();
+    }
+
+    /** Запуск Tor с текущим способом из плана. */
+    private void startAttempt() {
+        generation++;
+        socksPort = 0;
+        stopTunnel();
+        BridgeSet set = plan.get(attempt);
+        publish(ConnectionState.CONNECTING, progressText(0), "");
+        List<String> bridgeTorrc;
+        try {
+            bridgeTorrc = pt.start(set);
+        } catch (Exception e) {
+            Log.w(TAG, "pt " + set.label + ": " + e);
+            nextAttempt(R.string.error_tor_start);
+            return;
+        }
+        boolean direct = set.isDirect();
+        tor.start(prefs.getCountry(), bridgeTorrc,
+                direct ? DIRECT_STALL_MS : BRIDGE_STALL_MS,
+                direct ? DIRECT_HARD_MS : BRIDGE_HARD_MS, this);
+    }
+
+    private void nextAttempt(int lastError) {
+        tor.stop();
+        pt.stop();
+        attempt++;
+        if (attempt < plan.size()) {
+            startAttempt();
+            return;
+        }
+        // Ничего не сработало: сбрасываем «последний рабочий» способ
+        prefs.setLastGood(null);
+        fail(lastError == R.string.error_timeout ? R.string.error_blocked : lastError);
     }
 
     private void changeCountry() {
@@ -120,38 +208,51 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
             connect();
             return;
         }
-        generation++;
-        publish(ConnectionState.CONNECTING, getString(R.string.detail_switching), "");
         if (socksPort == 0) {
-            // Tor ещё загружается: просто перезапускаем с новой страной
-            tor.start(prefs.getCountry(), this);
+            // Tor ещё загружается: перезапускаем текущий способ с новой страной
+            if (!plan.isEmpty()) startAttempt();
             return;
         }
-        if (!tor.setCountry(prefs.getCountry())) {
-            fail(R.string.error_country);
-            return;
-        }
-        // Перезапуск туннеля обрывает старые соединения, новые пойдут через новую страну
-        stopTunnel();
-        if (!startTunnel()) return;
-        checkIp(generation);
+        int gen = ++generation;
+        publish(ConnectionState.CONNECTING, getString(R.string.detail_switching), "");
+        String country = prefs.getCountry();
+        new Thread(() -> {
+            boolean ok = tor.setCountry(country);
+            worker.post(() -> {
+                if (!active || gen != generation) return;
+                if (!ok) {
+                    fail(R.string.error_country);
+                    return;
+                }
+                // Перезапуск туннеля обрывает старые соединения, новые пойдут через новую страну
+                stopTunnel();
+                if (startTunnel()) checkIp();
+            });
+        }, "oda-country").start();
     }
 
     @Override
     public void onProgress(int percent) {
-        publish(ConnectionState.CONNECTING, getString(R.string.detail_bootstrap, percent), "");
+        publish(ConnectionState.CONNECTING, progressText(percent), "");
     }
 
     @Override
     public void onReady(int port) {
         socksPort = port;
-        if (!startTunnel()) return;
-        checkIp(generation);
+        // Запоминаем рабочий способ, в следующий раз он пойдёт первым
+        if (prefs.getMode() == BridgeMode.AUTO && attempt < plan.size()) {
+            prefs.setLastGood(plan.get(attempt));
+        }
+        if (startTunnel()) checkIp();
     }
 
     @Override
-    public void onError(int messageRes) {
-        fail(messageRes);
+    public void onError(int messageRes, boolean retry) {
+        if (retry) {
+            nextAttempt(messageRes);
+        } else {
+            fail(messageRes);
+        }
     }
 
     private boolean startTunnel() {
@@ -179,8 +280,9 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         }
     }
 
-    /** Проверка IP и страны выхода; сетевой запрос в фоне, повтор при неудаче. */
-    private void checkIp(int gen) {
+    /** Проверка IP и страны выхода в фоне, с повтором при неудаче. */
+    private void checkIp() {
+        int gen = ++generation;
         publish(ConnectionState.CONNECTING, getString(R.string.detail_checking), "");
         int port = socksPort;
         new Thread(() -> {
@@ -192,23 +294,45 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
                     Log.w(TAG, "ip check: " + e);
                 }
             }
+            String cc = ip != null ? tor.countryOf(ip) : null;
             String exitIp = ip;
-            worker.post(() -> onIpChecked(gen, exitIp));
+            worker.post(() -> onIpChecked(gen, exitIp, cc));
         }, "oda-ipcheck").start();
     }
 
-    private void onIpChecked(int gen, @Nullable String ip) {
+    private void onIpChecked(int gen, @Nullable String ip, @Nullable String cc) {
         if (!active || gen != generation) return;
         String detail;
         if (ip != null) {
-            String cc = tor.countryOf(ip);
             String code = cc != null && !cc.isEmpty() && !"??".equals(cc)
                     ? cc.toUpperCase(Locale.ROOT) : prefs.getCountry();
             detail = getString(R.string.detail_ip, ip, Country.nameOf(this, code));
         } else {
             detail = getString(R.string.detail_ip_unknown);
         }
+        BridgeSet set = attempt < plan.size() ? plan.get(attempt) : null;
+        if (set != null && !set.isDirect()) detail = set.label + " · " + detail;
         publish(ConnectionState.ON, detail, "");
+    }
+
+    private String progressText(int percent) {
+        String tor = getString(R.string.detail_bootstrap, percent);
+        if (plan.isEmpty() || attempt >= plan.size()) return tor;
+        String label = plan.get(attempt).label;
+        if (plan.size() > 1) {
+            label = getString(R.string.detail_attempt, attempt + 1, plan.size(), label);
+        }
+        return label + " · " + tor;
+    }
+
+    /** Код страны сети оператора (подсказка для Moat), без разрешений. */
+    @Nullable
+    private String networkCountry() {
+        TelephonyManager tm = (TelephonyManager) getSystemService(TELEPHONY_SERVICE);
+        if (tm == null) return null;
+        String cc = tm.getNetworkCountryIso();
+        if (cc == null || cc.isEmpty()) cc = tm.getSimCountryIso();
+        return cc == null || cc.isEmpty() ? null : cc;
     }
 
     private ParcelFileDescriptor establishTun() throws IOException {
@@ -223,7 +347,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
                 .addRoute("::", 0)
                 .setConfigureIntent(VpnNotification.openApp(this));
         try {
-            // Само приложение (и Tor внутри него) ходит в сеть напрямую
+            // Само приложение (Tor и мосты внутри него) ходит в сеть напрямую
             b.addDisallowedApplication(getPackageName());
         } catch (PackageManager.NameNotFoundException e) {
             throw new IOException(e);
@@ -252,8 +376,11 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         active = false;
         generation++;
         tor.stop();
+        pt.stop();
         stopTunnel();
         socksPort = 0;
+        plan = new ArrayList<>();
+        attempt = 0;
         if (tun != null) {
             try {
                 tun.close();

@@ -27,6 +27,8 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import java.util.Locale;
+
 /** Единственный экран: выбор страны, кнопка, статус. Состояние приходит из StatusBus. */
 public class MainActivity extends AppCompatActivity implements StatusBus.Listener {
 
@@ -42,6 +44,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private TextView detailsView;
     private TextView errorView;
     private TextView checkLink;
+    private TextView bridgesLink;
     private TextView countryCodeView;
     private TextView countryNameView;
 
@@ -73,11 +76,13 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         detailsView = findViewById(R.id.details);
         errorView = findViewById(R.id.error);
         checkLink = findViewById(R.id.checkLink);
+        bridgesLink = findViewById(R.id.bridgesLink);
         countryCodeView = findViewById(R.id.countryCode);
         countryNameView = findViewById(R.id.countryName);
 
         applyInsets(root);
         showCountry();
+        showBridgeMode();
 
         findViewById(R.id.countryRow).setOnClickListener(v -> openPicker());
         powerButton.setOnClickListener(v -> {
@@ -86,11 +91,21 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         });
         checkLink.setOnClickListener(v -> startActivity(new Intent(this, BrowserActivity.class)));
         findViewById(R.id.killSwitch).setOnClickListener(v -> openKillSwitchSettings());
+        bridgesLink.setOnClickListener(v -> openBridges());
 
         getSupportFragmentManager().setFragmentResultListener(
                 CountryPickerSheet.REQUEST_KEY, this, (key, result) -> {
                     String code = result.getString(CountryPickerSheet.RESULT_CODE);
                     if (code != null) onCountryPicked(code);
+                });
+        getSupportFragmentManager().setFragmentResultListener(
+                BridgesSheet.REQUEST_KEY, this, (key, result) -> {
+                    showBridgeMode();
+                    // Новый режим мостов при включённом VPN — переподключение
+                    boolean changed = result.getBoolean(BridgesSheet.RESULT_CHANGED);
+                    if (changed && (state == ConnectionState.ON || state == ConnectionState.CONNECTING)) {
+                        sendToService(VpnTunnelService.ACTION_RECONNECT);
+                    }
                 });
 
         if (savedInstanceState == null) {
@@ -231,6 +246,16 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         Country country = Country.find(this, prefs.getCountry());
         countryCodeView.setText(country.code);
         countryNameView.setText(country.name);
+    }
+
+    private void showBridgeMode() {
+        String mode = getString(prefs.getMode().title).toUpperCase(Locale.ROOT);
+        bridgesLink.setText(getString(R.string.link_bridges, mode));
+    }
+
+    private void openBridges() {
+        if (getSupportFragmentManager().findFragmentByTag(BridgesSheet.TAG) != null) return;
+        new BridgesSheet().show(getSupportFragmentManager(), BridgesSheet.TAG);
     }
 
     private void openPicker() {
