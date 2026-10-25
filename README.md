@@ -63,7 +63,8 @@ APK собирает GitHub Actions после каждого push. Компью
 
 ## Сборка
 - Java, AndroidX, Material Components, без Compose, рекламы и аналитики.
-- Gradle 9.8.2 (wrapper), Android Gradle Plugin 9.4.0, JDK 17.
+- Gradle 9.8.2 (wrapper), Android Gradle Plugin 9.4.1. Исходники — Java 17,
+  сборка в CI на JDK 25 (библиотека tor-android 0.4.9.14 собрана под Java 24+).
 - minSdk 24, targetSdk 36.
 - tor-android 0.4.9.14, jtorctl 0.4.5.7, androidx.webkit 1.18.0,
   hev-socks5-tunnel 2.19.3 (git-сабмодуль `app/src/main/jni/hev-socks5-tunnel`).
