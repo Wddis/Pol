@@ -29,6 +29,14 @@ public final class Country {
         return list;
     }
 
+    /** Название страны по коду; для стран вне списка — сам код. */
+    public static String nameOf(Context context, String code) {
+        for (Country c : all(context)) {
+            if (c.code.equals(code)) return c.name;
+        }
+        return code;
+    }
+
     /** Страна по коду; если код неизвестен — первая в списке. */
     public static Country find(Context context, String code) {
         List<Country> list = all(context);

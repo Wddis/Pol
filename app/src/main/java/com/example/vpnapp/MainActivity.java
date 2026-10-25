@@ -1,44 +1,62 @@
 package com.example.vpnapp;
 
+import android.Manifest;
+import android.content.ActivityNotFoundException;
+import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
+import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
 import androidx.activity.SystemBarStyle;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.NonNull;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
-/** Единственный экран: выбор страны, кнопка, статус. */
-public class MainActivity extends AppCompatActivity {
+/** Единственный экран: выбор страны, кнопка, статус. Состояние приходит из StatusBus. */
+public class MainActivity extends AppCompatActivity implements StatusBus.Listener {
 
-    // Этап 1: подключение имитируется задержкой, сеть не используется
-    private static final long DEMO_CONNECT_MS = 2500;
     private static final long SCREEN_FADE_MS = 500;
     private static final long TEXT_FADE_MS = 150;
-    private static final String KEY_STATE = "state";
-
-    private final Handler handler = new Handler(Looper.getMainLooper());
-    private final Runnable demoConnected = () -> setState(ConnectionState.ON, true);
 
     private Prefs prefs;
     private ConnectionState state = ConnectionState.OFF;
+    private boolean firstStatus = true;
 
     private PowerButtonView powerButton;
     private TextView statusView;
     private TextView detailsView;
     private TextView errorView;
+    private TextView checkLink;
     private TextView countryCodeView;
     private TextView countryNameView;
+
+    // Системный диалог «Разрешить VPN»
+    private final ActivityResultLauncher<Intent> vpnPermission = registerForActivityResult(
+            new ActivityResultContracts.StartActivityForResult(), result -> {
+                if (result.getResultCode() == RESULT_OK) {
+                    startVpn();
+                } else {
+                    showLocalError(R.string.error_vpn_denied);
+                }
+            });
+
+    private final ActivityResultLauncher<String> notificationPermission = registerForActivityResult(
+            new ActivityResultContracts.RequestPermission(), granted -> { });
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
@@ -54,6 +72,7 @@ public class MainActivity extends AppCompatActivity {
         statusView = findViewById(R.id.status);
         detailsView = findViewById(R.id.details);
         errorView = findViewById(R.id.error);
+        checkLink = findViewById(R.id.checkLink);
         countryCodeView = findViewById(R.id.countryCode);
         countryNameView = findViewById(R.id.countryName);
 
@@ -65,6 +84,8 @@ public class MainActivity extends AppCompatActivity {
             haptic(v);
             onPowerClick();
         });
+        checkLink.setOnClickListener(v -> startActivity(new Intent(this, BrowserActivity.class)));
+        findViewById(R.id.killSwitch).setOnClickListener(v -> openKillSwitchSettings());
 
         getSupportFragmentManager().setFragmentResultListener(
                 CountryPickerSheet.REQUEST_KEY, this, (key, result) -> {
@@ -72,14 +93,7 @@ public class MainActivity extends AppCompatActivity {
                     if (code != null) onCountryPicked(code);
                 });
 
-        if (savedInstanceState != null) {
-            String saved = savedInstanceState.getString(KEY_STATE);
-            ConnectionState restored = saved != null
-                    ? ConnectionState.valueOf(saved) : ConnectionState.OFF;
-            setState(restored, false);
-            if (restored == ConnectionState.CONNECTING) startDemoConnect();
-        } else {
-            setState(ConnectionState.OFF, false);
+        if (savedInstanceState == null) {
             // Плавное появление экрана
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(SCREEN_FADE_MS)
@@ -88,27 +102,36 @@ public class MainActivity extends AppCompatActivity {
     }
 
     @Override
-    protected void onSaveInstanceState(Bundle outState) {
-        super.onSaveInstanceState(outState);
-        outState.putString(KEY_STATE, state.name());
+    protected void onStart() {
+        super.onStart();
+        firstStatus = true;
+        StatusBus.addListener(this);
     }
 
     @Override
-    protected void onDestroy() {
-        handler.removeCallbacksAndMessages(null);
-        super.onDestroy();
+    protected void onStop() {
+        StatusBus.removeListener(this);
+        super.onStop();
+    }
+
+    @Override
+    public void onStatus(@NonNull StatusBus.Status status) {
+        // Первый снимок после открытия экрана — без анимации
+        boolean animate = !firstStatus;
+        firstStatus = false;
+        render(status.state, status.detail, status.error, animate);
     }
 
     private void onPowerClick() {
         switch (state) {
             case OFF:
             case ERROR:
-                startDemoConnect();
+                requestVpn();
                 break;
             case CONNECTING:
             case ON:
-                handler.removeCallbacks(demoConnected);
-                setState(ConnectionState.OFF, true);
+                sendToService(VpnTunnelService.ACTION_STOP);
+                render(ConnectionState.OFF, "", "", true);
                 break;
         }
     }
@@ -119,39 +142,89 @@ public class MainActivity extends AppCompatActivity {
         showCountry();
         // При включённом режиме смена страны = переподключение
         if (state == ConnectionState.ON || state == ConnectionState.CONNECTING) {
-            startDemoConnect();
+            sendToService(VpnTunnelService.ACTION_COUNTRY);
         }
     }
 
-    private void startDemoConnect() {
-        handler.removeCallbacks(demoConnected);
-        setState(ConnectionState.CONNECTING, true);
-        handler.postDelayed(demoConnected, DEMO_CONNECT_MS);
+    private void requestVpn() {
+        Intent prepare;
+        try {
+            prepare = VpnService.prepare(this);
+        } catch (RuntimeException e) {
+            showLocalError(R.string.error_vpn_other);
+            return;
+        }
+        if (prepare == null) {
+            startVpn();
+            return;
+        }
+        try {
+            vpnPermission.launch(prepare);
+        } catch (ActivityNotFoundException e) {
+            showLocalError(R.string.error_vpn_other);
+        }
     }
 
-    private void setState(ConnectionState newState, boolean animate) {
+    private void startVpn() {
+        render(ConnectionState.CONNECTING, getString(R.string.detail_bootstrap, 0), "", true);
+        sendToService(VpnTunnelService.ACTION_START);
+        askNotificationPermission();
+    }
+
+    private void sendToService(String action) {
+        Intent i = new Intent(this, VpnTunnelService.class).setAction(action);
+        try {
+            if (VpnTunnelService.ACTION_STOP.equals(action)) {
+                startService(i);
+            } else {
+                ContextCompat.startForegroundService(this, i);
+            }
+        } catch (RuntimeException e) {
+            showLocalError(R.string.error_foreground);
+        }
+    }
+
+    private void showLocalError(int res) {
+        render(ConnectionState.ERROR, "", getString(res), true);
+    }
+
+    private void askNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
+                != PackageManager.PERMISSION_GRANTED) {
+            notificationPermission.launch(Manifest.permission.POST_NOTIFICATIONS);
+        }
+    }
+
+    /** Kill switch на уровне системы: «Постоянная VPN» + «Блокировать без VPN». */
+    private void openKillSwitchSettings() {
+        Toast.makeText(this, R.string.kill_switch_hint, Toast.LENGTH_LONG).show();
+        try {
+            startActivity(new Intent(Settings.ACTION_VPN_SETTINGS));
+        } catch (ActivityNotFoundException e) {
+            startActivity(new Intent(Settings.ACTION_SETTINGS));
+        }
+    }
+
+    private void render(ConnectionState newState, String detail, String error, boolean animate) {
         state = newState;
         powerButton.setState(newState, animate);
 
-        CharSequence status;
-        CharSequence details = "";
+        int status;
         switch (newState) {
             case CONNECTING:
-                status = getString(R.string.status_connecting);
+                status = R.string.status_connecting;
                 break;
             case ON:
-                status = getString(R.string.status_on);
-                details = getString(R.string.demo_mode);
-                break;
-            case ERROR:
-                status = getString(R.string.status_error);
+                status = R.string.status_on;
                 break;
             default:
-                status = getString(R.string.status_off);
+                status = R.string.status_off;
         }
-        setText(statusView, status, animate);
-        setText(detailsView, details, animate);
-        if (newState != ConnectionState.ERROR) setText(errorView, "", animate);
+        setText(statusView, getString(status), animate);
+        setText(detailsView, detail, animate);
+        setText(errorView, newState == ConnectionState.ERROR ? error : "", animate);
+        checkLink.setVisibility(newState == ConnectionState.ON ? View.VISIBLE : View.INVISIBLE);
     }
 
     private void showCountry() {

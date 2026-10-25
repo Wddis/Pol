@@ -85,6 +85,17 @@
         android:layout_marginTop="@dimen/space_1"
         android:gravity="center" />
 
+    <!-- Проверка IP во встроенном браузере через Tor -->
+    <TextView
+        android:id="@+id/checkLink"
+        style="@style/Text.Oda.Link"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/space_1"
+        android:text="@string/link_check"
+        android:visibility="invisible" />
+
     <Space
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -96,10 +107,18 @@
         style="@style/Text.Oda.Small"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_marginBottom="@dimen/space_3"
         android:accessibilityLiveRegion="polite"
         android:gravity="center"
         android:minHeight="@dimen/space_4"
         android:textColor="@color/text" />
+
+    <TextView
+        android:id="@+id/killSwitch"
+        style="@style/Text.Oda.Link"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginBottom="@dimen/space_2"
+        android:text="@string/link_kill_switch" />
 
 </LinearLayout>
