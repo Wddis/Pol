@@ -101,3 +101,49 @@ APK собирает GitHub Actions после каждого push. Компью
 2. Tor внутри приложения (tor-android), SOCKS5, выбор страны выхода, проверка IP. ✓
 3. Весь трафик телефона: VpnService + tun2socks, DNS через Tor, kill switch. ✓
 4. Мосты: snowflake, obfs4, webtunnel, meek, Moat, свои мосты. ✓
+
+## Как устроен код
+
+Всё приложение — в `app/src/main/java/com/example/vpnapp/` (Java, один модуль `app`).
+
+### Экран
+| Файл | Что делает |
+|---|---|
+| `MainActivity.java` | Единственный экран: страна, кнопка, статус, ссылки «МОСТЫ», «ЖУРНАЛ», «KILL SWITCH». Состояние получает из `StatusBus` |
+| `PowerButtonView.java` | Круглая кнопка на Canvas: красная / дуга подключения / зелёная с «дыханием», анимация нажатия |
+| `CountryPickerSheet.java` | Нижний лист выбора страны (первая строка — «★ Авто») |
+| `BridgesSheet.java` | Нижний лист «Мосты»: режим и поле для своих мостов со счётчиком распознанных |
+| `LogSheet.java` | Нижний лист «Журнал» с кнопкой «Копировать» |
+| `BrowserActivity.java` | Встроенный WebView через SOCKS Tor (check.torproject.org) |
+
+### Подключение
+| Файл | Что делает |
+|---|---|
+| `VpnTunnelService.java` | Foreground VpnService: поднимает tun, по очереди выполняет попытки из плана, запускает tun2socks, проверяет IP |
+| `TorController.java` | Запуск/остановка Tor (`TorService` из tor-android), запись torrc, опрос bootstrap через control port, таймауты |
+| `PtController.java` | Мосты через IPtProxy (snowflake, obfs4, webtunnel, meek, dnstt); все вызовы под одной блокировкой |
+| `ConnectPlan.java` | Порядок способов подключения для выбранного режима |
+| `MoatClient.java` | Запрос рекомендованных мостов у Moat |
+| `BridgeSet.java`, `BridgeParser.java`, `BuiltInBridges.java` | Наборы строк мостов, разбор вставленного текста, встроенные мосты из `assets/builtin-bridges.json` |
+| `Tun2Socks.java` | JNI-обёртка hev-socks5-tunnel (сабмодуль `app/src/main/jni/hev-socks5-tunnel`) + mapdns |
+| `IpChecker.java`, `GeoIp.java` | Проверка IP выхода; база GeoIP для выбора страны |
+
+### Общее
+| Файл | Что делает |
+|---|---|
+| `StatusBus.java` | Состояние (OFF/CONNECTING/ON/ERROR) между сервисом и экраном |
+| `Prefs.java` | Настройки: страна, режим мостов, свои мосты, последний рабочий мост |
+| `DiagLog.java` | Журнал в памяти и в файле `diag.log`; причина прошлого аварийного завершения |
+| `VpnNotification.java` | Уведомление сервиса с кнопкой «Отключить» |
+
+### Известная проблема (версия 0.4)
+Приложение аварийно закрывается (в журнале: «Прошлый запуск завершился аварийно: причина 5, код 6»)
+примерно через секунду после начала новой попытки подключения, когда Tor запускается заново
+внутри того же процесса. Также попытка может прерываться по таймауту, когда bootstrap дошёл до 75%.
+
+## Как продолжить работу в новом чате Claude
+1. Откройте новый чат Claude Code и подключите репозиторий **Wddis/Pol**.
+2. Попросите прочитать этот README и код в ветке `claude/tor-vpn-android-app-9uk713`
+   (или `main`, если pull request уже влит).
+3. Опишите задачу своими словами и приложите свежий журнал из приложения («ЖУРНАЛ» → «КОПИРОВАТЬ»).
+4. Сборка: любой push запускает GitHub Actions, APK — в Artifacts как `vpn-app-debug`.
