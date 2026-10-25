@@ -4,7 +4,12 @@ plugins {
 
 android {
     namespace = 'com.example.vpnapp'
-    compileSdk = 36
+    // tor-android требует compileSdk 37.1+ (Android 17); targetSdk остаётся 36
+    compileSdk {
+        version = release(37) {
+            it.minorApiLevel = 2
+        }
+    }
 
     defaultConfig {
         applicationId = 'com.example.vpnapp'
