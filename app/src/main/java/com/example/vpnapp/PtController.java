@@ -30,6 +30,7 @@ final class PtController {
     private static final String TAG = "PtController";
     private static final String STATE_DIR = "pt_state";
     private static final int LOG_TAIL_BYTES = 6 * 1024;
+    private static final int SNOWFLAKE_PEERS = 3;
 
     // IPtProxy не потокобезопасен: все вызовы — под одной блокировкой.
     // Транспорт общий для всех (Moat и попытки), поэтому считаем пользователей
@@ -163,6 +164,9 @@ final class PtController {
         c.setSnowflakeAmpCacheUrl("");
         c.setSnowflakeSqsUrl("");
         c.setSnowflakeSqsCreds("");
+        // Несколько добровольцев сразу: если один отключится, трафик перейдёт на другого
+        // (действует с первого запуска snowflake, поэтому задаётся до него)
+        c.setSnowflakeMaxPeers(SNOWFLAKE_PEERS);
     }
 
     private static String orEmpty(@Nullable String s) {

@@ -21,6 +21,7 @@ public final class Prefs {
     private static final String KEY_LAST_GOOD = "last_good";
     private static final String KEY_MOAT = "moat_cache";
     private static final String KEY_DIRECT_FAILED = "direct_failed";
+    private static final String KEY_OBFS4_FAILED = "obfs4_failed";
     private static final String DEFAULT_COUNTRY = Country.ANY;
 
     private final SharedPreferences sp;
@@ -69,6 +70,15 @@ public final class Prefs {
 
     void setDirectFailed(boolean failed) {
         sp.edit().putBoolean(KEY_DIRECT_FAILED, failed).apply();
+    }
+
+    /** Встроенные obfs4 в прошлый раз не прошли — пробуем их в конце. */
+    boolean isObfs4Failed() {
+        return sp.getBoolean(KEY_OBFS4_FAILED, false);
+    }
+
+    void setObfs4Failed(boolean failed) {
+        sp.edit().putBoolean(KEY_OBFS4_FAILED, failed).apply();
     }
 
     /** Мосты, полученные от Moat в прошлый раз (на случай, если Moat недоступен). */

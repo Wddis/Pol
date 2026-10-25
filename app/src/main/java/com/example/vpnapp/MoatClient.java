@@ -146,6 +146,9 @@ final class MoatClient {
                 response = post(proxy, tunnel, countryHint);
             }
             Result result = parse(response);
+            // Пустой ответ Guardian Project не значит «мосты не нужны»: он не видит нашу сеть,
+            // верим в это только Tor Project
+            if (tunnel.needsCountry && result.directOk) result = new Result(result.sets, false);
             DiagLog.add("Moat " + tunnel.name + ": вариантов " + result.sets.size()
                     + ", страна " + response.optString("country", "?")
                     + (result.directOk ? ", мосты не нужны" : ""));

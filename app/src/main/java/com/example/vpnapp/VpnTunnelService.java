@@ -37,15 +37,19 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     private static final int IP_CHECK_ATTEMPTS = 2;
     // Сколько ждём ответа Moat (оба запроса идут параллельно)
     private static final long MOAT_DEADLINE_MS = 50_000;
-    // Без мостов: 60 с на подключение, при застревании прогресса — 40 с
-    private static final long DIRECT_STALL_MS = 40_000;
-    private static final long DIRECT_HARD_MS = 60_000;
-    // Мосты (особенно snowflake) загружаются дольше
-    private static final long BRIDGE_STALL_MS = 75_000;
-    private static final long BRIDGE_HARD_MS = 180_000;
+    // Пределы, пока ни один мост (узел) не ответил. Когда ответил, канал рабочий,
+    // и TorController сам даёт попытке больше времени на построение цепочки
+    // Без мостов: 45 с на подключение, при застревании прогресса — 30 с
+    private static final long DIRECT_STALL_MS = 30_000;
+    private static final long DIRECT_HARD_MS = 45_000;
+    private static final long BRIDGE_STALL_MS = 60_000;
+    private static final long BRIDGE_HARD_MS = 120_000;
+    // Snowflake дольше ищет добровольца
+    private static final long SNOWFLAKE_STALL_MS = 90_000;
+    private static final long SNOWFLAKE_HARD_MS = 150_000;
     // DNSTT очень медленный: даём больше времени
     private static final long DNSTT_STALL_MS = 120_000;
-    private static final long DNSTT_HARD_MS = 300_000;
+    private static final long DNSTT_HARD_MS = 240_000;
 
     private HandlerThread thread;
     private Handler worker;
@@ -59,6 +63,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     private boolean tunnelRunning;
     private int socksPort;
     private int generation;  // отсекает устаревшие результаты фоновых задач
+    private int connection;  // номер подключения: отсекает ответ Moat прошлого подключения
     private List<BridgeSet> plan = new ArrayList<>();
     private int attempt;
     @Nullable private String lastReason;
@@ -127,11 +132,12 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     private void connect() {
         if (active) return;
         active = true;
-        int gen = ++generation;
+        int id = ++connection;
+        String country = networkCountry();
         DiagLog.add("========== новое подключение ==========");
         DiagLog.add("ODA " + appVersion() + ", Android " + Build.VERSION.RELEASE
                 + ", режим " + prefs.getMode() + ", страна " + prefs.getCountry()
-                + ", сеть " + networkCountry());
+                + ", сеть " + country);
         // Интерфейс поднимаем сразу: пока Tor не готов, трафик блокируется, а не уходит мимо
         try {
             tun = establishTun();
@@ -141,14 +147,23 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
             return;
         }
         if (!ConnectPlan.needsMoat(prefs.getMode())) {
-            startPlan(ConnectPlan.build(this, prefs, null));
+            startPlan(ConnectPlan.build(this, prefs, null, country));
             return;
         }
-        // Режим «Авто»: спрашиваем у Moat, какие мосты работают в этой сети
-        publish(ConnectionState.CONNECTING, getString(R.string.detail_moat), "");
-        DiagLog.add("Moat: запрос рабочих мостов…");
+        // Режим «Авто»: спрашиваем у Moat, какие мосты работают в этой сети.
+        // Ждём ответа, только если начать не с чего: нет прошлого рабочего моста,
+        // нет мостов Moat с прошлого раза и сеть без известных блокировок
+        boolean waitMoat = prefs.getLastGood() == null && prefs.getMoatCache().isEmpty()
+                && !ConnectPlan.isCensored(country);
+        if (waitMoat) {
+            publish(ConnectionState.CONNECTING, getString(R.string.detail_moat), "");
+            DiagLog.add("Moat: запрос рабочих мостов…");
+        } else {
+            DiagLog.add("Moat: запрос в фоне, подключение его не ждёт");
+            startPlan(ConnectPlan.build(this, prefs, null, country));
+            if (!active) return;
+        }
         Context app = getApplicationContext();
-        String country = networkCountry();
         new Thread(() -> {
             MoatClient.Result moat = null;
             try {
@@ -158,11 +173,21 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
                 DiagLog.add("Moat не ответил, беру встроенные мосты");
             }
             MoatClient.Result result = moat;
-            worker.post(() -> {
-                if (!active || gen != generation) return;
-                startPlan(ConnectPlan.build(this, prefs, result));
-            });
+            worker.post(() -> onMoat(id, waitMoat, result, country));
         }, "oda-moat").start();
+    }
+
+    private void onMoat(int id, boolean waited, @Nullable MoatClient.Result result,
+                        @Nullable String country) {
+        if (!active || id != connection) return;
+        if (waited) {
+            startPlan(ConnectPlan.build(this, prefs, result, country));
+            return;
+        }
+        // Подключение уже идёт: свежие мосты Moat встают в план после текущей попытки
+        if (result == null || socksPort != 0 || plan.isEmpty()) return;
+        plan = ConnectPlan.merge(plan, attempt, ConnectPlan.build(this, prefs, result, country));
+        logPlan("План обновлён по ответу Moat:");
     }
 
     private void reconnect() {
@@ -178,14 +203,18 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         }
         plan = newPlan;
         attempt = 0;
-        StringBuilder sb = new StringBuilder("План:");
+        logPlan("План:");
+        startAttempt();
+    }
+
+    private void logPlan(String title) {
+        StringBuilder sb = new StringBuilder(title);
         for (BridgeSet set : plan) {
             sb.append(" [").append(set.label).append(": ")
                     .append(set.isDirect() ? "напрямую" : set.lines.size() + " мост., " + set.transports())
                     .append(']');
         }
         DiagLog.add(sb.toString());
-        startAttempt();
     }
 
     /** Запуск Tor с текущим способом из плана. */
@@ -213,6 +242,9 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         } else if (set.transports().contains("dnstt")) {
             stall = DNSTT_STALL_MS;
             hard = DNSTT_HARD_MS;
+        } else if (set.transports().contains("snowflake")) {
+            stall = SNOWFLAKE_STALL_MS;
+            hard = SNOWFLAKE_HARD_MS;
         } else {
             stall = BRIDGE_STALL_MS;
             hard = BRIDGE_HARD_MS;
@@ -221,7 +253,15 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     }
 
     private void nextAttempt(int lastError) {
-        if (attempt < plan.size() && plan.get(attempt).isDirect()) prefs.setDirectFailed(true);
+        if (attempt < plan.size()) {
+            // Не прошедшие в этой сети способы в следующий раз пойдут в конце
+            BridgeSet failed = plan.get(attempt);
+            if (failed.isDirect()) {
+                prefs.setDirectFailed(true);
+            } else if (getString(R.string.mode_obfs4).equals(failed.label)) {
+                prefs.setObfs4Failed(true);
+            }
+        }
         tor.stop();
         pt.stop();
         attempt++;
@@ -349,6 +389,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
             BridgeSet good = used != null ? used : set;
             DiagLog.add("Сработал: " + good.label + (used != null ? " (" + fp.substring(0, 8) + "…)" : ""));
             if (prefs.getMode() == BridgeMode.AUTO) prefs.setLastGood(good);
+            if (getString(R.string.mode_obfs4).equals(good.label)) prefs.setObfs4Failed(false);
             detail = good.label + " · " + detail;
         } else if (set != null && prefs.getMode() == BridgeMode.AUTO) {
             prefs.setLastGood(set);
@@ -451,7 +492,10 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     private void teardown() {
         active = false;
         generation++;
-        DiagLog.add("Остановка Tor");
+        connection++;
+        // Сам Tor не останавливается (повторный запуск в процессе приводил к падению),
+        // у него только выключается сеть
+        DiagLog.add("Отключение: сеть Tor выключена");
         tor.stop();
         DiagLog.add("Остановка мостов");
         pt.stop();

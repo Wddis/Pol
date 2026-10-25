@@ -57,7 +57,7 @@
     <!-- Режимы мостов -->
     <string name="bridges_title">Мосты</string>
     <string name="mode_auto">Авто</string>
-    <string name="mode_auto_hint">Пробует все мосты сразу, затем DNSTT. Свои мосты тоже используются</string>
+    <string name="mode_auto_hint">Сначала Snowflake, затем другие мосты и DNSTT. Свои мосты тоже используются</string>
     <string name="mode_snowflake">Snowflake</string>
     <string name="mode_snowflake_hint">Через браузеры добровольцев (CDN77 и Google AMP)</string>
     <string name="mode_obfs4">obfs4</string>
@@ -66,7 +66,7 @@
     <string name="mode_meek_hint">Маскировка под CDN, медленно</string>
     <string name="mode_dnstt">DNSTT</string>
     <string name="mode_dnstt_hint">Туннель через DNS Google. Очень медленно, последний шанс</string>
-    <string name="mode_all">Все мосты сразу</string>
+    <string name="mode_all">Другие мосты</string>
     <string name="mode_custom">Свои мосты</string>
     <string name="mode_custom_hint">Лучше webtunnel: в @GetBridgesBot отправьте /webtunnel</string>
     <string name="mode_direct">Без мостов</string>
