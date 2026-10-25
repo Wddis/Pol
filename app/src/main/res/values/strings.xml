@@ -1,0 +1,121 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ODA</string>
+    <string name="title">ODA</string>
+
+    <string name="status_off">Отключено</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="status_on">Подключено</string>
+    <string name="status_error">Ошибка</string>
+
+    <string name="pick_country">Страна выхода</string>
+
+    <!-- Детали под статусом -->
+    <string name="detail_bootstrap">Tor %1$d%%</string>
+    <string name="detail_checking">Проверка IP…</string>
+    <string name="detail_switching">Смена страны…</string>
+    <string name="detail_moat">Поиск рабочих мостов…</string>
+    <string name="detail_attempt">%1$d/%2$d %3$s</string>
+    <string name="detail_ip">IP %1$s · %2$s</string>
+    <string name="detail_ip_unknown">Tor работает, IP не определён</string>
+
+    <!-- Ссылки -->
+    <string name="link_check">ПРОВЕРИТЬ В БРАУЗЕРЕ</string>
+    <string name="link_kill_switch">KILL SWITCH</string>
+    <string name="link_bridges">МОСТЫ: %1$s</string>
+    <string name="link_log">ЖУРНАЛ</string>
+
+    <!-- Журнал -->
+    <string name="log_title">Журнал</string>
+    <string name="log_copy">КОПИРОВАТЬ</string>
+    <string name="log_copied">Журнал скопирован</string>
+    <string name="log_empty">Журнал пуст. Нажмите кнопку подключения, затем откройте журнал снова</string>
+
+    <!-- Причины от Tor -->
+    <string name="reason_timeout">нет ответа</string>
+    <string name="reason_reset">соединение сбрасывают</string>
+    <string name="reason_refused">соединение отклонено</string>
+    <string name="reason_noroute">нет маршрута</string>
+    <string name="reason_misc">ошибка связи</string>
+    <string name="reason_pt">мост не запущен</string>
+    <string name="kill_switch_hint">Включите для ODA «Постоянная VPN» и «Блокировать соединения без VPN»</string>
+
+    <!-- Ошибки -->
+    <string name="error_vpn_denied">Нужно разрешение на VPN</string>
+    <string name="error_vpn_other">Другая VPN мешает запуску. Отключите её в настройках</string>
+    <string name="error_tun">Не удалось создать VPN-интерфейс</string>
+    <string name="error_tun2socks">Не удалось запустить туннель</string>
+    <string name="error_timeout">Tor не подключился вовремя</string>
+    <string name="error_blocked">Tor заблокирован в этой сети. Попробуйте Wi-Fi или мосты /webtunnel из @GetBridgesBot (МОСТЫ → Свои мосты). Подробности в ЖУРНАЛЕ</string>
+    <string name="error_no_custom_bridges">Добавьте свои мосты в «МОСТЫ» или выберите «Авто»</string>
+    <string name="error_tor_stopped">Tor неожиданно остановился</string>
+    <string name="error_tor_start">Не удалось запустить Tor</string>
+    <string name="error_country">Не удалось сменить страну</string>
+    <string name="error_foreground">Система не дала запустить VPN в фоне</string>
+    <string name="error_revoked">VPN отключён системой</string>
+
+    <!-- Режимы мостов -->
+    <string name="bridges_title">Мосты</string>
+    <string name="mode_auto">Авто</string>
+    <string name="mode_auto_hint">Пробует все мосты сразу, затем DNSTT. Свои мосты тоже используются</string>
+    <string name="mode_snowflake">Snowflake</string>
+    <string name="mode_snowflake_hint">Через браузеры добровольцев (CDN77 и Google AMP)</string>
+    <string name="mode_obfs4">obfs4</string>
+    <string name="mode_obfs4_hint">Встроенные мосты Tor, часто заблокированы</string>
+    <string name="mode_meek">meek</string>
+    <string name="mode_meek_hint">Маскировка под CDN, медленно</string>
+    <string name="mode_dnstt">DNSTT</string>
+    <string name="mode_dnstt_hint">Туннель через DNS Google. Очень медленно, последний шанс</string>
+    <string name="mode_all">Все мосты сразу</string>
+    <string name="mode_custom">Свои мосты</string>
+    <string name="mode_custom_hint">Лучше webtunnel: в @GetBridgesBot отправьте /webtunnel</string>
+    <string name="mode_direct">Без мостов</string>
+    <string name="mode_direct_hint">Только если Tor не заблокирован</string>
+    <string name="bridges_input_hint">obfs4 1.2.3.4:443 ABCD… cert=… iat-mode=0</string>
+    <string name="bridges_where">Где взять: Telegram-бот @GetBridgesBot → команда /webtunnel (лучше всего) или /obfs4 → «Копировать код» → вставьте сюда</string>
+    <string name="bridges_parsed">Распознано мостов: %1$d (%2$s)</string>
+    <string name="bridges_parsed_none">Мосты не распознаны</string>
+    <string name="bridges_invalid">, не распознано: %1$d</string>
+    <string name="bridges_save">СОХРАНИТЬ</string>
+
+    <!-- Уведомление -->
+    <string name="notif_channel">VPN</string>
+    <string name="notif_stop">Отключить</string>
+
+    <!-- Встроенный браузер -->
+    <string name="browser_no_proxy">WebView не поддерживает прокси. Обновите «Android System WebView»</string>
+    <string name="browser_not_connected">Сначала подключитесь</string>
+
+    <string name="cd_power_off">Включить</string>
+    <string name="cd_power_connecting">Подключение, нажмите для отмены</string>
+    <string name="cd_power_on">Отключить</string>
+    <string name="cd_selected">Выбрано</string>
+
+    <!-- Коды и названия стран, порядок совпадает -->
+    <string-array name="country_codes" translatable="false">
+        <item>ANY</item>
+        <item>DE</item>
+        <item>NL</item>
+        <item>SE</item>
+        <item>CH</item>
+        <item>FR</item>
+        <item>GB</item>
+        <item>US</item>
+        <item>CA</item>
+        <item>JP</item>
+        <item>FI</item>
+    </string-array>
+    <string-array name="country_names">
+        <item>Авто (быстрее)</item>
+        <item>Германия</item>
+        <item>Нидерланды</item>
+        <item>Швеция</item>
+        <item>Швейцария</item>
+        <item>Франция</item>
+        <item>Великобритания</item>
+        <item>США</item>
+        <item>Канада</item>
+        <item>Япония</item>
+        <item>Финляндия</item>
+    </string-array>
+</resources>
