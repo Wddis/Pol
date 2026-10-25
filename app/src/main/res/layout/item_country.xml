@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="@dimen/row_height"
+    android:background="?android:attr/selectableItemBackground"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingStart="@dimen/space_3"
+    android:paddingEnd="@dimen/space_3">
+
+    <TextView
+        android:id="@+id/code"
+        style="@style/Text.Oda.Code"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:minWidth="@dimen/space_4" />
+
+    <TextView
+        android:id="@+id/name"
+        style="@style/Text.Oda.Body"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="@dimen/space_2"
+        android:layout_weight="1" />
+
+    <ImageView
+        android:id="@+id/check"
+        android:layout_width="@dimen/space_3"
+        android:layout_height="@dimen/space_3"
+        android:contentDescription="@string/cd_selected"
+        android:src="@drawable/ic_check"
+        android:visibility="invisible" />
+
+</LinearLayout>

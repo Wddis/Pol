@@ -1,0 +1,44 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">ODA</string>
+    <string name="title">ODA</string>
+
+    <string name="status_off">Отключено</string>
+    <string name="status_connecting">Подключение…</string>
+    <string name="status_on">Подключено</string>
+    <string name="status_error">Ошибка</string>
+
+    <string name="pick_country">Страна выхода</string>
+    <string name="demo_mode">Демо-режим, сеть не используется</string>
+
+    <string name="cd_power_off">Включить</string>
+    <string name="cd_power_connecting">Подключение, нажмите для отмены</string>
+    <string name="cd_power_on">Отключить</string>
+    <string name="cd_selected">Выбрано</string>
+
+    <!-- Коды и названия стран, порядок совпадает -->
+    <string-array name="country_codes" translatable="false">
+        <item>DE</item>
+        <item>NL</item>
+        <item>SE</item>
+        <item>CH</item>
+        <item>FR</item>
+        <item>GB</item>
+        <item>US</item>
+        <item>CA</item>
+        <item>JP</item>
+        <item>FI</item>
+    </string-array>
+    <string-array name="country_names">
+        <item>Германия</item>
+        <item>Нидерланды</item>
+        <item>Швеция</item>
+        <item>Швейцария</item>
+        <item>Франция</item>
+        <item>Великобритания</item>
+        <item>США</item>
+        <item>Канада</item>
+        <item>Япония</item>
+        <item>Финляндия</item>
+    </string-array>
+</resources>

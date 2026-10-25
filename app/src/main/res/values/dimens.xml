@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <dimen name="space_1">8dp</dimen>
+    <dimen name="space_2">16dp</dimen>
+    <dimen name="space_3">24dp</dimen>
+    <dimen name="space_4">32dp</dimen>
+    <dimen name="space_6">48dp</dimen>
+    <dimen name="corner">16dp</dimen>
+    <dimen name="row_height">56dp</dimen>
+    <dimen name="power_button">160dp</dimen>
+</resources>
