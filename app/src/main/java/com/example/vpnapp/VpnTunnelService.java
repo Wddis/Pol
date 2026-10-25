@@ -221,6 +221,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     }
 
     private void nextAttempt(int lastError) {
+        if (attempt < plan.size() && plan.get(attempt).isDirect()) prefs.setDirectFailed(true);
         tor.stop();
         pt.stop();
         attempt++;
@@ -351,6 +352,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
             detail = good.label + " · " + detail;
         } else if (set != null && prefs.getMode() == BridgeMode.AUTO) {
             prefs.setLastGood(set);
+            prefs.setDirectFailed(false);
         }
         publish(ConnectionState.ON, detail, "");
     }
@@ -449,7 +451,9 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     private void teardown() {
         active = false;
         generation++;
+        DiagLog.add("Остановка Tor");
         tor.stop();
+        DiagLog.add("Остановка мостов");
         pt.stop();
         stopTunnel();
         socksPort = 0;

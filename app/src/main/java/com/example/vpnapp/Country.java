@@ -9,6 +9,9 @@ import java.util.List;
 /** Страна выхода: двухбуквенный код и название. */
 public final class Country {
 
+    /** Регион «Авто»: страну выхода выбирает Tor. */
+    public static final String ANY = "ANY";
+
     public final String code;
     public final String name;
 
@@ -27,6 +30,15 @@ public final class Country {
             list.add(new Country(codes[i], names[i]));
         }
         return list;
+    }
+
+    public static boolean isAny(String code) {
+        return ANY.equals(code);
+    }
+
+    /** Код для экрана: у «Авто» вместо кода — значок. */
+    public String shortLabel() {
+        return isAny(code) ? "★" : code;
     }
 
     /** Название страны по коду; для стран вне списка — сам код. */

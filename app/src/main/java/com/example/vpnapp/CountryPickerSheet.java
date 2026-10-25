@@ -45,7 +45,7 @@ public class CountryPickerSheet extends BottomSheetDialogFragment {
 
         for (Country country : Country.all(requireContext())) {
             View row = inflater.inflate(R.layout.item_country, list, false);
-            ((TextView) row.findViewById(R.id.code)).setText(country.code);
+            ((TextView) row.findViewById(R.id.code)).setText(country.shortLabel());
             ((TextView) row.findViewById(R.id.name)).setText(country.name);
             boolean isSelected = country.code.equals(selected);
             row.findViewById(R.id.check).setVisibility(isSelected ? View.VISIBLE : View.INVISIBLE);

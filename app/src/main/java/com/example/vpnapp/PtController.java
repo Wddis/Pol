@@ -11,9 +11,11 @@ import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import IPtProxy.Controller;
 import IPtProxy.IPtProxy;
@@ -34,6 +36,7 @@ final class PtController {
     // и останавливаем его только когда он не нужен никому.
     private static final Object LOCK = new Object();
     private static final Map<String, Integer> USERS = new HashMap<>();
+    private static final Set<String> STARTED = new HashSet<>();
     private static Controller controller;
     private static File stateDir;
 
@@ -93,12 +96,14 @@ final class PtController {
     private long acquire(String transport) throws Exception {
         synchronized (LOCK) {
             Controller c = controller(context);
-            Integer users = USERS.get(transport);
-            if (users == null || users == 0) {
+            // Каждый транспорт запускается один раз и живёт до конца процесса:
+            // остановка внутри IPtProxy приводила к аварийному завершению
+            if (!STARTED.contains(transport)) {
                 c.start(transport, null);
-                users = 0;
+                STARTED.add(transport);
             }
-            USERS.put(transport, users + 1);
+            Integer users = USERS.get(transport);
+            USERS.put(transport, users == null ? 1 : users + 1);
             running.add(transport);
             return c.port(transport);
         }
@@ -112,12 +117,8 @@ final class PtController {
                 USERS.put(transport, users - 1);
                 return;
             }
+            // Транспорт не останавливаем: без подключений Tor он просто ждёт
             USERS.remove(transport);
-            try {
-                controller.stop(transport);
-            } catch (RuntimeException e) {
-                Log.w(TAG, "stop " + transport + ": " + e);
-            }
         }
     }
 

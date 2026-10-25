@@ -24,6 +24,7 @@ import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Writer;
 import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -152,7 +153,11 @@ final class TorController {
         TorControlConnection conn = control();
         if (conn == null) return false;
         try {
-            conn.setConf("ExitNodes", "{" + countryCode.toLowerCase(Locale.ROOT) + "}");
+            if (Country.isAny(countryCode)) {
+                conn.resetConf(Collections.singletonList("ExitNodes"));
+            } else {
+                conn.setConf("ExitNodes", "{" + countryCode.toLowerCase(Locale.ROOT) + "}");
+            }
             conn.signal("NEWNYM");
             return true;
         } catch (IOException e) {
@@ -318,8 +323,8 @@ final class TorController {
         String cc = countryCode.toLowerCase(Locale.ROOT);
         StringBuilder torrc = new StringBuilder()
                 .append("SocksPort auto IPv6Traffic\n")
-                .append("ExitNodes {").append(cc).append("}\n")
-                .append("StrictNodes 1\n")
+                // «Авто»: Tor сам выбирает выходной узел — быстрее и надёжнее
+                .append(Country.isAny(countryCode) ? "" : "ExitNodes {" + cc + "}\nStrictNodes 1\n")
                 .append("GeoIPFile ").append(geoip.getAbsolutePath()).append('\n')
                 .append("ClientOnly 1\n")
                 .append("AvoidDiskWrites 1\n");

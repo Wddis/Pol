@@ -93,6 +93,7 @@
 
     <!-- Коды и названия стран, порядок совпадает -->
     <string-array name="country_codes" translatable="false">
+        <item>ANY</item>
         <item>DE</item>
         <item>NL</item>
         <item>SE</item>
@@ -105,6 +106,7 @@
         <item>FI</item>
     </string-array>
     <string-array name="country_names">
+        <item>Авто (быстрее)</item>
         <item>Германия</item>
         <item>Нидерланды</item>
         <item>Швеция</item>

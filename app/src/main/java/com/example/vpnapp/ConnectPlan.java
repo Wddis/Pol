@@ -61,7 +61,8 @@ final class ConnectPlan {
      */
     private static void buildAuto(Context context, Prefs prefs, @Nullable MoatClient.Result moat,
                                   List<BridgeSet> plan) {
-        boolean directOk = moat != null && moat.directOk;
+        // Если прямое подключение уже не прошло, не тратим на него время в начале
+        boolean directOk = moat != null && moat.directOk && !prefs.isDirectFailed();
         BridgeSet direct = BridgeSet.direct(context.getString(R.string.mode_direct));
         if (directOk) add(plan, direct);
         add(plan, prefs.getLastGood());

@@ -252,7 +252,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
 
     private void showCountry() {
         Country country = Country.find(this, prefs.getCountry());
-        countryCodeView.setText(country.code);
+        countryCodeView.setText(country.shortLabel());
         countryNameView.setText(country.name);
     }
 
