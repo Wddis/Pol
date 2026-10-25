@@ -67,6 +67,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     public void onCreate() {
         super.onCreate();
         prefs = new Prefs(this);
+        DiagLog.init(this);
         thread = new HandlerThread("oda-vpn");
         thread.start();
         worker = new Handler(thread.getLooper());
@@ -127,7 +128,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         if (active) return;
         active = true;
         int gen = ++generation;
-        DiagLog.clear();
+        DiagLog.add("========== новое подключение ==========");
         DiagLog.add("ODA " + appVersion() + ", Android " + Build.VERSION.RELEASE
                 + ", режим " + prefs.getMode() + ", страна " + prefs.getCountry()
                 + ", сеть " + networkCountry());

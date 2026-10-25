@@ -69,6 +69,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_main);
         prefs = new Prefs(this);
+        DiagLog.init(this);
 
         View root = findViewById(R.id.root);
         powerButton = findViewById(R.id.powerButton);

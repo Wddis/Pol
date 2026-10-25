@@ -10,6 +10,7 @@ import java.io.IOException;
 import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,6 +29,11 @@ final class PtController {
     private static final String STATE_DIR = "pt_state";
     private static final int LOG_TAIL_BYTES = 6 * 1024;
 
+    // IPtProxy не потокобезопасен: все вызовы — под одной блокировкой.
+    // Транспорт общий для всех (Moat и попытки), поэтому считаем пользователей
+    // и останавливаем его только когда он не нужен никому.
+    private static final Object LOCK = new Object();
+    private static final Map<String, Integer> USERS = new HashMap<>();
     private static Controller controller;
     private static File stateDir;
 
@@ -51,15 +57,16 @@ final class PtController {
             torrc.add("UseBridges 0");
             return torrc;
         }
-        Controller c = controller(context);
         String snowflake = set.firstLine(IPtProxy.Snowflake);
-        if (snowflake != null) configureSnowflake(c, snowflake);
+        if (snowflake != null) {
+            synchronized (LOCK) {
+                configureSnowflake(controller(context), snowflake);
+            }
+        }
 
         Map<String, Long> ports = new LinkedHashMap<>();
         for (String transport : set.transports()) {
-            c.start(transport, null);
-            running.add(transport);
-            long port = c.port(transport);
+            long port = acquire(transport);
             if (port <= 0 || port > 65535) throw new IllegalStateException("No port for " + transport);
             ports.put(transport, port);
         }
@@ -73,22 +80,45 @@ final class PtController {
 
     /** Запуск одного транспорта (meek/dnstt для Moat); возвращает локальный порт SOCKS. */
     synchronized long startSingle(String transport) throws Exception {
-        Controller c = controller(context);
-        c.start(transport, null);
-        running.add(transport);
-        return c.port(transport);
+        return acquire(transport);
     }
 
+    /** Освобождает транспорты этого владельца. */
     synchronized void stop() {
-        if (controller == null) return;
-        for (String t : running) {
+        for (String t : running) release(t);
+        running.clear();
+    }
+
+    /** Запускает транспорт, если он ещё не запущен, и возвращает его порт. */
+    private long acquire(String transport) throws Exception {
+        synchronized (LOCK) {
+            Controller c = controller(context);
+            Integer users = USERS.get(transport);
+            if (users == null || users == 0) {
+                c.start(transport, null);
+                users = 0;
+            }
+            USERS.put(transport, users + 1);
+            running.add(transport);
+            return c.port(transport);
+        }
+    }
+
+    private static void release(String transport) {
+        synchronized (LOCK) {
+            Integer users = USERS.get(transport);
+            if (users == null) return;
+            if (users > 1) {
+                USERS.put(transport, users - 1);
+                return;
+            }
+            USERS.remove(transport);
             try {
-                controller.stop(t);
+                controller.stop(transport);
             } catch (RuntimeException e) {
-                Log.w(TAG, "stop " + t + ": " + e);
+                Log.w(TAG, "stop " + transport + ": " + e);
             }
         }
-        running.clear();
     }
 
     /** Хвост журнала IPtProxy (ошибки obfs4/snowflake/meek) для экрана «Журнал». */
@@ -108,7 +138,8 @@ final class PtController {
         }
     }
 
-    private static synchronized Controller controller(Context context) {
+    /** Вызывать под LOCK. */
+    private static Controller controller(Context context) {
         if (controller == null) {
             File dir = new File(context.getFilesDir(), STATE_DIR);
             //noinspection ResultOfMethodCallIgnored
