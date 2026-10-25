@@ -156,7 +156,15 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
 
     private boolean startTunnel() {
         ParcelFileDescriptor t = tun;
-        if (t == null || !Tun2Socks.start(this, t, socksPort)) {
+        boolean started;
+        try {
+            started = t != null && Tun2Socks.start(this, t, socksPort);
+        } catch (LinkageError e) {
+            // нативная библиотека не загрузилась
+            Log.e(TAG, "tun2socks", e);
+            started = false;
+        }
+        if (!started) {
             fail(R.string.error_tun2socks);
             return false;
         }
