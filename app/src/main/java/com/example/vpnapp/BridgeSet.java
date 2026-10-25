@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 /**
@@ -69,17 +70,64 @@ final class BridgeSet {
         return new BridgeSet(parts[0], lines);
     }
 
-    /** Разбор строк, вставленных пользователем: убираем «Bridge », пустые и комментарии. */
-    static List<String> parseUserLines(@Nullable String text) {
-        List<String> result = new ArrayList<>();
-        if (text == null) return result;
-        for (String raw : text.split("\\r?\\n")) {
-            String line = raw.trim();
-            if (line.regionMatches(true, 0, "Bridge ", 0, 7)) line = line.substring(7).trim();
-            if (line.isEmpty() || line.startsWith("#")) continue;
-            result.add(line);
+    /** Объединение нескольких наборов в один (Tor пробует все мосты параллельно). */
+    static BridgeSet combine(String label, List<BridgeSet> sets) {
+        List<String> lines = new ArrayList<>();
+        for (BridgeSet set : sets) {
+            for (String line : set.lines) {
+                if (!lines.contains(line)) lines.add(line);
+            }
         }
-        return result;
+        return new BridgeSet(label, lines);
+    }
+
+    /** Только строки указанного транспорта (null — если таких нет). */
+    @Nullable
+    BridgeSet only(String transport) {
+        List<String> result = new ArrayList<>();
+        for (String line : lines) {
+            if (transport.equals(transportOf(line))) result.add(line);
+        }
+        return result.isEmpty() ? null : new BridgeSet(label, result);
+    }
+
+    /** Все строки, кроме указанного транспорта. */
+    BridgeSet without(String transport) {
+        List<String> result = new ArrayList<>();
+        for (String line : lines) {
+            if (!transport.equals(transportOf(line))) result.add(line);
+        }
+        return new BridgeSet(label, result);
+    }
+
+    /** Строки моста с этим отпечатком: так запоминаем именно сработавший мост. */
+    @Nullable
+    BridgeSet narrowTo(@Nullable String fingerprint) {
+        if (fingerprint == null || fingerprint.isEmpty()) return null;
+        String fp = fingerprint.toUpperCase(Locale.ROOT);
+        List<String> result = new ArrayList<>();
+        for (String line : lines) {
+            if (line.toUpperCase(Locale.ROOT).contains(fp)) result.add(line);
+        }
+        if (result.isEmpty()) return null;
+        return new BridgeSet(labelFor(transportOf(result.get(0))), result);
+    }
+
+    /** Название транспорта для экрана. */
+    static String labelFor(@Nullable String transport) {
+        if (transport == null) return "Bridge";
+        switch (transport) {
+            case "snowflake":
+                return "Snowflake";
+            case "webtunnel":
+                return "WebTunnel";
+            case "meek_lite":
+                return "meek";
+            case "dnstt":
+                return "DNSTT";
+            default:
+                return transport;
+        }
     }
 
     /** Транспорт строки моста или null для обычного моста «IP:порт отпечаток». */

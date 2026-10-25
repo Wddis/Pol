@@ -10,6 +10,9 @@ import java.util.List;
 /** Порядок способов подключения для выбранного режима. */
 final class ConnectPlan {
 
+    private static final String PT_DNSTT = "dnstt";
+    private static final String PT_SNOWFLAKE = "snowflake";
+
     private ConnectPlan() {
     }
 
@@ -22,19 +25,21 @@ final class ConnectPlan {
         List<BridgeSet> plan = new ArrayList<>();
         switch (prefs.getMode()) {
             case SNOWFLAKE:
-                add(plan, builtIn(context, BuiltInBridges.SNOWFLAKE, R.string.mode_snowflake));
+                add(plan, snowflakeAll(context));
                 break;
             case OBFS4:
-                add(plan, builtIn(context, BuiltInBridges.OBFS4, R.string.mode_obfs4));
+                add(plan, lines(context.getString(R.string.mode_obfs4),
+                        BuiltInBridges.get(context, BuiltInBridges.OBFS4)));
                 break;
             case MEEK:
-                add(plan, builtIn(context, BuiltInBridges.MEEK, R.string.mode_meek));
+                add(plan, lines(context.getString(R.string.mode_meek),
+                        BuiltInBridges.get(context, BuiltInBridges.MEEK)));
+                break;
+            case DNSTT:
+                add(plan, lines(context.getString(R.string.mode_dnstt), BuiltInBridges.dnstt()));
                 break;
             case CUSTOM:
-                List<String> lines = BridgeSet.parseUserLines(prefs.getCustomBridges());
-                if (!lines.isEmpty()) {
-                    plan.add(new BridgeSet(context.getString(R.string.mode_custom), lines));
-                }
+                add(plan, custom(context, prefs));
                 break;
             case DIRECT:
                 plan.add(BridgeSet.direct(context.getString(R.string.mode_direct)));
@@ -47,30 +52,63 @@ final class ConnectPlan {
     }
 
     /**
-     * Авто: последний рабочий способ → рекомендации Moat (свежие мосты для этой сети)
-     * → встроенные snowflake, obfs4, meek → без мостов.
+     * Авто:
+     * 1) последний рабочий мост (быстрый путь);
+     * 2) все мосты сразу — Tor пробует их параллельно и берёт первый ответивший:
+     *    от Moat, свои, snowflake (CDN77 и Google AMP), meek, obfs4;
+     * 3) DNSTT — медленный запасной путь через DNS;
+     * 4) без мостов (первым, если Moat сказал, что мосты в этой стране не нужны).
      */
     private static void buildAuto(Context context, Prefs prefs, @Nullable MoatClient.Result moat,
                                   List<BridgeSet> plan) {
+        boolean directOk = moat != null && moat.directOk;
+        BridgeSet direct = BridgeSet.direct(context.getString(R.string.mode_direct));
+        if (directOk) add(plan, direct);
         add(plan, prefs.getLastGood());
-        if (moat != null) {
-            if (moat.directOk) add(plan, BridgeSet.direct(context.getString(R.string.mode_direct)));
-            for (BridgeSet s : moat.sets) add(plan, s);
-        } else {
-            for (BridgeSet s : prefs.getMoatCache()) add(plan, s);
+
+        List<BridgeSet> moatSets = moat != null ? moat.sets : prefs.getMoatCache();
+        List<BridgeSet> pool = new ArrayList<>(moatSets);
+        BridgeSet own = custom(context, prefs);
+        if (own != null) pool.add(own);
+        // Snowflake от Moat свежее встроенного; одинаковые адреса-заглушки Tor не любит
+        boolean moatSnowflake = false;
+        for (BridgeSet s : moatSets) moatSnowflake |= s.only(PT_SNOWFLAKE) != null;
+        pool.add(new BridgeSet("", BuiltInBridges.snowflakeAmp(context)));
+        if (!moatSnowflake) pool.add(new BridgeSet("", BuiltInBridges.get(context, BuiltInBridges.SNOWFLAKE)));
+        pool.add(new BridgeSet("", BuiltInBridges.get(context, BuiltInBridges.MEEK)));
+        pool.add(new BridgeSet("", BuiltInBridges.get(context, BuiltInBridges.OBFS4)));
+        BridgeSet all = BridgeSet.combine(context.getString(R.string.mode_all), pool).without(PT_DNSTT);
+        if (!all.isDirect()) add(plan, all);
+
+        // DNSTT отдельно: если Tor выберет его вместе с быстрыми мостами, всё будет медленным
+        // Свои DNSTT от Moat не смешиваем со встроенными: у них одинаковые адреса-заглушки
+        List<BridgeSet> dnsttPool = new ArrayList<>();
+        for (BridgeSet s : moatSets) {
+            BridgeSet d = s.only(PT_DNSTT);
+            if (d != null) dnsttPool.add(d);
         }
-        List<String> custom = BridgeSet.parseUserLines(prefs.getCustomBridges());
-        if (!custom.isEmpty()) add(plan, new BridgeSet(context.getString(R.string.mode_custom), custom));
-        add(plan, builtIn(context, BuiltInBridges.SNOWFLAKE, R.string.mode_snowflake));
-        add(plan, builtIn(context, BuiltInBridges.OBFS4, R.string.mode_obfs4));
-        add(plan, builtIn(context, BuiltInBridges.MEEK, R.string.mode_meek));
-        add(plan, BridgeSet.direct(context.getString(R.string.mode_direct)));
+        if (dnsttPool.isEmpty()) dnsttPool.add(new BridgeSet("", BuiltInBridges.dnstt()));
+        add(plan, BridgeSet.combine(context.getString(R.string.mode_dnstt), dnsttPool));
+
+        if (!directOk) add(plan, direct);
     }
 
     @Nullable
-    private static BridgeSet builtIn(Context context, String type, int label) {
-        List<String> lines = BuiltInBridges.get(context, type);
-        return lines.isEmpty() ? null : new BridgeSet(context.getString(label), lines);
+    private static BridgeSet snowflakeAll(Context context) {
+        List<String> lines = new ArrayList<>(BuiltInBridges.get(context, BuiltInBridges.SNOWFLAKE));
+        lines.addAll(BuiltInBridges.snowflakeAmp(context));
+        return lines(context.getString(R.string.mode_snowflake), lines);
+    }
+
+    @Nullable
+    private static BridgeSet custom(Context context, Prefs prefs) {
+        return lines(context.getString(R.string.mode_custom),
+                BridgeParser.parse(prefs.getCustomBridges()).valid);
+    }
+
+    @Nullable
+    private static BridgeSet lines(String label, List<String> lines) {
+        return lines.isEmpty() ? null : new BridgeSet(label, lines);
     }
 
     /** Добавляет без повторов (одинаковые строки мостов). */

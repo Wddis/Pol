@@ -6,6 +6,7 @@ enum BridgeMode {
     SNOWFLAKE(R.string.mode_snowflake, R.string.mode_snowflake_hint),
     OBFS4(R.string.mode_obfs4, R.string.mode_obfs4_hint),
     MEEK(R.string.mode_meek, R.string.mode_meek_hint),
+    DNSTT(R.string.mode_dnstt, R.string.mode_dnstt_hint),
     CUSTOM(R.string.mode_custom, R.string.mode_custom_hint),
     DIRECT(R.string.mode_direct, R.string.mode_direct_hint);
 

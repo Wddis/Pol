@@ -9,6 +9,7 @@ import android.content.ServiceConnection;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.SystemClock;
+import android.text.TextUtils;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
@@ -22,6 +23,7 @@ import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Writer;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
@@ -37,7 +39,8 @@ import java.util.regex.Pattern;
 final class TorController {
 
     interface Listener {
-        void onProgress(int percent);
+        /** reason — причина проблемы от Tor (TIMEOUT, CONNECTRESET, …) или null. */
+        void onProgress(int percent, @Nullable String reason);
 
         void onReady(int socksPort);
 
@@ -50,6 +53,10 @@ final class TorController {
     // Пауза, чтобы прошлый экземпляр Tor успел полностью завершиться
     private static final long RESTART_GAP_MS = 3_000;
     private static final Pattern PROGRESS = Pattern.compile("PROGRESS=(\\d+)");
+    private static final Pattern REASON = Pattern.compile("REASON=(\\S+)");
+    private static final Pattern WARNING = Pattern.compile("WARNING=\"([^\"]*)\"");
+    private static final Pattern TAG_NAME = Pattern.compile("TAG=(\\S+)");
+    private static final Pattern FIRST_HOP = Pattern.compile(" BUILT \\$([0-9A-Fa-f]{40})");
     private static final Pattern PORT = Pattern.compile(":(\\d+)\"?(\\s|$)");
 
     private static volatile long lastStopAt;
@@ -67,6 +74,8 @@ final class TorController {
     private long startedAt;
     private long lastProgressAt;
     private int lastProgress = -1;
+    @Nullable private String lastReason;
+    private int subscribed = -1;    // сессия, для которой подписаны на журнал Tor (поток control)
     private long stallMs;
     private long hardMs;
 
@@ -91,7 +100,7 @@ final class TorController {
             String status = intent.getStringExtra(TorService.EXTRA_STATUS);
             // Пока не привязались, это могут быть события прошлого экземпляра Tor
             if (TorService.ACTION_ERROR.equals(action)) {
-                Log.w(TAG, "Tor error: " + intent.getStringExtra(Intent.EXTRA_TEXT));
+                DiagLog.add("Tor ошибка запуска: " + intent.getStringExtra(Intent.EXTRA_TEXT));
                 handler.post(() -> {
                     if (bound) fail(R.string.error_tor_start, true);
                 });
@@ -152,6 +161,19 @@ final class TorController {
         }
     }
 
+    /** Отпечаток первого узла (моста) готовой цепочки — какой мост сработал (блокирующий вызов). */
+    @Nullable
+    String firstHopFingerprint() {
+        try {
+            TorControlConnection conn = control();
+            if (conn == null) return null;
+            Matcher m = FIRST_HOP.matcher(conn.getInfo("circuit-status"));
+            return m.find() ? m.group(1) : null;
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
     /** Код страны по IP из базы GeoIP самого Tor, например "de" (блокирующий вызов). */
     @Nullable
     String countryOf(String ip) {
@@ -182,6 +204,7 @@ final class TorController {
         ready = false;
         pollBusy = false;
         lastProgress = -1;
+        lastReason = null;
     }
 
     private void bindTor() {
@@ -202,7 +225,9 @@ final class TorController {
         if (listener == null || ready) return;
         long now = SystemClock.elapsedRealtime();
         if (now - startedAt > hardMs || now - lastProgressAt > stallMs) {
-            Log.w(TAG, "timeout at " + lastProgress + "%");
+            DiagLog.add(now - startedAt > hardMs
+                    ? "Время попытки вышло (" + hardMs / 1000 + " с), Tor на " + lastProgress + "%"
+                    : "Прогресс стоит " + stallMs / 1000 + " с на " + lastProgress + "%");
             fail(R.string.error_timeout, true);
             return;
         }
@@ -216,31 +241,53 @@ final class TorController {
 
     /** Поток control: блокирующие запросы к Tor. */
     private void poll(int s) {
-        int progress = -1;
+        String phase = null;
         int port = 0;
         try {
             TorControlConnection conn = control();
             if (conn != null) {
-                progress = parseProgress(conn.getInfo("status/bootstrap-phase"));
-                if (progress >= 100) port = parsePort(conn.getInfo("net/listeners/socks"));
+                subscribeLog(conn, s);
+                phase = conn.getInfo("status/bootstrap-phase");
+                if (parseProgress(phase) >= 100) port = parsePort(conn.getInfo("net/listeners/socks"));
             }
         } catch (IOException | RuntimeException e) {
             Log.w(TAG, "poll: " + e);
         }
-        int p = progress;
+        String ph = phase;
         int sp = port;
-        handler.post(() -> onPolled(s, p, sp));
+        handler.post(() -> onPolled(s, ph, sp));
     }
 
-    private void onPolled(int s, int progress, int port) {
+    /** Подписка на предупреждения Tor для журнала (STATUS_CLIENT нужен самому TorService). */
+    private void subscribeLog(TorControlConnection conn, int s) throws IOException {
+        if (subscribed == s) return;
+        subscribed = s;
+        conn.addRawEventListener((keyword, data) -> DiagLog.add("tor " + keyword + ": " + data));
+        conn.setEvents(Arrays.asList("STATUS_CLIENT", "WARN", "NOTICE"));
+    }
+
+    private void onPolled(int s, @Nullable String phase, int port) {
         pollBusy = false;
         Listener l = listener;
-        if (s != session || l == null || ready || progress < 0) return;
-        if (progress > lastProgress) {
+        if (s != session || l == null || ready || phase == null) return;
+        int progress = parseProgress(phase);
+        String reason = find(REASON, phase);
+        boolean progressed = progress > lastProgress;
+        boolean reasonChanged = !TextUtils.equals(reason, lastReason);
+        if (progressed) {
             lastProgress = progress;
             lastProgressAt = SystemClock.elapsedRealtime();
-            l.onProgress(progress);
+            DiagLog.add("Tor " + progress + "% " + find(TAG_NAME, phase));
         }
+        if (reasonChanged) {
+            lastReason = reason;
+            if (reason != null) {
+                String warning = find(WARNING, phase);
+                DiagLog.add("Tor проблема на " + progress + "%: " + reason
+                        + (warning != null ? " «" + warning + "»" : ""));
+            }
+        }
+        if (progressed || reasonChanged) l.onProgress(lastProgress, reason);
         if (progress >= 100) {
             if (port <= 0) {
                 fail(R.string.error_tor_start, true);
@@ -266,6 +313,7 @@ final class TorController {
     }
 
     private void writeTorrc(String countryCode, List<String> bridgeTorrc) throws IOException {
+        DiagLog.add("torrc: выход " + countryCode + ", строк мостов " + Math.max(0, bridgeTorrc.size() - 1));
         File geoip = GeoIp.install(context);
         String cc = countryCode.toLowerCase(Locale.ROOT);
         StringBuilder torrc = new StringBuilder()
@@ -285,6 +333,12 @@ final class TorController {
         if (phase == null) return 0;
         Matcher m = PROGRESS.matcher(phase);
         return m.find() ? Integer.parseInt(m.group(1)) : 0;
+    }
+
+    @Nullable
+    private static String find(Pattern p, String text) {
+        Matcher m = p.matcher(text);
+        return m.find() ? m.group(1) : null;
     }
 
     private static int parsePort(@Nullable String listeners) {

@@ -6,6 +6,9 @@ import android.util.Log;
 import androidx.annotation.Nullable;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.RandomAccessFile;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -16,15 +19,17 @@ import IPtProxy.IPtProxy;
 import IPtProxy.OnTransportEvents;
 
 /**
- * Pluggable transports (IPtProxy): локальные SOCKS-прокси obfs4, snowflake, webtunnel, meek.
+ * Pluggable transports (IPtProxy): локальные SOCKS-прокси obfs4, snowflake, webtunnel, meek, dnstt.
  * Tor подключается к ним через ClientTransportPlugin.
  */
 final class PtController {
 
     private static final String TAG = "PtController";
     private static final String STATE_DIR = "pt_state";
+    private static final int LOG_TAIL_BYTES = 6 * 1024;
 
     private static Controller controller;
+    private static File stateDir;
 
     private final Context context;
     private final List<String> running = new ArrayList<>();
@@ -66,7 +71,7 @@ final class PtController {
         return torrc;
     }
 
-    /** Запуск одного транспорта (meek для Moat); возвращает локальный порт SOCKS. */
+    /** Запуск одного транспорта (meek/dnstt для Moat); возвращает локальный порт SOCKS. */
     synchronized long startSingle(String transport) throws Exception {
         Controller c = controller(context);
         c.start(transport, null);
@@ -86,12 +91,31 @@ final class PtController {
         running.clear();
     }
 
+    /** Хвост журнала IPtProxy (ошибки obfs4/snowflake/meek) для экрана «Журнал». */
+    static String logTail() {
+        File dir = stateDir;
+        if (dir == null) return "";
+        File log = new File(dir, IPtProxy.LogFileName);
+        if (!log.exists()) return "";
+        try (RandomAccessFile f = new RandomAccessFile(log, "r")) {
+            long start = Math.max(0, f.length() - LOG_TAIL_BYTES);
+            byte[] buf = new byte[(int) (f.length() - start)];
+            f.seek(start);
+            f.readFully(buf);
+            return new String(buf, StandardCharsets.UTF_8);
+        } catch (IOException e) {
+            return "";
+        }
+    }
+
     private static synchronized Controller controller(Context context) {
         if (controller == null) {
             File dir = new File(context.getFilesDir(), STATE_DIR);
             //noinspection ResultOfMethodCallIgnored
             dir.mkdirs();
-            controller = new Controller(dir.getAbsolutePath(), false, false, "WARN", EVENTS);
+            stateDir = dir;
+            // Журнал включён, адреса в нём скрыты (unsafeLogging = false)
+            controller = new Controller(dir.getAbsolutePath(), true, false, "INFO", EVENTS);
         }
         return controller;
     }
@@ -103,6 +127,7 @@ final class PtController {
         c.setSnowflakeBrokerUrl(orEmpty(BridgeSet.arg(line, "url")));
         c.setSnowflakeFrontDomains(orEmpty(fronts));
         c.setSnowflakeIceServers(orEmpty(BridgeSet.arg(line, "ice")));
+        // AMP-кэш не задаём по умолчанию: он есть только в своих строках моста
         c.setSnowflakeAmpCacheUrl("");
         c.setSnowflakeSqsUrl("");
         c.setSnowflakeSqsCreds("");
@@ -115,17 +140,17 @@ final class PtController {
     private static final OnTransportEvents EVENTS = new OnTransportEvents() {
         @Override
         public void connected(String name) {
-            Log.i(TAG, name + " connected");
+            DiagLog.add("PT " + name + ": готов");
         }
 
         @Override
         public void error(String name, Exception error) {
-            Log.w(TAG, name + " error: " + error);
+            DiagLog.add("PT " + name + " ошибка: " + error);
         }
 
         @Override
         public void stopped(String name, Exception error) {
-            Log.i(TAG, name + " stopped" + (error != null ? ": " + error : ""));
+            if (error != null) DiagLog.add("PT " + name + " остановлен: " + error);
         }
     };
 }

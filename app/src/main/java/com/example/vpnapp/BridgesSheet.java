@@ -2,6 +2,9 @@ package com.example.vpnapp;
 
 import android.app.Dialog;
 import android.os.Bundle;
+import android.text.Editable;
+import android.text.TextUtils;
+import android.text.TextWatcher;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -36,6 +39,7 @@ public class BridgesSheet extends BottomSheetDialogFragment {
     private BridgeMode selected;
     private View customBox;
     private EditText customInput;
+    private TextView parseResult;
 
     @Nullable
     @Override
@@ -46,11 +50,27 @@ public class BridgesSheet extends BottomSheetDialogFragment {
         LinearLayout list = root.findViewById(R.id.list);
         customBox = root.findViewById(R.id.customBox);
         customInput = root.findViewById(R.id.customInput);
+        parseResult = root.findViewById(R.id.parseResult);
 
         selected = savedInstanceState != null
                 ? BridgeMode.from(savedInstanceState.getString(STATE_MODE))
                 : prefs.getMode();
         if (savedInstanceState == null) customInput.setText(prefs.getCustomBridges());
+        showParseResult();
+        customInput.addTextChangedListener(new TextWatcher() {
+            @Override
+            public void beforeTextChanged(CharSequence s, int start, int count, int after) {
+            }
+
+            @Override
+            public void onTextChanged(CharSequence s, int start, int before, int count) {
+            }
+
+            @Override
+            public void afterTextChanged(Editable s) {
+                showParseResult();
+            }
+        });
 
         for (BridgeMode mode : BridgeMode.values()) {
             View row = inflater.inflate(R.layout.item_mode, list, false);
@@ -95,6 +115,21 @@ public class BridgesSheet extends BottomSheetDialogFragment {
         if (dialog != null && dialog.getWindow() != null) {
             dialog.getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         }
+    }
+
+    /** Подсказка под полем: сколько мостов распознано и каких. */
+    private void showParseResult() {
+        String text = customInput.getText().toString();
+        if (text.trim().isEmpty()) {
+            parseResult.setText("");
+            return;
+        }
+        BridgeParser.Result r = BridgeParser.parse(text);
+        String msg = r.valid.isEmpty()
+                ? getString(R.string.bridges_parsed_none)
+                : getString(R.string.bridges_parsed, r.valid.size(), TextUtils.join(", ", r.transports));
+        if (r.invalid > 0) msg += getString(R.string.bridges_invalid, r.invalid);
+        parseResult.setText(msg);
     }
 
     private void select(BridgeMode mode) {

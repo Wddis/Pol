@@ -93,8 +93,7 @@
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:layout_marginTop="@dimen/space_1"
-        android:text="@string/link_check"
-        android:visibility="invisible" />
+        android:text="@string/link_log" />
 
     <Space
         android:layout_width="match_parent"

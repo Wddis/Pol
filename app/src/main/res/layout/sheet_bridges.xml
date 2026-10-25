@@ -67,6 +67,15 @@
                     android:textColorHint="@color/text_secondary"
                     android:textSize="12sp" />
 
+                <!-- Сколько мостов распознано во вставленном тексте -->
+                <TextView
+                    android:id="@+id/parseResult"
+                    style="@style/Text.Oda.Small"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_1"
+                    android:textColor="@color/text" />
+
                 <TextView
                     style="@style/Text.Oda.Small"
                     android:layout_width="match_parent"

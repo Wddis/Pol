@@ -89,7 +89,14 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
             haptic(v);
             onPowerClick();
         });
-        checkLink.setOnClickListener(v -> startActivity(new Intent(this, BrowserActivity.class)));
+        // Под статусом: «Проверить в браузере» при подключении, иначе «Журнал»
+        checkLink.setOnClickListener(v -> {
+            if (state == ConnectionState.ON) {
+                startActivity(new Intent(this, BrowserActivity.class));
+            } else {
+                openLog();
+            }
+        });
         findViewById(R.id.killSwitch).setOnClickListener(v -> openKillSwitchSettings());
         bridgesLink.setOnClickListener(v -> openBridges());
 
@@ -239,7 +246,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         setText(statusView, getString(status), animate);
         setText(detailsView, detail, animate);
         setText(errorView, newState == ConnectionState.ERROR ? error : "", animate);
-        checkLink.setVisibility(newState == ConnectionState.ON ? View.VISIBLE : View.INVISIBLE);
+        checkLink.setText(newState == ConnectionState.ON ? R.string.link_check : R.string.link_log);
     }
 
     private void showCountry() {
@@ -251,6 +258,11 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private void showBridgeMode() {
         String mode = getString(prefs.getMode().title).toUpperCase(Locale.ROOT);
         bridgesLink.setText(getString(R.string.link_bridges, mode));
+    }
+
+    private void openLog() {
+        if (getSupportFragmentManager().findFragmentByTag(LogSheet.TAG) != null) return;
+        new LogSheet().show(getSupportFragmentManager(), LogSheet.TAG);
     }
 
     private void openBridges() {
