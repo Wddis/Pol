@@ -1,5 +1,5 @@
 /*
- * Подключается ко всем файлам tun2socks (-include, см. app/build.gradle и scripts/test-tun.sh).
+ * Подключается ко всем файлам tun2socks (-include, см. Application.mk и scripts/test-tun.sh).
  *
  * hev-socks5-tunnel без pipeline шлёт приветствие SOCKS5 («05 01 00») с MSG_MORE и ждёт ответа
  * сервера. MSG_MORE просит ядро придержать данные до следующей записи, а её нет — ядро отправляет
@@ -14,5 +14,8 @@
 #include <sys/socket.h>
 #undef MSG_MORE
 #define MSG_MORE 0
+/* Метка в библиотеке: CI проверяет, что заголовок подключился (.github/workflows/build.yml).
+   weak — одна на все файлы; экспортируемый символ компоновщик не выбрасывает */
+__attribute__((weak, used)) const char oda_hev_mark[] = "oda-hev: MSG_MORE=0";
 #endif
 #endif

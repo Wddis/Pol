@@ -318,10 +318,15 @@ final class PsiphonController {
                     }
                     break;
                 }
-                case "ConnectedServer":
-                    DiagLog.add("Psiphon: сервер ответил (" + data.optString("protocol")
-                            + ", " + data.optString("region") + ")");
+                case "ConnectedServer": {
+                    String proto = data.optString("protocol");
+                    String region = data.optString("region");
+                    DiagLog.add("Psiphon: сервер ответил (" + proto + ", " + region + ")");
+                    // ActiveTunnel и ConnectedServerRegion приходят позже «туннелей 1»: без этого
+                    // в журнале было «Psiphon подключён: ?, сервер ?»
+                    handler.post(() -> onConnectedServer(s, proto, region));
                     break;
+                }
                 case "ActiveTunnel": {
                     String proto = data.optString("protocol");
                     DiagLog.add("Psiphon: туннель через " + proto);
@@ -413,6 +418,12 @@ final class PsiphonController {
         Listener l = listener;
         if (s != session || l == null || ready) return;
         l.onPsiphonProgress(context.getString(R.string.psiphon_searching, attempts));
+    }
+
+    private void onConnectedServer(int s, String proto, String region) {
+        if (s != session) return;
+        if (protocol == null && !proto.isEmpty()) protocol = proto;
+        if (serverRegion == null && !region.isEmpty()) serverRegion = region;
     }
 
     private void onProtocol(int s, String proto) {
@@ -581,7 +592,10 @@ final class PsiphonController {
         return sb.toString();
     }
 
+    /** Начало и конец длинного сообщения: у Psiphon причина — в конце цепочки «функция#строка: …». */
     private static String clip(String s) {
-        return s.length() > MAX_MESSAGE ? s.substring(0, MAX_MESSAGE) + "…" : s;
+        if (s.length() <= MAX_MESSAGE) return s;
+        int half = MAX_MESSAGE / 2;
+        return s.substring(0, half) + " … " + s.substring(s.length() - half);
     }
 }

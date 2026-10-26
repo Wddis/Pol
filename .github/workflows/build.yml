@@ -69,6 +69,17 @@ jobs:
           test "$(unzip -l "$APK" | grep -c libbyedpi.so)" -eq 2
           test "$(unzip -l "$APK" | grep -c assets/psiphon/server_list.txt)" -eq 1
 
+      - name: Check tun2socks in APK (JNI class, oda-hev.h)
+        run: |
+          # В 0.8.9 флаги Application.mk потерялись: JNI_OnLoad искал чужой класс, приложение падало
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          for abi in arm64-v8a armeabi-v7a; do
+            unzip -p "$APK" "lib/$abi/libhev-socks5-tunnel.so" > "$RUNNER_TEMP/hev.so"
+            grep -qa 'com/example/vpnapp/Tun2Socks' "$RUNNER_TEMP/hev.so"
+            grep -qa 'oda-hev: MSG_MORE=0' "$RUNNER_TEMP/hev.so"
+            echo "$abi: JNI-класс и oda-hev.h на месте"
+          done
+
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:

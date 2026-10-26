@@ -999,12 +999,16 @@ public class VpnTunnelService extends VpnService
             }
         }
         ParcelFileDescriptor t = tun;
+        // Если tun2socks упадёт (нативный код), это последняя строка перед «завершился аварийно»
+        DiagLog.add("tun2socks: запуск → SOCKS 127.0.0.1:" + socksPort + ", DNS "
+                + (direct ? bypassDns + " через SOCKS-UDP" : Tun2SocksConfig.FAKE_DNS + " (mapdns)"));
         boolean started;
         try {
             started = t != null && Tun2Socks.start(this, t, socksPort, direct);
         } catch (LinkageError e) {
             // нативная библиотека не загрузилась
             Log.e(TAG, "tun2socks", e);
+            DiagLog.add("tun2socks: библиотека не загрузилась: " + e);
             started = false;
         }
         if (!started) {
