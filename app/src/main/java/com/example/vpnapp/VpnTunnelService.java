@@ -60,12 +60,17 @@ public class VpnTunnelService extends VpnService
     private static final long PSIPHON_TIMEOUT_MS = 8 * 60_000;
     // Перезапуски Psiphon, если его процесс завершился после подключения
     private static final int PSIPHON_RESTARTS = 3;
+    // Перезапуски ByeDPI, если его процесс завершился после подключения
+    private static final int BYPASS_RESTARTS = 3;
+    // Если полный перебор недавно не нашёл стратегию для соцсетей, в режиме «Обход DPI»
+    // столько времени сразу берём запомненную для обычного интернета, без нового перебора
+    private static final long BYPASS_QUICK_BASIC_MS = 12 * 60 * 60_000L;
 
     private HandlerThread thread;
     private Handler worker;
     private TorController tor;
     private PsiphonController psiphon;
-    private BypassController bypass;
+    private final BypassController[] bypass = new BypassController[BypassSearch.PARALLEL];
     private PtController pt;
     private Prefs prefs;
 
@@ -86,11 +91,12 @@ public class VpnTunnelService extends VpnService
     private boolean psiphonUsed;    // в этом подключении пробовали Psiphon
     private int psiphonRestarts;
     private String psiphonText = "";
-    private boolean bypassActive;   // обход DPI пробует стратегии или подключён
-    private int bypassProfile;      // индекс текущей стратегии в bypassPlan
-    private List<BypassController.Profile> bypassPlan = new ArrayList<>();
-    private int bypassFallback = -1;   // стратегия, давшая хотя бы обычный интернет (запас)
-    private boolean bypassClaimingFallback;  // идёт повторный запуск запасной стратегии
+    private boolean bypassActive;   // обход DPI перебирает стратегии или подключён
+    @Nullable private BypassSearch bypassSearch;
+    // Номер запуска в каждом слоте: отсекает результаты проверки прошлого запуска
+    private final int[] bypassRun = new int[BypassSearch.PARALLEL];
+    private int bypassSlot = -1;    // слот, через который подключены
+    private int bypassRestarts;
     private boolean bypassFull;     // обход пробил заблокированные сайты (не только обычные)
     private String bypassText = "";
     private int torPercent;
@@ -98,6 +104,8 @@ public class VpnTunnelService extends VpnService
     private String networkId = "UNKNOWN";
     @Nullable private String netCountry;
     @Nullable private NetProbe.Result probe;
+    @Nullable private BypassSearch.Score directScore;  // прямая проверка: эталон для обхода DPI
+    private boolean directDone;
     private boolean tunDirectDns;  // текущий tun поднят с реальным DNS (для обхода DPI)
 
     @Override
@@ -110,7 +118,7 @@ public class VpnTunnelService extends VpnService
         worker = new Handler(thread.getLooper());
         tor = new TorController(this, worker);
         psiphon = new PsiphonController(this, worker);
-        bypass = new BypassController(this, worker);
+        for (int i = 0; i < bypass.length; i++) bypass[i] = new BypassController(this, worker, i);
         pt = new PtController(this);
         VpnNotification.ensureChannel(this);
     }
@@ -172,10 +180,11 @@ public class VpnTunnelService extends VpnService
         networkId = networkId();
         engine = null;
         probe = null;
+        directScore = null;
+        directDone = false;
         psiphonRestarts = 0;
         psiphonText = "";
         bypassText = "";
-        bypassProfile = 0;
         torPercent = 0;
         lastReason = null;
         torError = R.string.error_blocked;
@@ -196,6 +205,7 @@ public class VpnTunnelService extends VpnService
             fail(R.string.error_tun);
             return;
         }
+        NetProbe.resetDns();
         probeNetwork(id);
         if (mode == BridgeMode.PSIPHON && !psiphonBuilt) {
             fail(R.string.error_psiphon_missing);
@@ -217,36 +227,41 @@ public class VpnTunnelService extends VpnService
 
     private void startBypass() {
         bypassActive = true;
-        bypassProfile = 0;
-        bypassFallback = -1;
-        bypassClaimingFallback = false;
-        bypassPlan = buildBypassPlan();
-        startBypassProfile();
-    }
-
-    /** План стратегий обхода: своя строка, иначе встроенные с сработавшей ранее — первой. */
-    private List<BypassController.Profile> buildBypassPlan() {
-        BypassController.Profile custom = BypassController.customProfile(prefs.getByedpiArgs());
-        if (custom != null) return new ArrayList<>(java.util.Collections.singletonList(custom));
-        List<BypassController.Profile> plan = new ArrayList<>(BypassController.PROFILES);
-        String good = prefs.getBypassGood();
-        if (good != null) {
-            // Сработавшую в прошлый раз стратегию пробуем первой — обычно это сразу успех
-            for (int i = 0; i < plan.size(); i++) {
-                if (plan.get(i).label.equals(good)) {
-                    plan.add(0, plan.remove(i));
-                    break;
-                }
-            }
+        bypassSlot = -1;
+        bypassRestarts = 0;
+        BypassProfile custom = BypassProfile.parse(getString(R.string.bypass_custom_label), prefs.getByedpiArgs());
+        Prefs.BypassBest best = custom == null ? prefs.getBypassBest(networkId) : null;
+        // Сразу брать «только обычный интернет» — лишь в режиме «Обход DPI»: в «Авто» у Psiphon
+        // и Tor должно остаться время открыть и соцсети
+        boolean quick = best != null && !best.full && prefs.getMode() == BridgeMode.BYPASS
+                && System.currentTimeMillis() - best.time < BYPASS_QUICK_BASIC_MS;
+        if (best != null) {
+            DiagLog.add("Обход DPI: в этой сети в прошлый раз «" + best.profile.label + "» ("
+                    + (best.full ? "соцсети открывались" : "только обычные сайты") + ")");
         }
-        return plan;
+        bypassSearch = new BypassSearch(custom, best != null ? best.profile : null,
+                best != null && best.full, quick);
+        if (directDone) bypassSearch.setBaseline(directScore);
+        startBypassBatch(bypassSearch.currentBatch());
     }
 
-    private void startBypassProfile() {
-        BypassController.Profile profile = bypassPlan.get(bypassProfile);
-        bypassText = getString(R.string.bypass_trying, profile.label);
+    /** Запустить пачку стратегий одновременно: каждая в своём слоте (свой процесс и порт). */
+    private void startBypassBatch(List<BypassProfile> batch) {
+        stopBypassSlots();
+        List<String> names = new ArrayList<>();
+        for (int i = 0; i < batch.size() && i < bypass.length; i++) {
+            bypassRun[i]++;
+            bypass[i].start(batch.get(i), this);
+            // На экране у цепочки — только сильная часть: «split SNI → oob SNI» → «oob SNI»
+            String label = batch.get(i).label;
+            names.add("«" + label.substring(label.lastIndexOf("→ ") + 1).trim() + "»");
+        }
+        bypassText = getString(R.string.bypass_trying, TextUtils.join(", ", names));
         if (engine == null) publish(ConnectionState.CONNECTING, progressText(), "");
-        bypass.start(profile, this);
+    }
+
+    private void stopBypassSlots() {
+        for (BypassController b : bypass) b.stop();
     }
 
     private void startPsiphon() {
@@ -305,10 +320,18 @@ public class VpnTunnelService extends VpnService
     /** Проверка сети напрямую: если закрыто всё зарубежное, подскажем про «белые списки». */
     private void probeNetwork(int id) {
         new Thread(() -> {
-            NetProbe.Result r = NetProbe.run();
+            NetProbe.Direct d = NetProbe.run();
+            NetProbe.Result r = d.result;
             worker.post(() -> {
                 if (!active || id != connection) return;
                 probe = r;
+                directScore = d.score;
+                directDone = true;
+                // Обход DPI ждёт этот результат как эталон обычного интернета
+                if (bypassSearch != null && bypassActive && engine == null) {
+                    bypassSearch.setBaseline(d.score);
+                    decideBypass();
+                }
                 if (r == NetProbe.Result.OK) return;
                 DiagLog.add(r == NetProbe.Result.WHITELIST
                         ? "Похоже на «белые списки»: зарубежные сайты закрыты даже напрямую"
@@ -581,85 +604,84 @@ public class VpnTunnelService extends VpnService
     // ---------- Обход DPI (ByeDPI) ----------
 
     @Override
-    public void onBypassListening(int port, String profileLabel) {
+    public void onBypassListening(int slot, int port, BypassProfile profile) {
         if (!active || !bypassActive) return;
         if (engine != null) {
-            // Кто-то уже подключился раньше
-            bypassActive = false;
-            bypass.stop();
-            return;
-        }
-        // Проверяем на реально заблокированных сайтах: пробивает ли стратегия DPI
-        int id = connection;
-        bypassText = getString(R.string.bypass_checking, profileLabel);
-        publish(ConnectionState.CONNECTING, progressText(), "");
-        new Thread(() -> {
-            NetProbe.Bypass q = NetProbe.bypassQuality(port);
-            worker.post(() -> onBypassVerified(id, port, profileLabel, q));
-        }, "oda-bypass-check").start();
-    }
-
-    private void onBypassVerified(int id, int port, String label, NetProbe.Bypass quality) {
-        if (!active || id != connection || !bypassActive || engine != null) return;
-        if (quality == NetProbe.Bypass.UNBLOCKS) {
-            DiagLog.add("Обход DPI сработал (" + label + "): заблокированный сайт открылся");
-            // Запоминаем стратегию, пробившую блокировку: в следующий раз сразу, без перебора
-            if (BypassController.customProfile(prefs.getByedpiArgs()) == null) prefs.setBypassGood(label);
-            claimBypass(port, label, true);
-            return;
-        }
-        // Запасная стратегия уже выбрана и перезапущена: берём обычный интернет
-        if (bypassClaimingFallback) {
-            if (quality == NetProbe.Bypass.BASIC) {
-                DiagLog.add("Обход DPI (" + label + "): соцсети закрыты, но обычные сайты работают");
-                claimBypass(port, label, false);
+            if (StatusBus.ENGINE_BYPASS.equals(engine) && slot == bypassSlot) {
+                DiagLog.add("Обход DPI: «" + profile.label + "» снова работает");
             } else {
-                bypassActive = false;
-                if (engine == null && !torActive && !psiphonActive) failAll();
+                bypass[slot].stop();  // кто-то уже подключился раньше
             }
             return;
         }
-        if (quality == NetProbe.Bypass.BASIC) {
-            DiagLog.add("Обход DPI (" + label + "): обычные сайты есть, заблокированные — нет, ищу дальше");
-            if (bypassFallback < 0) bypassFallback = bypassProfile;
-        } else {
-            DiagLog.add("Обход DPI (" + label + "): ничего не открылось");
-        }
-        nextBypassProfile();
+        // Проверяем как у браузера: заблокированные сайты (соцсети) и обычные, зарубежные и российские
+        int id = connection;
+        int run = bypassRun[slot];
+        new Thread(() -> {
+            BypassSearch.Score q = NetProbe.bypassQuality(port);
+            worker.post(() -> onBypassScored(id, slot, run, profile, q));
+        }, "oda-bypass-check-" + slot).start();
     }
 
-    private void claimBypass(int port, String label, boolean full) {
-        engine = StatusBus.ENGINE_BYPASS;
-        bypassFull = full;
-        stopOtherEngines(StatusBus.ENGINE_BYPASS);
-        socksPort = port;
-        if (startTunnel()) checkIp();
+    private void onBypassScored(int id, int slot, int run, BypassProfile profile, BypassSearch.Score score) {
+        if (!active || id != connection || !bypassActive || engine != null || bypassSearch == null) return;
+        if (run != bypassRun[slot]) return;  // результат прошлого запуска этого слота
+        bypassSearch.report(profile, score);  // в журнал — вместе с итогом пачки
+        decideBypass();
     }
 
     @Override
-    public void onBypassError(String reason) {
+    public void onBypassError(int slot, BypassProfile profile, String reason) {
         if (!active || !bypassActive) return;
-        nextBypassProfile();
+        if (StatusBus.ENGINE_BYPASS.equals(engine) && slot == bypassSlot) {
+            // ByeDPI упал уже после подключения: без него трафик стоит — перезапускаем
+            if (bypassRestarts < BYPASS_RESTARTS) {
+                bypassRestarts++;
+                DiagLog.add("Обход DPI: перезапуск «" + profile.label + "» (" + bypassRestarts
+                        + "/" + BYPASS_RESTARTS + ")");
+                bypass[slot].start(profile, this);
+                return;
+            }
+            fail(R.string.error_bypass_stopped);
+            return;
+        }
+        if (engine != null || bypassSearch == null) return;
+        bypassRun[slot]++;  // проверка этого запуска уже не нужна
+        bypassSearch.report(profile, NetProbe.nothing());
+        decideBypass();
     }
 
-    /** Следующая стратегия обхода; если кончились — обход сдаётся. */
-    private void nextBypassProfile() {
-        bypass.stop();
-        bypassActive = true;  // stop() сбросил слушателя, но перебор продолжается
-        bypassProfile++;
-        if (bypassProfile < bypassPlan.size()) {
-            startBypassProfile();
+    /** Пачка проверена: подключиться, проверить следующую или сдаться (решает BypassSearch). */
+    private void decideBypass() {
+        BypassSearch search = bypassSearch;
+        if (search == null || !search.ready()) return;
+        BypassSearch.Decision d = search.decide();
+        for (String note : d.notes) DiagLog.add(note);
+        if (d.claim != null) {
+            int slot = -1;
+            for (int i = 0; i < bypass.length; i++) {
+                if (bypass[i].profile() == d.claim) slot = i;
+            }
+            if (slot >= 0) {
+                for (int i = 0; i < bypass.length; i++) {
+                    if (i != slot) bypass[i].stop();
+                }
+                // Запоминаем выбор для этой сети (кроме своей строки и быстрого повтора запомненного)
+                if (!d.fromMemory && BypassProfile.parse("", prefs.getByedpiArgs()) == null) {
+                    prefs.setBypassBest(networkId, d.claim, d.full);
+                }
+                claimBypass(slot, d.claim, d.full);
+                return;
+            }
+            // Процесс выбранной стратегии успел завершиться: перезапуск и повторная проверка
+            DiagLog.add("Обход DPI: «" + d.claim.label + "» остановилась, проверяю ещё раз");
+            startBypassBatch(search.recheck(d.claim));
+            return;
+        } else if (d.test != null) {
+            startBypassBatch(d.test);
             return;
         }
-        // Ни одна стратегия не пробила блокировку. Если какая-то дала хотя бы обычный
-        // интернет — берём её (соцсети не откроются, но сеть будет), иначе сдаёмся
-        if (bypassFallback >= 0) {
-            bypassClaimingFallback = true;
-            bypassProfile = bypassFallback;
-            DiagLog.add("Обход DPI: заблокированные сайты не пробились, включаю обычный интернет");
-            startBypassProfile();
-            return;
-        }
+        stopBypassSlots();
         bypassActive = false;
         bypassText = "";
         DiagLog.add("Обход DPI не помог ни одной стратегией");
@@ -668,6 +690,18 @@ public class VpnTunnelService extends VpnService
         } else if (engine == null) {
             publish(ConnectionState.CONNECTING, progressText(), "");
         }
+    }
+
+    private void claimBypass(int slot, BypassProfile profile, boolean full) {
+        DiagLog.add("Обход DPI: подключаюсь через «" + profile.label + "» — "
+                + (full ? "заблокированные сайты открываются" : "только обычные сайты"));
+        engine = StatusBus.ENGINE_BYPASS;
+        bypassSlot = slot;
+        bypassFull = full;
+        bypassText = "";
+        stopOtherEngines(StatusBus.ENGINE_BYPASS);
+        socksPort = bypass[slot].socksPort();
+        if (startTunnel()) checkIp();
     }
 
     /** Остановить все способы, кроме победившего. */
@@ -684,7 +718,7 @@ public class VpnTunnelService extends VpnService
         }
         if (!StatusBus.ENGINE_BYPASS.equals(winner) && bypassActive) {
             bypassActive = false;
-            bypass.stop();
+            stopBypassSlots();
         }
     }
 
@@ -831,6 +865,8 @@ public class VpnTunnelService extends VpnService
         } else {
             sb.append(getString(R.string.detail_ip, ip, Country.nameOf(this, cc.toUpperCase(Locale.ROOT))));
         }
+        // Честно: соцсети этим способом не открылись
+        if (!bypassFull) sb.append('\n').append(getString(R.string.bypass_partial_hint));
         return sb.toString();
     }
 
@@ -985,8 +1021,10 @@ public class VpnTunnelService extends VpnService
         }
         if (bypassActive) {
             bypassActive = false;
-            bypass.stop();
+            stopBypassSlots();
         }
+        bypassSearch = null;
+        bypassSlot = -1;
         torActive = false;
         // Сам Tor не останавливается (повторный запуск в процессе приводил к падению),
         // у него только выключается сеть

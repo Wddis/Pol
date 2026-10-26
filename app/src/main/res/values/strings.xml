@@ -29,10 +29,11 @@
     <string name="psiphon_timeout">не подключился вовремя</string>
 
     <!-- Обход DPI (ByeDPI) -->
-    <string name="bypass_trying">Обход DPI: стратегия «%1$s»…</string>
-    <string name="bypass_checking">Обход DPI (%1$s): проверка…</string>
+    <string name="bypass_trying">Обход DPI: проверяю %1$s…</string>
+    <string name="bypass_custom_label">свои настройки</string>
     <string name="bypass_connected">Обход DPI (прямое соединение)</string>
-    <string name="bypass_connected_partial">Обход DPI (обычные сайты; соцсети могут не открыться)</string>
+    <string name="bypass_connected_partial">Обход DPI: только обычные сайты</string>
+    <string name="bypass_partial_hint">Соцсети в этой сети обход DPI не открывает (похоже, блокировка по IP). Для них: «Авто» (Psiphon/Tor), своя строка ByeDPI в «СПОСОБ» или свой сервер</string>
 
     <!-- Проверка сети напрямую -->
     <string name="hint_whitelist">Зарубежные сайты закрыты даже без VPN: похоже на «белые списки» оператора</string>
@@ -73,6 +74,7 @@
     <string name="error_psiphon_stopped">Psiphon неожиданно остановился</string>
     <string name="error_psiphon_failed">Psiphon не подключился. Попробуйте «Авто» или другую сеть (Wi-Fi). Подробности в ЖУРНАЛЕ</string>
     <string name="error_bypass_missing">В этой сборке нет модуля обхода DPI. Выберите «Авто» или другой способ</string>
+    <string name="error_bypass_stopped">Обход DPI неожиданно остановился</string>
     <string name="error_bypass_failed">Обход DPI не помог: сайты закрыты не по DPI, а по IP, либо «белые списки». Попробуйте «Авто» (Psiphon/Tor) или Wi-Fi. Подробности в ЖУРНАЛЕ</string>
     <string name="error_no_custom_bridges">Добавьте свои мосты в «СПОСОБ» или выберите «Авто»</string>
     <string name="error_tor_stopped">Tor неожиданно остановился</string>
@@ -109,7 +111,7 @@
     <string name="bridges_invalid">, не распознано: %1$d</string>
     <string name="bridges_save">СОХРАНИТЬ</string>
     <string name="byedpi_hint">Свои аргументы ByeDPI (необязательно), напр. -s 1+s -d 1+s</string>
-    <string name="byedpi_where">Пусто — приложение само переберёт стратегии обхода. Готовые строки под вашего оператора можно найти в сообществах ByeDPI</string>
+    <string name="byedpi_where">Пусто — приложение само переберёт стратегии и выберет ту, что открывает соцсети, не ломая обычные сайты. Что дала каждая — в ЖУРНАЛЕ. Готовые строки под вашего оператора можно найти в сообществах ByeDPI</string>
 
     <!-- Уведомление -->
     <string name="notif_channel">VPN</string>

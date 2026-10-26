@@ -25,6 +25,10 @@ jobs:
           java-version: '25'
           cache: gradle
 
+      # Логика выбора стратегии обхода DPI и строки ByeDPI — на компьютере, за секунды
+      - name: Test DPI bypass strategies
+        run: bash scripts/test-bypass.sh
+
       # NDK для tun2socks: Android Gradle Plugin сам ставит нужную версию
       # через sdkmanager, если её нет на раннере.
 

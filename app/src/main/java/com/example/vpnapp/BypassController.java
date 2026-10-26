@@ -25,66 +25,49 @@ import java.util.List;
  * Заграничного сервера нет — блокировать по адресу нечего. Но работает только против блокировок
  * по DPI/имени сайта: против блокировки по IP и «белых списков» не поможет (там нужен туннель).
  * <p>
- * Запускается отдельным процессом (как Psiphon): так проще и надёжнее, чем в своём процессе.
- * Методы и колбэки — в потоке handler.
+ * Один контроллер — один процесс ByeDPI на своём порту ({@link #BASE_PORT} + номер слота):
+ * сервис проверяет несколько стратегий одновременно (см. BypassSearch). Запускается отдельным
+ * процессом (как Psiphon). Методы и колбэки — в потоке handler.
  */
 final class BypassController {
 
     interface Listener {
-        /** SOCKS-порт поднят; дальше подключение проверяет сам сервис пробой зарубежного сайта. */
-        void onBypassListening(int socksPort, String profileLabel);
+        /** SOCKS-порт поднят; дальше стратегию проверяет сам сервис (NetProbe). */
+        void onBypassListening(int slot, int socksPort, BypassProfile profile);
 
-        /** Процесс не запустился или упал. */
-        void onBypassError(String reason);
+        /** Процесс не запустился или завершился (в том числе уже после подключения). */
+        void onBypassError(int slot, BypassProfile profile, String reason);
     }
 
-    /** Стратегия обхода: название для журнала и аргументы ByeDPI. */
-    static final class Profile {
-        final String label;
-        final String[] args;
-
-        Profile(String label, String... args) {
-            this.label = label;
-            this.args = args;
-        }
-    }
-
-    // Набор стратегий для перебора. Разные провайдеры ловятся разными способами, поэтому
-    // пробуем по очереди и проверяем каждую реальным запросом к зарубежному сайту.
-    // Формат аргументов — см. README ByeDPI (-s split, -d disorder, -f fake, -o oob, --tlsrec, --auto).
-    static final List<Profile> PROFILES = Arrays.asList(
-            // fake+disorder с QUIC-fake — часто нужно для Meta (Instagram); сильные идут первыми
-            new Profile("fake+disorder", "-f", "-1", "-t", "8", "-d", "1+s", "--udp-fake", "2"),
-            new Profile("disorder SNI", "-d", "1+s"),
-            new Profile("split+tlsrec", "-s", "1+s", "--tlsrec", "1+s"),
-            new Profile("split SNI", "-s", "1+s"),
-            new Profile("oob SNI", "-o", "1+s"),
-            new Profile("fake+split+disorder", "-f", "-1", "-t", "8", "-s", "1+s",
-                    "-d", "1+s", "--tlsrec", "1+s", "--udp-fake", "2"));
+    static final int BASE_PORT = 10809;  // локальные порты SOCKS ByeDPI: 10809, 10810, …
 
     private static final String TAG = "BypassController";
     private static final String LIB = "libbyedpi.so";
     private static final String DIR = "byedpi";
-    private static final String LOG_FILE = "byedpi.log";
-    private static final int PORT = 10809;  // локальный порт SOCKS ByeDPI
     private static final long LISTEN_TIMEOUT_MS = 6_000;
     private static final long STALE_WAIT_MS = 3_000;
-    private static final long LOG_LIMIT_BYTES = 256 * 1024;
-    private static final int LOG_TAIL_BYTES = 4 * 1024;
+    private static final int LOG_TAIL_CHARS = 4 * 1024;
     private static final Object LAUNCH_LOCK = new Object();
 
     private final Context context;
     private final Handler handler;
+    private final int slot;
+    private final int port;
 
     // Поля ниже меняются только в потоке handler
     @Nullable private Listener listener;
+    @Nullable private BypassProfile profile;
     private int session;
     @Nullable private volatile Process process;
     private volatile int liveSession;
+    // Последние строки вывода ByeDPI (ошибки ядра): в памяти, чтобы файл журнала не рос без конца
+    private final StringBuilder output = new StringBuilder();
 
-    BypassController(Context context, Handler handler) {
+    BypassController(Context context, Handler handler, int slot) {
         this.context = context.getApplicationContext();
         this.handler = handler;
+        this.slot = slot;
+        this.port = BASE_PORT + slot;
     }
 
     /** Есть ли ByeDPI в APK (его нет в локальной сборке без NDK). */
@@ -93,72 +76,68 @@ final class BypassController {
     }
 
     int socksPort() {
-        return PORT;
+        return port;
     }
 
-    /** Разобрать свою строку аргументов ByeDPI в профиль или null, если пусто. */
+    /** Стратегия, с которой запущен процесс (или null). */
     @Nullable
-    static Profile customProfile(@Nullable String args) {
-        if (args == null) return null;
-        List<String> parts = new ArrayList<>();
-        for (String p : args.trim().split("\\s+")) {
-            if (!p.isEmpty()) parts.add(p);
-        }
-        if (parts.isEmpty()) return null;
-        return new Profile("свои настройки", parts.toArray(new String[0]));
+    BypassProfile profile() {
+        return profile;
     }
 
     /** Запуск ByeDPI с указанной стратегией. */
-    void start(Profile profile, Listener l) {
+    void start(BypassProfile p, Listener l) {
         stop();
         listener = l;
+        profile = p;
         int s = ++session;
         liveSession = s;
+        synchronized (output) {
+            output.setLength(0);
+        }
         File exe = new File(context.getApplicationInfo().nativeLibraryDir, LIB);
-        DiagLog.add("Обход DPI: запуск, стратегия «" + profile.label + "» "
-                + join(profile.args));
-        new Thread(() -> run(s, exe, profile), "oda-byedpi").start();
+        DiagLog.add("Обход DPI: запуск «" + p.label + "» (порт " + port + "): " + p.argsLine());
+        new Thread(() -> run(s, exe, p), "oda-byedpi-" + slot).start();
     }
 
     /** Остановка: процесс ByeDPI завершается. */
     void stop() {
         listener = null;
+        profile = null;
         session++;
         liveSession = 0;
         Process p = process;
         process = null;
-        if (p != null) {
-            DiagLog.add("Обход DPI: остановка");
-            p.destroy();
+        if (p != null) p.destroy();
+    }
+
+    /** Последние строки вывода ByeDPI (для журнала). */
+    String outputTail() {
+        synchronized (output) {
+            return output.toString().trim();
         }
     }
 
-    private void run(int s, File exe, Profile profile) {
-        Process p;
+    private void run(int s, File exe, BypassProfile p) {
+        Process proc;
         synchronized (LAUNCH_LOCK) {
             if (s != liveSession) return;
             try {
                 if (!exe.isFile()) throw new IOException("нет " + LIB + " в APK");
-                killStale();
+                killStale(port);
                 File dir = new File(context.getFilesDir(), DIR);
                 //noinspection ResultOfMethodCallIgnored
                 dir.mkdirs();
-                File log = new File(dir, LOG_FILE);
-                if (log.length() > LOG_LIMIT_BYTES) {
-                    //noinspection ResultOfMethodCallIgnored
-                    log.delete();
-                }
                 List<String> cmd = new ArrayList<>();
                 cmd.add(exe.getAbsolutePath());
                 cmd.add("-i");
                 cmd.add("127.0.0.1");
                 cmd.add("-p");
-                cmd.add(Integer.toString(PORT));
-                cmd.addAll(Arrays.asList(profile.args));
-                p = new ProcessBuilder(cmd)
+                cmd.add(Integer.toString(port));
+                cmd.addAll(Arrays.asList(p.args));
+                proc = new ProcessBuilder(cmd)
                         .directory(dir)
                         .redirectErrorStream(true)
-                        .redirectOutput(log)
                         .start();
             } catch (IOException | RuntimeException e) {
                 Log.w(TAG, "start", e);
@@ -169,22 +148,54 @@ final class BypassController {
         }
         handler.post(() -> {
             if (s == session) {
-                process = p;
+                process = proc;
             } else {
-                p.destroy();
+                proc.destroy();
             }
         });
+        Thread reader = new Thread(() -> readOutput(s, proc), "oda-byedpi-out-" + slot);
+        reader.start();
         // Ждём, пока поднимется локальный SOCKS-порт
-        boolean up = awaitListening(s, p);
-        if (!p.isAlive()) {
-            handler.post(() -> fail(s, "процесс завершился: " + logTail(context)));
-            return;
-        }
+        boolean up = awaitListening(s, proc);
+        if (!proc.isAlive()) return;  // о завершении сообщит readOutput
         if (!up) {
             handler.post(() -> fail(s, "порт не открылся"));
             return;
         }
-        handler.post(() -> onListening(s, profile.label));
+        handler.post(() -> onListening(s, p));
+    }
+
+    /**
+     * Читает вывод процесса до его завершения (иначе он встанет на заполненном канале)
+     * и сообщает, если процесс завершился сам — в том числе уже после подключения.
+     */
+    private void readOutput(int s, Process proc) {
+        byte[] buf = new byte[1024];
+        try (InputStream in = proc.getInputStream()) {
+            int n;
+            while ((n = in.read(buf)) > 0) {
+                String chunk = new String(buf, 0, n, StandardCharsets.UTF_8);
+                synchronized (output) {
+                    output.append(chunk);
+                    if (output.length() > LOG_TAIL_CHARS) {
+                        output.delete(0, output.length() - LOG_TAIL_CHARS);
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+            // процесс остановлен
+        }
+        if (s != liveSession) return;  // остановили сами
+        int code;
+        try {
+            code = proc.waitFor();
+        } catch (InterruptedException e) {
+            return;
+        }
+        String tail = outputTail();
+        String reason = "процесс завершился (код " + code + ")"
+                + (tail.isEmpty() ? "" : ": " + lastLines(tail, 3));
+        handler.post(() -> fail(s, reason));
     }
 
     /** Ждёт, пока ByeDPI начнёт принимать подключения на локальном порту. */
@@ -192,7 +203,7 @@ final class BypassController {
         long deadline = SystemClock.elapsedRealtime() + LISTEN_TIMEOUT_MS;
         while (SystemClock.elapsedRealtime() < deadline && s == liveSession && p.isAlive()) {
             try (Socket sock = new Socket()) {
-                sock.connect(new InetSocketAddress("127.0.0.1", PORT), 500);
+                sock.connect(new InetSocketAddress("127.0.0.1", port), 500);
                 return true;
             } catch (IOException e) {
                 SystemClock.sleep(150);
@@ -201,41 +212,38 @@ final class BypassController {
         return false;
     }
 
-    private void onListening(int s, String label) {
+    private void onListening(int s, BypassProfile p) {
         Listener l = listener;
         if (s != session || l == null) return;
-        DiagLog.add("Обход DPI: SOCKS порт " + PORT + " готов (" + label + ")");
-        l.onBypassListening(PORT, label);
+        l.onBypassListening(slot, port, p);
     }
 
     private void fail(int s, String reason) {
         Listener l = listener;
-        if (s != session || l == null) return;
-        DiagLog.add("Обход DPI: " + reason);
+        BypassProfile p = profile;
+        if (s != session || l == null || p == null) return;
+        DiagLog.add("Обход DPI «" + p.label + "»: " + reason);
         stop();
-        l.onBypassError(reason);
+        l.onBypassError(slot, p, reason);
     }
 
-    /** Хвост журнала ByeDPI для экрана «Журнал». */
-    static String logTail(Context context) {
-        File log = new File(new File(context.getFilesDir(), DIR), LOG_FILE);
-        if (!log.exists()) return "";
-        try (java.io.RandomAccessFile f = new java.io.RandomAccessFile(log, "r")) {
-            long start = Math.max(0, f.length() - LOG_TAIL_BYTES);
-            byte[] buf = new byte[(int) (f.length() - start)];
-            f.seek(start);
-            f.readFully(buf);
-            return new String(buf, StandardCharsets.UTF_8);
-        } catch (IOException e) {
-            return "";
+    private static String lastLines(String text, int n) {
+        String[] lines = text.split("\n");
+        StringBuilder sb = new StringBuilder();
+        for (int i = Math.max(0, lines.length - n); i < lines.length; i++) {
+            if (sb.length() > 0) sb.append(" / ");
+            sb.append(lines[i].trim());
         }
+        return sb.toString();
     }
 
-    /** Завершить процессы ByeDPI, оставшиеся от прошлого запуска (держат порт). */
-    private static void killStale() {
+    /** Завершить процессы ByeDPI на этом порту, оставшиеся от прошлого запуска (держат порт). */
+    private static void killStale(int port) {
         File[] procs = new File("/proc").listFiles();
         if (procs == null) return;
         int self = android.os.Process.myPid();
+        // В /proc/<pid>/cmdline аргументы разделены нулевыми байтами
+        String portArg = "\0-p\0" + port + "\0";
         List<File> killed = new ArrayList<>();
         for (File f : procs) {
             String name = f.getName();
@@ -248,8 +256,8 @@ final class BypassController {
             }
             if (pid == self) continue;
             String cmdline = readCmdline(new File(f, "cmdline"));
-            if (cmdline == null || !cmdline.contains(LIB)) continue;
-            DiagLog.add("Обход DPI: завершаю прошлый процесс " + pid);
+            if (cmdline == null || !cmdline.contains(LIB) || !cmdline.contains(portArg)) continue;
+            DiagLog.add("Обход DPI: завершаю прошлый процесс " + pid + " (порт " + port + ")");
             android.os.Process.killProcess(pid);
             killed.add(f);
         }
@@ -268,14 +276,5 @@ final class BypassController {
         } catch (IOException | SecurityException e) {
             return null;
         }
-    }
-
-    private static String join(String[] a) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < a.length; i++) {
-            if (i > 0) sb.append(' ');
-            sb.append(a[i]);
-        }
-        return sb.toString();
     }
 }

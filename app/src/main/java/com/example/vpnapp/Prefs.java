@@ -7,6 +7,7 @@ import androidx.annotation.Nullable;
 
 import org.json.JSONArray;
 import org.json.JSONException;
+import org.json.JSONObject;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -19,7 +20,9 @@ public final class Prefs {
     private static final String KEY_MODE = "bridge_mode";
     private static final String KEY_CUSTOM = "custom_bridges";
     private static final String KEY_BYEDPI = "byedpi_args";
-    private static final String KEY_BYPASS_GOOD = "bypass_good";
+    // До 0.8.5: название сработавшей стратегии, одно на все сети (там могла остаться «oob SNI»)
+    private static final String KEY_BYPASS_GOOD_OLD = "bypass_good";
+    private static final String KEY_BYPASS_BEST = "bypass_best_";  // + тип сети
     private static final String KEY_LAST_GOOD = "last_good";
     private static final String KEY_MOAT = "moat_cache";
     private static final String KEY_DIRECT_FAILED = "direct_failed";
@@ -65,14 +68,47 @@ public final class Prefs {
         sp.edit().putString(KEY_BYEDPI, text).apply();
     }
 
-    /** Название стратегии обхода DPI, сработавшей в прошлый раз (чтобы не перебирать заново). */
-    @Nullable
-    String getBypassGood() {
-        return sp.getString(KEY_BYPASS_GOOD, null);
+    /** Стратегия обхода DPI, выбранная в прошлый раз в этой сети. */
+    static final class BypassBest {
+        final BypassProfile profile;
+        /** Она пробила заблокированные сайты (иначе — только обычный интернет). */
+        final boolean full;
+        /** Когда выбрана (System.currentTimeMillis). */
+        final long time;
+
+        BypassBest(BypassProfile profile, boolean full, long time) {
+            this.profile = profile;
+            this.full = full;
+            this.time = time;
+        }
     }
 
-    void setBypassGood(@Nullable String label) {
-        sp.edit().putString(KEY_BYPASS_GOOD, label).apply();
+    /** Стратегия обхода DPI, выбранная в прошлый раз в сети networkId (WIFI, MOBILE-25001, …). */
+    @Nullable
+    BypassBest getBypassBest(String networkId) {
+        if (sp.contains(KEY_BYPASS_GOOD_OLD)) sp.edit().remove(KEY_BYPASS_GOOD_OLD).apply();
+        String raw = sp.getString(KEY_BYPASS_BEST + networkId, null);
+        if (raw == null) return null;
+        try {
+            JSONObject o = new JSONObject(raw);
+            BypassProfile p = BypassProfile.parse(o.getString("label"), o.getString("args"));
+            return p != null ? new BypassBest(p, o.getBoolean("full"), o.getLong("time")) : null;
+        } catch (JSONException e) {
+            return null;
+        }
+    }
+
+    void setBypassBest(String networkId, BypassProfile profile, boolean full) {
+        try {
+            JSONObject o = new JSONObject()
+                    .put("label", profile.label)
+                    .put("args", profile.argsLine())
+                    .put("full", full)
+                    .put("time", System.currentTimeMillis());
+            sp.edit().putString(KEY_BYPASS_BEST + networkId, o.toString()).apply();
+        } catch (JSONException ignored) {
+            // не запомнили — в следующий раз будет полный перебор
+        }
     }
 
     @Nullable

@@ -15,8 +15,8 @@ android {
         applicationId = 'com.example.vpnapp'
         minSdk = 24
         targetSdk = 36
-        versionCode = 12
-        versionName = '0.8.4'
+        versionCode = 13
+        versionName = '0.8.5'
 
         // Только ARM: реальные телефоны (x86 нужен лишь эмуляторам, экономим ~15 МБ)
         ndk {
