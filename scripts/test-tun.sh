@@ -88,7 +88,8 @@ BSRCS="$("$ROOT/scripts/byedpi-src.sh" "$TMP/byedpi")"
 # shellcheck disable=SC2086
 gcc -std=c99 -O1 -D_DEFAULT_SOURCE -I"$TMP/byedpi" -w -o "$TMP/ciadpi" $BSRCS
 cp -r "$ROOT/app/src/main/jni/hev-socks5-tunnel" "$TMP/hev"
-make -C "$TMP/hev" -j"$(nproc)" > "$TMP/hev-build.log" 2>&1 || { tail -30 "$TMP/hev-build.log"; exit 1; }
+# Как в приложении (app/build.gradle): без задержки 200 мс на каждое соединение (oda-hev.h)
+CFLAGS="-include $ROOT/app/src/main/jni/oda-hev.h" make -C "$TMP/hev" -j"$(nproc)" > "$TMP/hev-build.log" 2>&1 || { tail -30 "$TMP/hev-build.log"; exit 1; }
 HEV="$TMP/hev/bin/hev-socks5-tunnel"
 
 mkdir -p "$TMP/stub/androidx/annotation" "$TMP/stub/com/example/vpnapp" "$TMP/classes"
@@ -235,6 +236,7 @@ site_t() {  # то же, с временем: «200 0.41»; $3 — тайм-ау
 speed_run() {  # загрузка /big «браузером телефона» с нескольких сайтов; МБ/с — в SPEEDS
     local h r ok=1
     SPEEDS=()
+    FIRST=()  # первый байт, с
     for h in www.cloudflare.com www.facebook.com i.instagram.com rr1---sn-n8v7znz7.googlevideo.com; do
         r=$(PHONE curl -sS --noproxy '*' --cacert "$TMP/ca.pem" -o /dev/null -m 90 \
             -w "%{http_code} %{speed_download} %{time_namelookup} %{time_connect} %{time_appconnect} %{time_starttransfer}" \
@@ -245,6 +247,7 @@ speed_run() {  # загрузка /big «браузером телефона» �
         echo "    $h: $1, $mb МБ/с; DNS $3 с, TCP $4 с, TLS $5 с, первый байт $6 с"
         [ "$1" = 200 ] || ok=0
         SPEEDS+=("$mb")
+        FIRST+=("$6")
     done
     SPEED_OK=$ok
 }
@@ -379,6 +382,10 @@ for PROFILE in $PROFILES; do
         speed_run
         BYPASS_SPEEDS=("${SPEEDS[@]}")
         check "$SPEED_OK" "через обход все загрузки дошли"
+        ok=1
+        for t in "${FIRST[@]}"; do fast "$t" 0.1 || ok=0; done
+        # До 0.8.9 hev придерживал приветствие SOCKS (MSG_MORE): +0,2 с на DNS и +0,2 с на соединение
+        check "$ok" "первый байт через обход быстрее 0,1 с (без задержки hev 0,2 с): ${FIRST[*]}"
         echo "   то же через «Psiphon» (подключение через Psiphon, как в журнале 0.8.8):"
         stop_phone
         # Фиктивный DNS (mapdns у hev, Tun2SocksConfig.FAKE_DNS): имена резолвит «Psiphon»
@@ -395,6 +402,9 @@ for PROFILE in $PROFILES; do
         sleep 1
         speed_run
         PSIPHON_SPEEDS=("${SPEEDS[@]}")
+        ok=1
+        for t in "${FIRST[@]}"; do fast "$t" $(awk -v d="$PSIPHON_DELAY_MS" 'BEGIN { print d / 1000 + 0.1 }') || ok=0; done
+        check "$ok" "первый байт через «Psiphon» — его задержка ${PSIPHON_DELAY_MS} мс и не больше 0,1 с сверху: ${FIRST[*]}"
         check "$SPEED_OK" "через «Psiphon» все загрузки дошли"
         ok=1
         for i in "${!BYPASS_SPEEDS[@]}"; do
