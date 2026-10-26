@@ -92,6 +92,8 @@ javac -nowarn -encoding UTF-8 -d "$TMP/classes" "$TMP/stub/androidx/annotation/N
     "$TMP/stub/com/example/vpnapp/DiagLog.java" "$SRC/NetProbe.java" "$SRC/BypassSearch.java" \
     "$SRC/BypassProfile.java" "$SRC/Tun2SocksConfig.java" "$SRC/ByeDpiStats.java" "$SRC/HelperRelay.java" \
     "$ROOT/app/src/test/java/com/example/vpnapp/TunLab.java"
+# «Psiphon» стенда работает от своего uid: домашняя папка раннера CI ему закрыта — копия в $TMP
+cp "$LAB/lab.py" "$TMP/lab.py"
 chmod -R a+rX "$TMP"
 JAVA="$(command -v java)"
 # Вывод Java — в UTF-8 (по умолчанию он в кодировке системы, и русский текст станет «???»)
@@ -192,16 +194,18 @@ site_t() {  # то же, с временем: «200 0.41»; $3 — тайм-ау
 fast() { awk -v t="$1" -v lim="$2" 'BEGIN { exit !(t + 0 < lim + 0) }'; }  # $1 < $2 (секунды)
 
 start_helper() {  # «Psiphon» и HelperRelay; $1 — путь открыт (1) или закрыт (0)
-    TUNNEL python3 -u "$LAB/lab.py" socks "$PSIPHON_PORT" > "$TMP/psiphon.log" 2>&1 &
+    TUNNEL python3 -u "$TMP/lab.py" socks "$PSIPHON_PORT" > "$TMP/psiphon.log" 2>&1 &
     PIDS+=($!)
     local up=0
     [ "$1" = 1 ] && up="$PSIPHON_PORT"
-    APP "$JAVA" -cp "$TMP/classes" com.example.vpnapp.TunLab relay "$HELPER_PORT" "$up" > "$TMP/relay.log" 2>&1 &
+    APP "$JAVA" "${JUTF[@]}" -cp "$TMP/classes" com.example.vpnapp.TunLab relay "$HELPER_PORT" "$up" > "$TMP/relay.log" 2>&1 &
     PIDS+=($!)
     for _ in $(seq 1 50); do
         grep -q "socks: готов" "$TMP/psiphon.log" 2>/dev/null && grep -q "relay: готов" "$TMP/relay.log" 2>/dev/null && break
         sleep 0.1
     done
+    grep -q "socks: готов" "$TMP/psiphon.log" || { echo "  ✗ «Psiphon» стенда не запустился:"; sed 's/^/    /' "$TMP/psiphon.log"; FAIL=1; }
+    grep -q "relay: готов" "$TMP/relay.log" || { echo "  ✗ HelperRelay не запустился:"; sed 's/^/    /' "$TMP/relay.log"; FAIL=1; }
 }
 
 tg() { PHONE python3 "$LAB/lab.py" tgcheck "${1:-10}" 2>/dev/null || true; }
@@ -368,5 +372,7 @@ else
     echo "Имитация телефона с обходом DPI: ОШИБКА"
     echo "--- ByeDPI (хвост)"; tail -20 "$TMP/byedpi.log" || true
     echo "--- hev (хвост)"; tail -20 "$TMP/hev.log" || true
+    echo "--- «Psiphon» (хвост)"; tail -20 "$TMP/psiphon.log" 2>/dev/null || true
+    echo "--- HelperRelay (хвост)"; tail -20 "$TMP/relay.log" 2>/dev/null || true
     exit 1
 fi
