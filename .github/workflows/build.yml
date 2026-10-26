@@ -29,6 +29,13 @@ jobs:
       - name: Test DPI bypass strategies
         run: bash scripts/test-bypass.sh
 
+      # Имитация телефона: VPN-интерфейс → tun2socks → ByeDPI → «оператор» с DPI → «интернет»,
+      # с нагрузкой DNS как у телефона (ошибка 0.8.5: «подключено», а интернета нет)
+      - name: Simulate phone traffic through tun2socks and ByeDPI
+        run: |
+          sudo python3 -m pip install --quiet --break-system-packages pyroute2
+          sudo -E env "PATH=$PATH" bash scripts/test-tun.sh
+
       # NDK для tun2socks: Android Gradle Plugin сам ставит нужную версию
       # через sdkmanager, если её нет на раннере.
 

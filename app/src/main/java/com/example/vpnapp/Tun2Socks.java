@@ -3,26 +3,19 @@ package com.example.vpnapp;
 import android.content.Context;
 import android.os.ParcelFileDescriptor;
 
+import androidx.annotation.Nullable;
+
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.Writer;
 
 /**
- * tun2socks (hev-socks5-tunnel): пакеты из VPN-интерфейса → SOCKS5 Tor.
- * DNS обрабатывает mapdns: приложение получает «фиктивный» IP, а имя
- * хоста уходит в Tor и резолвится на выходном узле.
+ * tun2socks (hev-socks5-tunnel): пакеты из VPN-интерфейса → локальный SOCKS5 (Tor, Psiphon, ByeDPI).
+ * Для Tor/Psiphon DNS обрабатывает mapdns: приложение получает «фиктивный» IP, а имя
+ * хоста уходит в туннель и резолвится на выходе. Конфиг — {@link Tun2SocksConfig}.
  */
 final class Tun2Socks {
-
-    static final String TUN_IPV4 = "198.18.0.1";
-    static final String TUN_IPV6 = "fc00::1";
-    // DNS для Tor/Psiphon: фиктивный адрес, запросы перехватывает mapdns, имена резолвит выход
-    static final String FAKE_DNS = "198.18.0.2";
-    // DNS для обхода DPI: реальный резолвер, запросы идут через SOCKS (UDP) напрямую, как в ByeDPIAndroid
-    static final String DIRECT_DNS = "1.1.1.1";
-    static final String DIRECT_DNS6 = "2606:4700:4700::1111";
-    static final int MTU = 8500;
 
     private static final String CONFIG_FILE = "tun2socks.yml";
 
@@ -42,10 +35,7 @@ final class Tun2Socks {
 
     private static native long[] TProxyGetStats();
 
-    /**
-     * @param directDns true для обхода DPI: без mapdns, DNS идёт через SOCKS напрямую
-     *                  (SOCKS сам резолвит имена/получает IP); false для Tor/Psiphon: mapdns
-     */
+    /** @param directDns см. {@link Tun2SocksConfig#yaml} */
     static boolean start(Context context, ParcelFileDescriptor tun, int socksPort, boolean directDns) {
         try {
             File config = writeConfig(context, socksPort, directDns);
@@ -59,33 +49,24 @@ final class Tun2Socks {
         TProxyStopService();
     }
 
-    private static File writeConfig(Context context, int socksPort, boolean directDns) throws IOException {
-        StringBuilder yml = new StringBuilder()
-                .append("tunnel:\n")
-                .append("  mtu: ").append(MTU).append('\n')
-                .append("  ipv4: ").append(TUN_IPV4).append('\n')
-                .append("  ipv6: '").append(TUN_IPV6).append("'\n")
-                .append("socks5:\n")
-                .append("  port: ").append(socksPort).append('\n')
-                .append("  address: 127.0.0.1\n")
-                .append("  udp: 'udp'\n");
-        // Tor/Psiphon не передают UDP и резолвят удалённо: DNS ловит mapdns.
-        // Обход DPI соединяется напрямую: mapdns не нужен, DNS идёт через SOCKS к реальному резолверу.
-        if (!directDns) {
-            yml.append("mapdns:\n")
-                    .append("  address: ").append(FAKE_DNS).append('\n')
-                    .append("  port: 53\n")
-                    .append("  network: 240.0.0.0\n")
-                    .append("  netmask: 240.0.0.0\n")
-                    .append("  cache-size: 10000\n");
+    /**
+     * Счётчики с запуска: {пакетов от телефона, байт от телефона, пакетов к телефону, байт к телефону}
+     * (в hev «tx» — прочитано из VPN-интерфейса, «rx» — записано в него). null, если недоступно.
+     */
+    @Nullable
+    static long[] stats() {
+        try {
+            long[] s = TProxyGetStats();
+            return s != null && s.length >= 4 ? s : null;
+        } catch (RuntimeException | LinkageError e) {
+            return null;
         }
-        yml.append("misc:\n")
-                .append("  task-stack-size: 81920\n")
-                .append("  connect-timeout: 30000\n")
-                .append("  log-level: warn\n");
+    }
+
+    private static File writeConfig(Context context, int socksPort, boolean directDns) throws IOException {
         File file = new File(context.getFilesDir(), CONFIG_FILE);
         try (Writer w = new FileWriter(file, false)) {
-            w.write(yml.toString());
+            w.write(Tun2SocksConfig.yaml(socksPort, directDns));
         }
         return file;
     }

@@ -1,0 +1,247 @@
+#!/usr/bin/env python3
+"""Стенд для scripts/test-tun.sh: путь трафика телефона при обходе DPI на компьютере.
+
+Три сетевых пространства (netns):
+  phone — «телефон»: VPN-интерфейс tun0 (hev-socks5-tunnel) и ByeDPI. ByeDPI и проверки ODA
+          работают от uid 2000 и идут мимо VPN (как addDisallowedApplication в Android);
+  isp   — «оператор»: маршрутизатор с DPI (iptables string: пакет с именем сайта отбрасывается);
+  srv   — «интернет»: DNS 1.1.1.1 (UDP и TCP) и HTTPS-сайты с адресами из журналов.
+IPv6 у «оператора» нет (как в мобильной сети без IPv6), но у телефона он есть в VPN.
+
+Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков>
+Нужен pyroute2 (pip install pyroute2) и root.
+"""
+import socket
+import struct
+import sys
+import threading
+import time
+
+APP_UID = 2000
+SITES = {  # все сайты NetProbe; IPv4 — как в журналах пользователя
+    "www.instagram.com": "57.144.62.34",
+    "www.facebook.com": "57.144.62.1",
+    "x.com": "162.159.140.229",
+    "rutracker.org": "104.21.32.39",
+    "www.google.com": "142.250.74.46",
+    "www.cloudflare.com": "104.16.123.96",
+    "www.wikipedia.org": "185.15.59.224",
+    "ya.ru": "77.88.55.242",
+    "vk.com": "87.240.132.72",
+    "www.gosuslugi.ru": "213.59.254.7",
+}
+# AAAA есть, но сети IPv6 у оператора нет: телефон пробует IPv6 через VPN и откатывается на IPv4
+SITES6 = {
+    "www.instagram.com": "2a03:2880:f240:1e6:face:b00c:0:4420",
+    "www.google.com": "2a00:1450:4010:c0e::63",
+    "ya.ru": "2a02:6b8::2:242",
+}
+DNS_IP = "1.1.1.1"
+
+
+def down():
+    from pyroute2 import netns
+    for n in ("phone", "isp", "srv"):
+        try:
+            netns.remove(n)
+        except Exception:
+            pass
+
+
+def up(ipv6):
+    from pyroute2 import IPRoute, NetNS, netns
+    down()
+    for n in ("phone", "isp", "srv"):
+        netns.create(n)
+    ip = IPRoute()
+    ip.link("add", ifname="p0", kind="veth", peer="i0")
+    ip.link("add", ifname="s0", kind="veth", peer="i1")
+    for ifn, ns in (("p0", "phone"), ("i0", "isp"), ("i1", "isp"), ("s0", "srv")):
+        ip.link("set", index=ip.link_lookup(ifname=ifn)[0], net_ns_fd=ns)
+    ip.close()
+
+    def conf(ns, addrs, routes=()):
+        n = NetNS(ns)
+        n.link("set", index=n.link_lookup(ifname="lo")[0], state="up")
+        for ifn, a, plen in addrs:
+            idx = n.link_lookup(ifname=ifn)[0]
+            n.addr("add", index=idx, address=a, prefixlen=plen)
+            n.link("set", index=idx, state="up")
+        for r in routes:
+            n.route("add", **r)
+        return n
+
+    conf("isp", [("i0", "10.10.0.1", 24), ("i1", "10.20.0.1", 24)],
+         [dict(dst="0.0.0.0/0", gateway="10.20.0.2")]).close()
+    conf("srv", [("s0", "10.20.0.2", 24), ("lo", DNS_IP, 32)] + [("lo", a, 32) for a in SITES.values()],
+         [dict(dst="0.0.0.0/0", gateway="10.20.0.1")]).close()
+    n = conf("phone", [("p0", "10.10.0.2", 24)])
+    # «Приложение ODA» исключено из VPN: его трафик идёт в сеть оператора (таблица 100)
+    n.route("add", dst="0.0.0.0/0", gateway="10.10.0.1", table=100)
+    n.rule("add", uid_range=f"{APP_UID}:{APP_UID}", table=100, priority=100)
+    if ipv6:
+        # IPv6 у оператора нет: у приложения он недоступен, а не уходит в VPN
+        n.route("add", dst="::/0", type="unreachable", table=100, family=socket.AF_INET6)
+        n.rule("add", uid_range=f"{APP_UID}:{APP_UID}", table=100, priority=100, family=socket.AF_INET6)
+    n.close()
+
+
+def routes(ipv6):
+    """Весь трафик телефона (кроме приложения) — в tun0, как у VpnService.Builder.addRoute."""
+    from pyroute2 import IPRoute
+    ip = IPRoute()
+    for _ in range(100):
+        links = ip.link_lookup(ifname="tun0")
+        if links:
+            break
+        time.sleep(0.1)
+    else:
+        sys.exit("tun0 не появился (hev-socks5-tunnel не запустился)")
+    ip.route("add", dst="0.0.0.0/0", oif=links[0])
+    if ipv6:
+        ip.route("add", dst="::/0", oif=links[0], family=socket.AF_INET6)
+    ip.close()
+
+
+# ---------- «Интернет» ----------
+
+def dns_answer(q):
+    tid = q[:2]
+    i, labels = 12, []
+    while q[i]:
+        labels.append(q[i + 1:i + 1 + q[i]].decode())
+        i += 1 + q[i]
+    name = ".".join(labels).lower()
+    qtype = struct.unpack(">H", q[i + 1:i + 3])[0]
+    question = q[12:i + 5]
+    ans = b""
+    if qtype == 1 and name in SITES:
+        ans = b"\xc0\x0c" + struct.pack(">HHIH", 1, 1, 60, 4) + socket.inet_aton(SITES[name])
+    elif qtype == 28 and name in SITES6:
+        ans = b"\xc0\x0c" + struct.pack(">HHIH", 28, 1, 60, 16) + socket.inet_pton(socket.AF_INET6, SITES6[name])
+    rcode = 0 if name in SITES else 3
+    return tid + struct.pack(">HHHHH", 0x8180 | rcode, 1, 1 if ans else 0, 0, 0) + question + ans
+
+
+def serve(cert, key):
+    import ssl
+
+    def dns_udp():
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.bind((DNS_IP, 53))
+        while True:
+            q, a = s.recvfrom(1500)
+            try:
+                s.sendto(dns_answer(q), a)
+            except Exception as e:
+                print("dns:", e, flush=True)
+
+    def dns_tcp():
+        s = socket.socket()
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind((DNS_IP, 53))
+        s.listen(64)
+        while True:
+            c, _ = s.accept()
+            try:
+                n = struct.unpack(">H", c.recv(2))[0]
+                r = dns_answer(c.recv(n))
+                c.sendall(struct.pack(">H", len(r)) + r)
+            except Exception:
+                pass
+            finally:
+                c.close()
+
+    body = b"x" * 65536
+    ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    ctx.load_cert_chain(cert, key)
+
+    def handle(c):
+        try:
+            c.settimeout(20)
+            t = ctx.wrap_socket(c, server_side=True)
+            data = b""
+            while b"\r\n\r\n" not in data:
+                d = t.recv(4096)
+                if not d:
+                    return
+                data += d
+            path = data.split(b" ", 2)[1]
+            if path == b"/generate_204":
+                t.sendall(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            else:
+                t.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)
+            t.close()
+        except Exception:
+            pass
+        finally:
+            c.close()
+
+    def https():
+        s = socket.socket()
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", 443))
+        s.listen(256)
+        while True:
+            c, _ = s.accept()
+            threading.Thread(target=handle, args=(c,), daemon=True).start()
+
+    for f in (dns_udp, dns_tcp, https):
+        threading.Thread(target=f, daemon=True).start()
+    print("srv: готов", flush=True)
+    threading.Event().wait()
+
+
+# ---------- Нагрузка «как телефон» ----------
+
+def dnsload(seconds, parallel):
+    """DNS-запросы в DNS_IP через VPN, каждый с нового сокета (новый порт), как резолвер Android."""
+    stop = time.time() + seconds
+    ok = fail = 0
+    lock = threading.Lock()
+
+    def worker(k):
+        nonlocal ok, fail
+        i = 0
+        while time.time() < stop:
+            i += 1
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.settimeout(3)
+            q = ((k * 7919 + i) & 0xffff).to_bytes(2, "big") + b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" \
+                + b"\x02ya\x02ru\x00\x00\x01\x00\x01"
+            try:
+                s.sendto(q, (DNS_IP, 53))
+                s.recv(512)
+                good = True
+            except OSError:
+                good = False
+            finally:
+                s.close()
+            with lock:
+                if good:
+                    ok += 1
+                else:
+                    fail += 1
+
+    threads = [threading.Thread(target=worker, args=(k,)) for k in range(parallel)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    print(f"DNS-нагрузка: ответов {ok} из {ok + fail} за {seconds} с")
+
+
+if __name__ == "__main__":
+    cmd = sys.argv[1]
+    if cmd == "up":
+        up(sys.argv[2] == "1")
+    elif cmd == "down":
+        down()
+    elif cmd == "routes":
+        routes(sys.argv[2] == "1")
+    elif cmd == "srv":
+        serve(sys.argv[2], sys.argv[3])
+    elif cmd == "dnsload":
+        dnsload(int(sys.argv[2]), int(sys.argv[3]))
+    else:
+        sys.exit(__doc__)

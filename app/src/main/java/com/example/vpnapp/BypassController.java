@@ -62,6 +62,8 @@ final class BypassController {
     private volatile int liveSession;
     // Последние строки вывода ByeDPI (ошибки ядра): в памяти, чтобы файл журнала не рос без конца
     private final StringBuilder output = new StringBuilder();
+    // Вывод, ещё не попавший в журнал (его забирает сторож подключения, см. drainOutput)
+    private final StringBuilder fresh = new StringBuilder();
 
     BypassController(Context context, Handler handler, int slot) {
         this.context = context.getApplicationContext();
@@ -94,6 +96,7 @@ final class BypassController {
         liveSession = s;
         synchronized (output) {
             output.setLength(0);
+            fresh.setLength(0);
         }
         File exe = new File(context.getApplicationInfo().nativeLibraryDir, LIB);
         DiagLog.add("Обход DPI: запуск «" + p.label + "» (порт " + port + "): " + p.argsLine());
@@ -118,6 +121,15 @@ final class BypassController {
         }
     }
 
+    /** Вывод ByeDPI с прошлого вызова (ошибки ядра, например «pool is full»). */
+    String drainOutput() {
+        synchronized (output) {
+            String s = fresh.toString();
+            fresh.setLength(0);
+            return s;
+        }
+    }
+
     private void run(int s, File exe, BypassProfile p) {
         Process proc;
         synchronized (LAUNCH_LOCK) {
@@ -130,10 +142,7 @@ final class BypassController {
                 dir.mkdirs();
                 List<String> cmd = new ArrayList<>();
                 cmd.add(exe.getAbsolutePath());
-                cmd.add("-i");
-                cmd.add("127.0.0.1");
-                cmd.add("-p");
-                cmd.add(Integer.toString(port));
+                cmd.addAll(BypassProfile.processArgs(port));
                 cmd.addAll(Arrays.asList(p.args));
                 proc = new ProcessBuilder(cmd)
                         .directory(dir)
@@ -179,6 +188,10 @@ final class BypassController {
                     output.append(chunk);
                     if (output.length() > LOG_TAIL_CHARS) {
                         output.delete(0, output.length() - LOG_TAIL_CHARS);
+                    }
+                    fresh.append(chunk);
+                    if (fresh.length() > LOG_TAIL_CHARS) {
+                        fresh.delete(0, fresh.length() - LOG_TAIL_CHARS);
                     }
                 }
             }

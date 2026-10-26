@@ -44,6 +44,10 @@ import javax.net.ssl.SSLSocketFactory;
  * (как tun2socks), TLS с SNI, запрос и чтение ответа. Ответа на рукопожатие мало: нужно получить
  * {@link #ENOUGH_BYTES} данных или весь ответ, иначе «замороженное» соединение сошло бы за рабочее.
  * Проверяются заблокированные в РФ сайты (соцсети) и обычные — зарубежные и российские.
+ * Заодно — DNS так, как его делает телефон: UDP-запрос к 1.1.1.1 через SOCKS5 UDP ASSOCIATE
+ * того же ByeDPI. Без него у телефона нет интернета, хотя сайты по IP открываются.
+ * <p>
+ * 3) Сторож после подключения ({@link #bypassHealth}): тот же DNS через SOCKS и один сайт.
  */
 final class NetProbe {
 
@@ -151,14 +155,48 @@ final class NetProbe {
         return probe(socksPort);
     }
 
+    /** Итог проверки работающего обхода DPI (сторож подключения). */
+    static final class Health {
+        final boolean dns;      // DNS через SOCKS (UDP), как у телефона
+        final boolean site;     // сайт через SOCKS
+        final boolean direct;   // тот же сайт напрямую (проверяется, только если через SOCKS не вышло)
+
+        Health(boolean dns, boolean site, boolean direct) {
+            this.dns = dns;
+            this.site = site;
+            this.direct = direct;
+        }
+
+        boolean ok() {
+            return dns && site;
+        }
+    }
+
+    /**
+     * Быстрая проверка подключённого обхода DPI: DNS через SOCKS-UDP и сайт через SOCKS
+     * (generate_204 — ответ без тела, почти без трафика). Если не вышло — тот же сайт напрямую:
+     * так видно, сломан ли ByeDPI или пропала сама сеть.
+     */
+    static Health bypassHealth(int socksPort) {
+        Site site = FOREIGN[0];
+        boolean dns = socksDnsWorks(socksPort, LOCAL[0].host);
+        InetAddress ip = resolve(site.host);
+        boolean ok = ip != null && fetch(site.host, site.path, ip, 443, socksPort);
+        boolean direct = !ok && ip != null && fetch(site.host, site.path, ip, 443, 0);
+        return new Health(dns, ok, direct);
+    }
+
     /** Все сайты одновременно: на проверку уходит один таймаут, а не сумма. 0 — напрямую. */
     private static BypassSearch.Score probe(int socksPort) {
         List<Site> all = new ArrayList<>();
         all.addAll(Arrays.asList(BLOCKED));
         all.addAll(Arrays.asList(FOREIGN));
         all.addAll(Arrays.asList(LOCAL));
-        ExecutorService pool = Executors.newFixedThreadPool(all.size());
+        ExecutorService pool = Executors.newFixedThreadPool(all.size() + 1);
         try {
+            // DNS телефона идёт через тот же SOCKS (UDP): проверяем одновременно с сайтами
+            Future<Boolean> dnsFuture = socksPort > 0
+                    ? pool.submit(() -> socksDnsWorks(socksPort, LOCAL[0].host)) : null;
             List<Future<Boolean>> futures = new ArrayList<>();
             for (Site site : all) futures.add(pool.submit(() -> fetch(site, socksPort)));
             long deadline = System.nanoTime()
@@ -181,10 +219,24 @@ final class NetProbe {
                 if (i > 0) detail.append(' ');
                 detail.append(all.get(i).name).append(ok[i] ? '+' : '-');
             }
+            if (dnsFuture != null && !futureTrue(dnsFuture, deadline)) {
+                // Сайты по IP открываются, но имена у телефона не определятся — интернета не будет
+                return new BypassSearch.Score(0, BLOCKED.length, 0, 0, FOREIGN.length + LOCAL.length,
+                        "DNS через обход (UDP " + DNS_SERVER + ") не отвечает · " + detail);
+            }
             return new BypassSearch.Score(blocked, BLOCKED.length, foreign, local,
                     FOREIGN.length + LOCAL.length, detail.toString());
         } finally {
             pool.shutdownNow();
+        }
+    }
+
+    private static boolean futureTrue(Future<Boolean> f, long deadlineNanos) {
+        try {
+            long left = Math.max(1, deadlineNanos - System.nanoTime());
+            return f.get(left, TimeUnit.NANOSECONDS);
+        } catch (Exception e) {
+            return false;
         }
     }
 
@@ -287,6 +339,84 @@ final class NetProbe {
             throw new IOException("SOCKS: адрес " + head[3]);
         }
         readFully(in, len + 2);
+    }
+
+    // ---------- DNS через SOCKS5 UDP ASSOCIATE: так резолвит имена телефон при обходе DPI ----------
+
+    /** Отвечает ли DNS (1.1.1.1) через SOCKS-UDP: две попытки, как у резолвера Android. */
+    static boolean socksDnsWorks(int socksPort, String host) {
+        for (int attempt = 0; attempt < 2; attempt++) {
+            try {
+                if (socksQueryA(socksPort, host,
+                        InetAddress.getByAddress(new byte[]{1, 1, 1, 1})) != null) return true;
+            } catch (IOException ignored) {
+                // повтор
+            }
+        }
+        return false;
+    }
+
+    /**
+     * A-запрос через SOCKS5 UDP ASSOCIATE (RFC 1928, раздел 7) — так же, как DNS телефона
+     * передаёт tun2socks: управляющее TCP-соединение, затем UDP-пакет с заголовком SOCKS.
+     */
+    @Nullable
+    static InetAddress socksQueryA(int socksPort, String host, InetAddress server) throws IOException {
+        try (Socket ctl = new Socket(); DatagramSocket udp = new DatagramSocket()) {
+            ctl.setSoTimeout(DNS_TIMEOUT_MS);
+            ctl.connect(new InetSocketAddress("127.0.0.1", socksPort), CONNECT_TIMEOUT_MS);
+            OutputStream out = ctl.getOutputStream();
+            InputStream in = ctl.getInputStream();
+            out.write(new byte[]{5, 1, 0});
+            out.flush();
+            byte[] auth = readFully(in, 2);
+            if (auth[0] != 5 || auth[1] != 0) throw new IOException("SOCKS: нет доступа");
+            // Адрес клиента неизвестен заранее: 0.0.0.0:0, как у tun2socks
+            out.write(new byte[]{5, 3, 0, 1, 0, 0, 0, 0, 0, 0});
+            out.flush();
+            byte[] head = readFully(in, 4);
+            if (head[0] != 5 || head[1] != 0) throw new IOException("SOCKS UDP: отказ " + head[1]);
+            byte[] relayAddr;
+            if (head[3] == 1) {
+                relayAddr = readFully(in, 4);
+            } else if (head[3] == 4) {
+                relayAddr = readFully(in, 16);
+            } else {
+                throw new IOException("SOCKS UDP: адрес " + head[3]);
+            }
+            byte[] p = readFully(in, 2);
+            int relayPort = ((p[0] & 0xff) << 8) | (p[1] & 0xff);
+            InetAddress relay = InetAddress.getByAddress(relayAddr);
+            if (relay.isAnyLocalAddress()) relay = InetAddress.getByAddress(new byte[]{127, 0, 0, 1});
+
+            int id = RANDOM.nextInt(0x10000);
+            byte[] query = buildQuery(id, host);
+            byte[] dst = server.getAddress();
+            ByteArrayOutputStream pkt = new ByteArrayOutputStream();
+            pkt.write(0);
+            pkt.write(0);
+            pkt.write(0);  // без фрагментации
+            pkt.write(dst.length == 4 ? 1 : 4);
+            pkt.write(dst, 0, dst.length);
+            pkt.write(0);
+            pkt.write(53);
+            pkt.write(query, 0, query.length);
+            byte[] data = pkt.toByteArray();
+            udp.setSoTimeout(DNS_TIMEOUT_MS);
+            udp.send(new DatagramPacket(data, data.length, relay, relayPort));
+            byte[] buf = new byte[1500];
+            while (true) {
+                DatagramPacket resp = new DatagramPacket(buf, buf.length);
+                udp.receive(resp);  // по таймауту — SocketTimeoutException
+                int n = resp.getLength();
+                if (n < 10 || buf[2] != 0) continue;
+                int off = buf[3] == 1 ? 10 : buf[3] == 4 ? 22 : -1;
+                if (off < 0 || n < off + 12) continue;
+                byte[] dns = Arrays.copyOfRange(buf, off, n);
+                if ((((dns[0] & 0xff) << 8) | (dns[1] & 0xff)) != id) continue;
+                return parseA(host, dns, dns.length);
+            }
+        }
     }
 
     private static byte[] readFully(InputStream in, int n) throws IOException {

@@ -22,8 +22,10 @@ import androidx.core.app.ServiceCompat;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * VPN: весь трафик телефона → tun → tun2socks → локальный SOCKS5 (Psiphon или Tor).
@@ -65,6 +67,14 @@ public class VpnTunnelService extends VpnService
     // Если полный перебор недавно не нашёл стратегию для соцсетей, в режиме «Обход DPI»
     // столько времени сразу берём запомненную для обычного интернета, без нового перебора
     private static final long BYPASS_QUICK_BASIC_MS = 12 * 60 * 60_000L;
+    // Сторож обхода DPI: как часто проверять DNS и сайт через ByeDPI после подключения
+    private static final long BYPASS_WATCH_MS = 30_000;
+    // Столько проверок подряд не прошло при живой сети — перезапуск ByeDPI
+    private static final int BYPASS_WATCH_FAILS = 2;
+    // Счётчики туннеля в журнал: при первой проверке, при сбоях и раз в столько проверок
+    private static final int BYPASS_WATCH_STATS_EVERY = 10;
+    // Столько разных строк вывода ByeDPI за одну проверку попадает в журнал
+    private static final int BYPASS_OUTPUT_LINES = 5;
 
     private HandlerThread thread;
     private Handler worker;
@@ -98,6 +108,9 @@ public class VpnTunnelService extends VpnService
     private int bypassSlot = -1;    // слот, через который подключены
     private int bypassRestarts;
     private boolean bypassFull;     // обход пробил заблокированные сайты (не только обычные)
+    private int bypassWatch;        // поколение сторожа: отсекает проверки прошлого подключения
+    private int bypassWatchFails;
+    private int bypassWatchTicks;
     private String bypassText = "";
     private int torPercent;
     private int torError = R.string.error_blocked;
@@ -701,7 +714,94 @@ public class VpnTunnelService extends VpnService
         bypassText = "";
         stopOtherEngines(StatusBus.ENGINE_BYPASS);
         socksPort = bypass[slot].socksPort();
-        if (startTunnel()) checkIp();
+        if (startTunnel()) {
+            checkIp();
+            startBypassWatch();
+        }
+    }
+
+    // ---------- Сторож обхода DPI ----------
+    // Проверка стратегии идёт до подключения и мимо VPN. Сторож следит, что ByeDPI и дальше несёт
+    // трафик телефона: DNS через SOCKS-UDP (как у телефона) и сайт; в журнал — счётчики tun2socks
+    // и ошибки ядра ByeDPI. Если ByeDPI перестал пропускать трафик, а сеть жива, — перезапуск.
+
+    private void startBypassWatch() {
+        bypassWatchFails = 0;
+        bypassWatchTicks = 0;
+        int gen = ++bypassWatch;
+        worker.postDelayed(() -> bypassWatchTick(gen), BYPASS_WATCH_MS);
+    }
+
+    private void bypassWatchTick(int gen) {
+        if (!active || gen != bypassWatch || !StatusBus.ENGINE_BYPASS.equals(engine) || bypassSlot < 0) return;
+        BypassController b = bypass[bypassSlot];
+        int port = b.socksPort();
+        String out = b.drainOutput();
+        long[] stats = Tun2Socks.stats();
+        new Thread(() -> {
+            NetProbe.Health h = NetProbe.bypassHealth(port);
+            worker.post(() -> onBypassHealth(gen, h, out, stats));
+        }, "oda-bypass-watch").start();
+    }
+
+    private void onBypassHealth(int gen, NetProbe.Health h, String out, @Nullable long[] stats) {
+        if (!active || gen != bypassWatch || !StatusBus.ENGINE_BYPASS.equals(engine) || bypassSlot < 0) return;
+        bypassWatchTicks++;
+        logBypassOutput(out);
+        boolean failing = !h.ok() && h.direct;
+        if (stats != null && (bypassWatchTicks == 1 || failing
+                || bypassWatchTicks % BYPASS_WATCH_STATS_EVERY == 0)) {
+            DiagLog.add("Туннель: от телефона " + stats[0] + " пакетов (" + stats[1] / 1024
+                    + " КБ), к телефону " + stats[2] + " (" + stats[3] / 1024 + " КБ)");
+        }
+        if (h.ok()) {
+            if (bypassWatchFails > 0) DiagLog.add("Обход DPI: трафик снова идёт");
+            bypassWatchFails = 0;
+        } else if (!h.direct) {
+            // Напрямую тоже ничего: пропала сама сеть, ByeDPI тут ни при чём
+            DiagLog.add("Обход DPI: проверка не прошла и напрямую — похоже, нет сети, жду");
+        } else {
+            bypassWatchFails++;
+            DiagLog.add("Обход DPI: через ByeDPI не идёт (DNS " + (h.dns ? "+" : "-")
+                    + ", сайт " + (h.site ? "+" : "-") + "), напрямую сайт открывается ("
+                    + bypassWatchFails + "/" + BYPASS_WATCH_FAILS + ")");
+            if (bypassWatchFails >= BYPASS_WATCH_FAILS) {
+                bypassWatchFails = 0;
+                BypassController b = bypass[bypassSlot];
+                BypassProfile p = b.profile();
+                // p == null: процесс уже перезапускается после падения (onBypassError)
+                if (p != null && bypassRestarts < BYPASS_RESTARTS) {
+                    bypassRestarts++;
+                    DiagLog.add("Обход DPI: перезапуск «" + p.label + "» (" + bypassRestarts
+                            + "/" + BYPASS_RESTARTS + ")");
+                    b.start(p, this);
+                } else if (p != null) {
+                    fail(R.string.error_bypass_stopped);
+                    return;
+                }
+            }
+        }
+        worker.postDelayed(() -> bypassWatchTick(gen), BYPASS_WATCH_MS);
+    }
+
+    /** Ошибки ядра ByeDPI в журнал: одинаковые строки — одной строкой со счётчиком. */
+    private void logBypassOutput(String out) {
+        if (out.trim().isEmpty()) return;
+        Map<String, Integer> lines = new LinkedHashMap<>();
+        for (String line : out.split("\n")) {
+            String l = line.trim();
+            if (l.isEmpty()) continue;
+            Integer n = lines.get(l);
+            lines.put(l, n == null ? 1 : n + 1);
+        }
+        int shown = 0;
+        for (Map.Entry<String, Integer> e : lines.entrySet()) {
+            if (shown++ >= BYPASS_OUTPUT_LINES) {
+                DiagLog.add("ByeDPI: … ещё " + (lines.size() - BYPASS_OUTPUT_LINES) + " разных строк");
+                break;
+            }
+            DiagLog.add("ByeDPI: " + e.getKey() + (e.getValue() > 1 ? " ×" + e.getValue() : ""));
+        }
     }
 
     /** Остановить все способы, кроме победившего. */
@@ -968,20 +1068,20 @@ public class VpnTunnelService extends VpnService
     private ParcelFileDescriptor establishTun(boolean directDns) throws IOException {
         Builder b = new Builder()
                 .setSession(getString(R.string.app_name))
-                .setMtu(Tun2Socks.MTU)
-                .addAddress(Tun2Socks.TUN_IPV4, 32)
+                .setMtu(Tun2SocksConfig.MTU)
+                .addAddress(Tun2SocksConfig.TUN_IPV4, 32)
                 .addRoute("0.0.0.0", 0)
                 // IPv6 тоже в туннель, чтобы он не утекал мимо
-                .addAddress(Tun2Socks.TUN_IPV6, 128)
+                .addAddress(Tun2SocksConfig.TUN_IPV6, 128)
                 .addRoute("::", 0)
                 .setConfigureIntent(VpnNotification.openApp(this));
         if (directDns) {
             // Обход DPI: реальный резолвер, запросы идут через SOCKS напрямую
-            b.addDnsServer(Tun2Socks.DIRECT_DNS);
-            b.addDnsServer(Tun2Socks.DIRECT_DNS6);
+            b.addDnsServer(Tun2SocksConfig.DIRECT_DNS);
+            b.addDnsServer(Tun2SocksConfig.DIRECT_DNS6);
         } else {
             // Tor/Psiphon: фиктивный DNS, перехватывает mapdns
-            b.addDnsServer(Tun2Socks.FAKE_DNS);
+            b.addDnsServer(Tun2SocksConfig.FAKE_DNS);
         }
         tunDirectDns = directDns;
         try {
@@ -1013,6 +1113,7 @@ public class VpnTunnelService extends VpnService
     private void teardown() {
         active = false;
         generation++;
+        bypassWatch++;
         connection++;
         engine = null;
         if (psiphonActive) {

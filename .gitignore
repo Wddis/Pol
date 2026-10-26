@@ -11,3 +11,4 @@ captures/
 # Собирается в CI: scripts/build-snowflake.sh, scripts/build-psiphon.sh
 /app/src/main/jniLibs/
 /app/src/main/assets/psiphon/
+__pycache__/

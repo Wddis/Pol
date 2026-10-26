@@ -78,6 +78,23 @@ final class BypassProfile {
         return new BypassProfile(name, a.toArray(new String[0]));
     }
 
+    /**
+     * Сколько соединений держит ByeDPI (-c, по умолчанию 512; пул событий — вдвое больше).
+     * Каждая SOCKS-UDP-ассоциация (а это каждый DNS-запрос телефона) занимает в пуле 3 места:
+     * со стандартным значением пул переполнялся за минуту, и ByeDPI переставал принимать
+     * любые соединения. 4096 — до ~8 тыс. дескрипторов, у приложения Android их 32 тыс.
+     */
+    static final int MAX_CONN = 4096;
+
+    /**
+     * Аргументы процесса ByeDPI перед стратегией: только локальный адрес, свой порт, размер пула.
+     * Стратегия (и своя строка пользователя) идёт после и может их переопределить.
+     */
+    static List<String> processArgs(int port) {
+        return Arrays.asList("-i", "127.0.0.1", "-p", Integer.toString(port),
+                "-c", Integer.toString(MAX_CONN));
+    }
+
     /** Разобрать строку аргументов ByeDPI в стратегию или null, если пусто. */
     @Nullable
     static BypassProfile parse(String label, @Nullable String line) {
