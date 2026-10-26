@@ -31,14 +31,21 @@ final class BypassSearch {
         final int local;         // обычные российские
         final int normalTotal;
         final String detail;     // по сайтам, для журнала
+        @Nullable final String dns;  // DNS-сервер, который ответил через стратегию (для телефона)
 
         Score(int blocked, int blockedTotal, int foreign, int local, int normalTotal, String detail) {
+            this(blocked, blockedTotal, foreign, local, normalTotal, detail, null);
+        }
+
+        Score(int blocked, int blockedTotal, int foreign, int local, int normalTotal, String detail,
+              @Nullable String dns) {
             this.blocked = blocked;
             this.blockedTotal = blockedTotal;
             this.foreign = foreign;
             this.local = local;
             this.normalTotal = normalTotal;
             this.detail = detail;
+            this.dns = dns;
         }
 
         int normal() {

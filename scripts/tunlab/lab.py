@@ -8,15 +8,17 @@
           оператора — по отдельному каналу p1/s1, как зашифрованный туннель за границу;
   isp   — «оператор»: маршрутизатор с моделью ТСПУ (tspu.py, профиль выбирает test-tun.sh):
           рвёт соединения по имени сайта, режет по адресу CDN соцсети и сервер Telegram;
-  srv   — «интернет»: DNS 1.1.1.1 (UDP и TCP), HTTPS-сайты с адресами из журналов,
+  srv   — «интернет»: DNS 1.1.1.1, 8.8.8.8, 9.9.9.9, 77.88.8.8 (UDP и TCP), HTTPS-сайты
+          с адресами из журналов (/big — 32 МБ для замера скорости),
           «сервер Telegram» (TG_IP:443, не TLS: отвечает эхом, как MTProto — не по имени сайта)
           и UDP-эхо на порту 443 («QUIC»).
 IPv6 у «оператора» нет (как в мобильной сети без IPv6); тогда и приложение не направляет IPv6
 в VPN (routes 0). routes 1 — IPv6 в VPN без IPv6 у оператора: так было до 0.8.6, и сайты с AAAA
 не открывались (tun2socks принимает соединение раньше, чем ByeDPI узнаёт, что IPv6 нет).
 
-Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков>
-         | socks <порт> | tgcheck <сек> | quiccheck <ip> <сек> | notun | dnscheck | dump
+Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков> [dns]
+         | socks <порт> [мс задержки] [кбит/с] | tgcheck <сек> | quiccheck <ip> <сек> | notun
+         | dnscheck [dns] | dump
 Нужен pyroute2 (pip install pyroute2) и root.
 """
 import socket
@@ -56,6 +58,8 @@ SITES6 = {
     "ya.ru": "2a02:6b8::2:242",
 }
 DNS_IP = "1.1.1.1"
+DNS_IPS = ["1.1.1.1", "8.8.8.8", "9.9.9.9", "77.88.8.8"]  # как NetProbe.DNS_SERVERS
+BIG = 32 * 1024 * 1024  # /big: замер скорости
 TG_IP = "149.154.167.51"  # DC2 Telegram: протокол без имени сайта, режется по адресу
 
 
@@ -102,7 +106,8 @@ def up(ipv6):
 
     conf("isp", [("i0", "10.10.0.1", 24), ("i1", "10.20.0.1", 24)],
          [dict(dst="0.0.0.0/0", gateway="10.20.0.2")]).close()
-    conf("srv", [("s0", "10.20.0.2", 24), ("s1", "10.30.0.2", 24), ("lo", DNS_IP, 32), ("lo", TG_IP, 32)]
+    conf("srv", [("s0", "10.20.0.2", 24), ("s1", "10.30.0.2", 24), ("lo", TG_IP, 32)]
+         + [("lo", a, 32) for a in DNS_IPS]
          + [("lo", a, 32) for a in sorted(set(SITES.values()))],
          [dict(dst="0.0.0.0/0", gateway="10.20.0.1")]).close()
     n = conf("phone", [("p0", "10.10.0.2", 24), ("p1", "10.30.0.1", 24)])
@@ -159,9 +164,9 @@ def dns_answer(q):
 def serve(cert, key):
     import ssl
 
-    def dns_udp():
+    def dns_udp(addr):
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        s.bind((DNS_IP, 53))
+        s.bind((addr, 53))
         while True:
             q, a = s.recvfrom(1500)
             try:
@@ -169,10 +174,10 @@ def serve(cert, key):
             except Exception as e:
                 print("dns:", e, flush=True)
 
-    def dns_tcp():
+    def dns_tcp(addr):
         s = socket.socket()
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        s.bind((DNS_IP, 53))
+        s.bind((addr, 53))
         s.listen(64)
         while True:
             c, _ = s.accept()
@@ -202,6 +207,10 @@ def serve(cert, key):
             path = data.split(b" ", 2)[1]
             if path == b"/generate_204":
                 t.sendall(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            elif path == b"/big":
+                t.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % BIG)
+                for _ in range(BIG // len(body)):
+                    t.sendall(body)
             else:
                 t.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)
             t.close()
@@ -244,16 +253,18 @@ def serve(cert, key):
 
     for a in sorted(set(SITES.values())):
         threading.Thread(target=quic_echo, args=(a,), daemon=True).start()
-    for f in (dns_udp, dns_tcp, https):
-        threading.Thread(target=f, daemon=True).start()
+    for a in DNS_IPS:
+        for f in (dns_udp, dns_tcp):
+            threading.Thread(target=f, args=(a,), daemon=True).start()
+    threading.Thread(target=https, daemon=True).start()
     print("srv: готов", flush=True)
     threading.Event().wait()
 
 
 # ---------- Нагрузка «как телефон» ----------
 
-def dnsload(seconds, parallel):
-    """DNS-запросы в DNS_IP через VPN, каждый с нового сокета (новый порт), как резолвер Android."""
+def dnsload(seconds, parallel, server=DNS_IP):
+    """DNS-запросы через VPN, каждый с нового сокета (новый порт), как резолвер Android."""
     stop = time.time() + seconds
     ok = fail = 0
     lock = threading.Lock()
@@ -268,7 +279,7 @@ def dnsload(seconds, parallel):
             q = ((k * 7919 + i) & 0xffff).to_bytes(2, "big") + b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" \
                 + b"\x02ya\x02ru\x00\x00\x01\x00\x01"
             try:
-                s.sendto(q, (DNS_IP, 53))
+                s.sendto(q, (server, 53))
                 s.recv(512)
                 good = True
             except OSError:
@@ -291,13 +302,29 @@ def dnsload(seconds, parallel):
 
 # ---------- «Psiphon»: SOCKS5 (CONNECT) с выходом мимо оператора ----------
 
-def socks(port):
+def socks(port, delay_ms=0, kbit=0):
+    """delay_ms — задержка соединения (сервер Psiphon за границей: рукопожатие через туннель),
+    kbit — общая полоса туннеля на все соединения, кбит/с (0 — без ограничения)."""
+    lock = threading.Lock()
+    free_at = [0.0]  # когда «туннель» освободится (общая полоса)
+
+    def pace(n):
+        if not kbit:
+            return
+        with lock:
+            now = time.time()
+            start = max(now, free_at[0])
+            free_at[0] = start + n * 8 / (kbit * 1000)
+        if start > now:
+            time.sleep(start - now)
+
     def pipe(a, b):
         try:
             while True:
-                d = a.recv(65536)
+                d = a.recv(16384)
                 if not d:
                     break
+                pace(len(d))
                 b.sendall(d)
             b.shutdown(socket.SHUT_WR)
         except OSError:
@@ -311,6 +338,9 @@ def socks(port):
             c.recv(h[1])
             c.sendall(b"\x05\x00")
             q = c.recv(4)
+            if q[1] != 1:  # как у Psiphon: только CONNECT (UDP ASSOCIATE от hev — отказ)
+                c.sendall(b"\x05\x07\x00\x01\x00\x00\x00\x00\x00\x00")
+                return
             if q[3] == 1:
                 host = socket.inet_ntoa(c.recv(4))
             elif q[3] == 3:
@@ -318,7 +348,10 @@ def socks(port):
             else:
                 host = socket.inet_ntop(socket.AF_INET6, c.recv(16))
             port_ = struct.unpack(">H", c.recv(2))[0]
-            r = socket.create_connection((host, port_), timeout=10)
+            if delay_ms:
+                time.sleep(delay_ms / 1000)
+            # Имена (mapdns у hev при подключении через Psiphon) — по адресам «интернета»
+            r = socket.create_connection((SITES.get(host, host), port_), timeout=10)
             r.settimeout(None)
             c.settimeout(None)
             c.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("0.0.0.0") + b"\x00\x00")
@@ -397,18 +430,19 @@ if __name__ == "__main__":
     elif cmd == "srv":
         serve(sys.argv[2], sys.argv[3])
     elif cmd == "dnsload":
-        dnsload(int(sys.argv[2]), int(sys.argv[3]))
+        dnsload(int(sys.argv[2]), int(sys.argv[3]), *sys.argv[4:5])
     elif cmd == "socks":
-        socks(int(sys.argv[2]))
+        socks(*(int(a) for a in sys.argv[2:5]))
     elif cmd == "tgcheck":
         tgcheck(float(sys.argv[2]))
     elif cmd == "dnscheck":
-        # DNS-запрос к 1.1.1.1 (мимо VPN, если запущен от uid приложения): есть ли путь через «оператора»
+        # DNS-запрос (мимо VPN, если запущен от uid приложения): есть ли путь через «оператора».
+        # По умолчанию — Яндекс: зарубежные резолверы оператор может резать (профиль nov2026)
         s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         s.settimeout(3)
         q = b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x02ya\x02ru\x00\x00\x01\x00\x01"
         try:
-            s.sendto(q, (DNS_IP, 53))
+            s.sendto(q, (sys.argv[2] if len(sys.argv) > 2 else DNS_IPS[-1], 53))
             s.recv(512)
             print("ok")
         except OSError as e:

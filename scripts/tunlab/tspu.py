@@ -16,7 +16,8 @@ ClientHello, перестановки (disorder), TTL, флаг URG (OOB), от�
   tls        — "first": имя ищется только в первой TLS-записи; ClientHello, разрезанный на записи
                (tlsrec), не разбирается и пропускается; "join": записи склеиваются (tlsrec не помогает);
   ip_block   — сети, где режутся все пакеты с данными (TCP соединяется, данные не доходят; и UDP);
-  freeze     — {имя: байт}: после стольких байт от сервера соединение «замерзает».
+  freeze     — {имя: байт}: после стольких байт от сервера соединение «замерзает»;
+  dns_block  — адреса DNS-серверов, к которым не проходит UDP-DNS (порт 53).
 Расстояния: DPI видит пакет, если он дошёл до оператора; до сервера ещё SERVER_HOPS — пакет
 с меньшим TTL (фейк с малым TTL) до сервера не доходит, а больший доходит и портит ClientHello.
 
@@ -46,6 +47,14 @@ PROFILES = {
                          "googlevideo.com", "youtube.com", "ytimg.com"],
                     urg="strip", tls="first",
                     ip_block=["149.154.160.0/20", "157.240.200.36/32"] + META, freeze={}),
+    # Журнал 0.8.8: tlsrec+oob открывает instagram, facebook, x, rutracker (instagram больше не закрыт
+    # по адресу), но все стратегии отвергнуты: «DNS через обход (UDP 1.1.1.1) не отвечает» —
+    # оператор режет UDP-DNS к зарубежным резолверам; обход не подключался, всё шло через Psiphon
+    "nov2026": dict(sni=["instagram.com", "cdninstagram.com", "facebook.com", "x.com", "rutracker.org",
+                         "googlevideo.com", "youtube.com", "ytimg.com"],
+                    urg="strip", tls="first",
+                    ip_block=["149.154.160.0/20", "157.240.200.36/32"], freeze={},
+                    dns_block=["1.1.1.1", "8.8.8.8"]),
 }
 
 TUNSETIFF = 0x400454CA
@@ -223,6 +232,7 @@ def main():
             logf.write(time.strftime("%H:%M:%S ") + msg + "\n")
 
     ipb = [ipaddress.ip_network(n) for n in prof["ip_block"]]
+    dnsb = {ipaddress.ip_address(a) for a in prof.get("dns_block", [])}
     fin, fout = setup()
     flows = {}
     print("tspu: готов (" + sys.argv[1] + ")", flush=True)
@@ -260,6 +270,8 @@ def main():
         if proto == 17 and len(l4) >= 8:
             if any(dst in n for n in ipb) and len(l4) > 8:
                 continue
+            if dst in dnsb and struct.unpack(">H", l4[2:4])[0] == 53:
+                continue  # UDP-DNS к этому резолверу не проходит
         if proto != 6 or len(l4) < 20:
             os.write(fout, fix_l4(pkt))
             continue

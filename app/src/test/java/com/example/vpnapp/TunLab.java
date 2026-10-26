@@ -19,7 +19,8 @@ import javax.net.ssl.TrustManagerFactory;
  * Помощник стенда scripts/test-tun.sh: отдаёт то, что приложение передаёт tun2socks и ByeDPI,
  * и запускает настоящую проверку NetProbe через SOCKS ByeDPI на стенде.
  * <ul>
- * <li>{@code config <порт>} — конфиг hev-socks5-tunnel для обхода DPI (Tun2SocksConfig);</li>
+ * <li>{@code config <порт> [psiphon]} — конфиг hev-socks5-tunnel для обхода DPI (Tun2SocksConfig);
+ * с {@code psiphon} — как при подключении через Psiphon (mapdns);</li>
  * <li>{@code procargs <порт>} — аргументы процесса ByeDPI (как у BypassController), по одному в строке;</li>
  * <li>{@code byedpi <порт> <порт запасного пути|0> <сильная>} — аргументы процесса ByeDPI
  * и маршрут цепочки «split SNI → сильная» (BypassProfile.route), по одному в строке;</li>
@@ -36,7 +37,8 @@ import javax.net.ssl.TrustManagerFactory;
  * приложении: прямая проверка (эталон), затем BypassSearch пачками по 3 — у каждой стратегии свой
  * процесс ByeDPI (аргументы процесса и маршрут BypassProfile.route) и проверка NetProbe; журнал —
  * как у приложения. Выбранная стратегия: маршрут ByeDPI по аргументу в строке — в файл,
- * название — в файл.label. Код выхода 0 — выбрана, 1 — не выбрана.</li>
+ * название — в файл.label, аргументы — в файл.profile, DNS телефона (ответивший через неё сервер
+ * из NetProbe.DNS_SERVERS) — в файл.dns. Код выхода 0 — выбрана, 1 — не выбрана.</li>
  * </ul>
  */
 public final class TunLab {
@@ -46,7 +48,9 @@ public final class TunLab {
     public static void main(String[] args) throws Exception {
         switch (args[0]) {
             case "config":
-                System.out.print(Tun2SocksConfig.yaml(Integer.parseInt(args[1]), true));
+                // config <порт> [psiphon]: для Psiphon — с mapdns, как у приложения
+                System.out.print(Tun2SocksConfig.yaml(Integer.parseInt(args[1]),
+                        args.length < 3 || !args[2].equals("psiphon")));
                 return;
             case "procargs":
                 for (String s : BypassProfile.processArgs(Integer.parseInt(args[1]))) System.out.println(s);
@@ -112,6 +116,8 @@ public final class TunLab {
     private static boolean search(String exe, int helper, String outFile) throws Exception {
         NetProbe.Direct direct = NetProbe.run();
         BypassSearch s = new BypassSearch(null, null, false, false);
+        // DNS телефона по стратегии — как bypassDnsOf в VpnTunnelService
+        java.util.Map<BypassProfile, String> dnsOf = new java.util.IdentityHashMap<>();
         List<BypassProfile> batch = s.currentBatch();
         boolean baseline = false;
         while (true) {
@@ -134,7 +140,11 @@ public final class TunLab {
                     awaitPort(port);
                     scores.add(pool.submit(() -> NetProbe.bypassQuality(port)));
                 }
-                for (int i = 0; i < batch.size(); i++) s.report(batch.get(i), scores.get(i).get());
+                for (int i = 0; i < batch.size(); i++) {
+                    BypassSearch.Score q = scores.get(i).get();
+                    if (q.dns != null) dnsOf.put(batch.get(i), q.dns);
+                    s.report(batch.get(i), q);
+                }
             } finally {
                 pool.shutdownNow();
                 for (Process p : procs) p.destroy();
@@ -153,6 +163,11 @@ public final class TunLab {
                 Files.write(Paths.get(outFile + ".label"), java.util.Collections.singletonList(d.claim.label),
                         StandardCharsets.UTF_8);
                 Files.write(Paths.get(outFile + ".profile"), java.util.Collections.singletonList(d.claim.argsLine()),
+                        StandardCharsets.UTF_8);
+                String dns = dnsOf.get(d.claim);
+                if (dns == null) dns = NetProbe.DNS_SERVERS[0];
+                System.out.println("DNS телефона: " + dns);
+                Files.write(Paths.get(outFile + ".dns"), java.util.Collections.singletonList(dns),
                         StandardCharsets.UTF_8);
                 return true;
             }
@@ -209,11 +224,12 @@ public final class TunLab {
 
     private static boolean probe(int port, String caFile) throws Exception {
         setupTls(caFile);
-        boolean dns = NetProbe.socksDnsWorks(port, "ya.ru");
-        System.out.println("  DNS через SOCKS-UDP ByeDPI: " + (dns ? "отвечает" : "НЕ ОТВЕЧАЕТ"));
+        String server = NetProbe.socksDnsServer(port, "ya.ru");
+        boolean dns = server != null;
+        System.out.println("  DNS через SOCKS-UDP ByeDPI: " + (dns ? "отвечает " + server : "НЕ ОТВЕЧАЕТ"));
         BypassSearch.Score s = NetProbe.bypassQuality(port);
         System.out.println("  NetProbe: " + s.summary() + " · " + s.detail);
-        NetProbe.Health h = NetProbe.bypassHealth(port);
+        NetProbe.Health h = NetProbe.bypassHealth(port, dns ? server : NetProbe.DNS_SERVERS[0]);
         System.out.println("  Сторож: DNS " + (h.dns ? "+" : "-") + ", сайт " + (h.site ? "+" : "-"));
         return dns && h.ok() && s.normal() == s.normalTotal;
     }

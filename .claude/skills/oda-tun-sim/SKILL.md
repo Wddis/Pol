@@ -1,6 +1,6 @@
 ---
 name: oda-tun-sim
-description: Запустить имитацию телефона ODA с обходом DPI (scripts/test-tun.sh) — весь трафик «телефона» идёт через VPN-интерфейс tun0 → tun2socks (hev-socks5-tunnel) → ByeDPI → «оператор» с моделью ТСПУ (scripts/tunlab/tspu.py); стратегию выбирает настоящий перебор ODA (BypassSearch + NetProbe), затем проверяются «приложения» (обычные сайты, YouTube, Facebook/Instagram как приложение, CDN, Telegram, QUIC к Meta), запасной путь через «Psiphon» (HelperRelay), поток DNS, сводка ByeDPI. Использовать после изменений в Tun2SocksConfig, BypassProfile, BypassSearch, BypassController, NetProbe, ByeDpiStats, HelperRelay, VpnTunnelService или правки ByeDPI (scripts/byedpi.patch), перед пушем, и когда по журналу телефона нужно воспроизвести поведение ТСПУ.
+description: Запустить имитацию телефона ODA с обходом DPI (scripts/test-tun.sh) — весь трафик «телефона» идёт через VPN-интерфейс tun0 → tun2socks (hev-socks5-tunnel) → ByeDPI → «оператор» с моделью ТСПУ (scripts/tunlab/tspu.py); стратегию выбирает настоящий перебор ODA (BypassSearch + NetProbe), затем проверяются «приложения» (обычные сайты, YouTube, Facebook/Instagram как приложение, CDN, Telegram, QUIC к Meta), запасной путь через «Psiphon» (HelperRelay), поток DNS, сводка ByeDPI, выбор DNS телефона и скорость обхода против Psiphon. Использовать после изменений в Tun2SocksConfig, BypassProfile, BypassSearch, BypassController, NetProbe, ByeDpiStats, HelperRelay, VpnTunnelService или правки ByeDPI (scripts/byedpi.patch), перед пушем, и когда по журналу телефона нужно воспроизвести поведение ТСПУ.
 ---
 
 # Имитация телефона ODA (обход DPI)
@@ -21,12 +21,18 @@ description: Запустить имитацию телефона ODA с обх�
   следующие пакеты); `urg` — вырезать байт OOB или оставить; `tls` — искать имя только в первой
   TLS-записи (tlsrec пробивает) или склеивать записи; `ip_block` — сети, где не проходят пакеты с данными;
   фейк с TTL ≤ 6 (после первого маршрутизатора) до сервера не доходит, с большим — доходит.
+  `dns_block` — резолверы, к которым не проходит UDP-DNS.
   Журнал решений — `tspu.log` («блок …», «пропуск …»).
-- **srv** — «интернет»: DNS 1.1.1.1, HTTPS-сайты с адресами из журналов (instagram и i.instagram
+- **srv** — «интернет»: DNS 1.1.1.1, 8.8.8.8, 9.9.9.9, 77.88.8.8 (как `NetProbe.DNS_SERVERS`), HTTPS-сайты с адресами из журналов (instagram и i.instagram
   31.13.72.174, facebook и graph.facebook 31.13.72.36, CDN 157.240.200.36, YouTube, googlevideo, …),
-  «сервер Telegram» 149.154.167.51:443 без TLS (эхо), UDP-эхо 443 на каждом адресе («QUIC»).
+  «сервер Telegram» 149.154.167.51:443 без TLS (эхо), UDP-эхо 443 на каждом адресе («QUIC»),
+  `/big` на любом сайте — 32 МБ для замера скорости. «Psiphon» стенда — с задержкой соединения
+  150 мс и общей полосой 8 Мбит/с (`PSIPHON_DELAY_MS`, `PSIPHON_KBIT` в test-tun.sh), принимает только
+  CONNECT (UDP ASSOCIATE отвергает, как настоящий Psiphon).
 
 Профили ТСПУ (`PROFILES` в tspu.py) подобраны по журналам телефона:
+- `nov2026` — журнал 0.8.8: как oct2026, но instagram по адресу не закрыт, а UDP-DNS к 1.1.1.1 и 8.8.8.8
+  режется (в 0.8.8 из-за этого все стратегии отвергались и всё шло через медленный Psiphon).
 - `oct2026` — журнал 0.8.7: OOB/disoob/fake/multidisorder не пробивают, tlsrec — да; instagram, CDN
   и Telegram закрыты по адресу; YouTube режется по имени для мягкой стратегии.
 - `jun2026` — журнал 0.8.6: OOB-семейство пробивает; CDN и Telegram закрыты по адресу.
@@ -47,8 +53,8 @@ description: Запустить имитацию телефона ODA с обх�
 ```bash
 git submodule update --init --recursive          # byedpi и hev-socks5-tunnel
 python3 -m pip install pyroute2                  # в CI: sudo python3 -m pip install --break-system-packages pyroute2
-sudo bash scripts/test-tun.sh                    # ~8 минут; без root сам перезапустится через sudo
-LAB_PROFILES=oct2026 sudo -E bash scripts/test-tun.sh   # один профиль (~5 минут)
+sudo bash scripts/test-tun.sh                    # ~10 минут; без root сам перезапустится через sudo
+LAB_PROFILES=nov2026 sudo -E bash scripts/test-tun.sh   # один профиль (~3–5 минут)
 ```
 
 Нужны: root, gcc, make, patch, JDK (javac/java), python3 + pyroute2, openssl, curl, procps (pgrep),
@@ -64,11 +70,16 @@ bash читает скрипт по ходу и споткнётся о сдви
 Для каждого профиля:
 1. **Выбор стратегии** — журнал как у приложения («Сеть напрямую …», «Заблокированные напрямую: …
    по адресу / по имени», «Обход DPI (стратегия): … · instagram-(TLS) facebook+ …», «подключаюсь через …»).
-   Проверки: выбрана стратегия, пробивающая заблокированные; для oct2026 — tlsrec, для jun2026 — OOB.
+   Проверки: выбрана стратегия, пробивающая заблокированные; для oct2026 и nov2026 — tlsrec, для jun2026 — OOB;
+   для nov2026 — «DNS телефона: 9.9.9.9» (`chosen.dns`; resolv.conf «телефона» пишется из него).
 2. **«Приложения» через VPN** (запасной путь открыт): обычные сайты сразу; YouTube ≤ 12 с; Facebook
    (www и graph) сразу — список доменов; Instagram (www, i.) — в oct2026 ~4,7 с (сильная не прошла →
    Psiphon), повтор сразу; CDN картинок — через Psiphon; Telegram «ok»; QUIC к Meta «fail» (отброшен),
    к Google «ok»; NetProbe и сторож; сводка ByeDPI с «QUIC (UDP 443): Meta …» и «Telegram → Psiphon».
+Только nov2026:
+3. **Скорость** — загрузка 32 МБ с cloudflare, facebook, i.instagram, googlevideo через обход DPI, затем то же
+   через «Psiphon» (hev с конфигом Psiphon, mapdns): обход ≥ 3× Psiphon и ≥ 2 МБ/с. Узкое место стенда —
+   модель ТСПУ на Python (каждый пакет), так что абсолютные цифры обхода ниже, чем на телефоне.
 Только oct2026:
 3. **Поток DNS** — 15 потоков 40 с, vk.com каждые 5 с: «8 из 8», «pool is full: 0».
 4. **Запасной путь закрыт** — обычные сайты, Facebook, YouTube работают; Telegram — нет;

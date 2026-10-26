@@ -1,12 +1,14 @@
 #!/usr/bin/env bash
 # Имитация телефона с обходом DPI на компьютере (Linux, root; ~8 минут; идёт и в CI):
 # весь трафик «телефона» → VPN-интерфейс tun0 → tun2socks (hev-socks5-tunnel) → ByeDPI → «оператор»
-# с моделью ТСПУ (scripts/tunlab/tspu.py) → «интернет» (DNS 1.1.1.1, HTTPS-сайты, «Telegram», «QUIC»).
+# с моделью ТСПУ (scripts/tunlab/tspu.py) → «интернет» (DNS 1.1.1.1, 8.8.8.8, 9.9.9.9, 77.88.8.8, HTTPS-сайты, «Telegram», «QUIC»).
 # Стратегию выбирает настоящий перебор ODA (BypassSearch + NetProbe + процессы ByeDPI с маршрутом
 # BypassProfile.route), конфиг hev — из Tun2SocksConfig, запасной путь — настоящий HelperRelay
 # в «Psiphon» стенда (SOCKS, который ходит мимо оператора).
 #
 # Профили ТСПУ подобраны по журналам телефона (см. tspu.py):
+#  nov2026 — журнал 0.8.8: как oct2026, но instagram по адресу не закрыт, а UDP-DNS к 1.1.1.1
+#            и 8.8.8.8 режется (обход должен взять другой DNS, а не уступить медленному Psiphon);
 #  oct2026 — журнал 0.8.7: OOB не пробивает, tlsrec пробивает; instagram (31.13.72.174), CDN
 #            и Telegram закрыты по адресу; YouTube режется по имени для мягкой стратегии;
 #  jun2026 — журнал 0.8.6: OOB-семейство пробивает; CDN и Telegram закрыты по адресу.
@@ -15,7 +17,8 @@
 # Telegram, QUIC к Meta (должен отбрасываться) и к Google (должен идти); NetProbe и сторож; сводка
 # ByeDPI. Для oct2026 ещё: поток DNS (без «pool is full»), запасной путь закрыт (Psiphon не готов) —
 # остальное работает. Контроль: запуск 0.8.6 (без -c, без маршрута) — соцсети не открываются,
-# поток DNS роняет интернет.
+# поток DNS роняет интернет. Для nov2026 — скорость: загрузка 32 МБ через обход и через «Psiphon»
+# (задержка 150 мс и полоса 8 Мбит/с, как у сервера за границей).
 # Нужны: gcc, make, patch, JDK, python3 + pyroute2, openssl, curl, util-linux (nsenter, unshare).
 set -euo pipefail
 
@@ -31,6 +34,9 @@ chmod 755 "$TMP"
 PORT=10809
 HELPER_PORT=10808   # HelperRelay (запасной путь), как в приложении
 PSIPHON_PORT=1081   # «Psiphon» стенда
+# «Psiphon» для замера скорости: сервер за границей — рукопожатие через туннель и общая полоса
+PSIPHON_DELAY_MS=150
+PSIPHON_KBIT=8000
 APP_UID=2000
 TUNNEL_UID=2001
 LOAD_SECONDS=40
@@ -39,7 +45,7 @@ CDN_HOST=scontent-hel3-1.cdninstagram.com
 TG_IP=149.154.167.51
 META_IP=31.13.72.174
 GOOGLE_IP=142.250.74.78
-PROFILES="${LAB_PROFILES:-oct2026 jun2026}"
+PROFILES="${LAB_PROFILES:-nov2026 oct2026 jun2026}"
 
 PIDS=()
 # В фоне запускается подоболочка функции (NS/APP/…), программа — её потомок: гасим потомков,
@@ -122,11 +128,14 @@ openssl x509 -req -in "$TMP/site.csr" -CA "$TMP/ca.pem" -CAkey "$TMP/ca.key" -CA
     -out "$TMP/site.pem" -days 2 -extfile "$TMP/san.ext" 2>/dev/null
 chmod 644 "$TMP"/*.pem "$TMP"/*.key
 
-# DNS телефона в VPN — как у VpnService.Builder при обходе DPI; IPv6 у «оператора» нет — не в VPN
-echo "nameserver 1.1.1.1" > "$TMP/resolv.conf"
+# DNS телефона в VPN — как у VpnService.Builder при обходе DPI (сервер, ответивший через выбранную
+# стратегию, — пишется после перебора); IPv6 у «оператора» нет — не в VPN
+phone_dns() { echo "nameserver $1" > "$TMP/resolv.conf"; }
+phone_dns 1.1.1.1
 echo "hosts: files dns" > "$TMP/nsswitch.conf"
 
 TUNLAB config "$PORT" > "$TMP/hev-new.yml"
+TUNLAB config "$PSIPHON_PORT" psiphon > "$TMP/hev-psiphon.yml"
 grep -v 'udp-read-write-timeout' "$TMP/hev-new.yml" > "$TMP/hev-old.yml"
 mapfile -t PROC_ARGS < <(TUNLAB procargs "$PORT")
 
@@ -198,7 +207,8 @@ stop_phone() {  # остановить ByeDPI, hev и запасной путь;
 }
 
 start_helper() {  # «Psiphon» и HelperRelay; $1 — путь открыт (1) или закрыт (0)
-    TUNNEL python3 -u "$TMP/lab.py" socks "$PSIPHON_PORT" > "$TMP/psiphon.log" 2>&1 &
+    TUNNEL python3 -u "$TMP/lab.py" socks "$PSIPHON_PORT" "$PSIPHON_DELAY_MS" "$PSIPHON_KBIT" \
+        > "$TMP/psiphon.log" 2>&1 &
     PIDS+=($!)
     local up=0
     [ "$1" = 1 ] && up="$PSIPHON_PORT"
@@ -222,13 +232,29 @@ site_t() {  # то же, с временем: «200 0.41»; $3 — тайм-ау
         -w "%{http_code} %{time_total}" "https://$1$2" 2>/dev/null || true
 }
 
+speed_run() {  # загрузка /big «браузером телефона» с нескольких сайтов; МБ/с — в SPEEDS
+    local h r ok=1
+    SPEEDS=()
+    for h in www.cloudflare.com www.facebook.com i.instagram.com rr1---sn-n8v7znz7.googlevideo.com; do
+        r=$(PHONE curl -sS --noproxy '*' --cacert "$TMP/ca.pem" -o /dev/null -m 90 \
+            -w "%{http_code} %{speed_download} %{time_starttransfer}" "https://$h/big" 2>/dev/null || true)
+        set -- ${r:-нет 0 0}
+        local mb
+        mb=$(awk -v b="$2" 'BEGIN { printf "%.2f", b / 1048576 }')
+        echo "    $h: $1, $mb МБ/с, первый байт через $3 с"
+        [ "$1" = 200 ] || ok=0
+        SPEEDS+=("$mb")
+    done
+    SPEED_OK=$ok
+}
+
 fast() { awk -v t="$1" -v lim="$2" 'BEGIN { exit !(t + 0 < lim + 0) }'; }  # $1 < $2 (секунды)
 tg() { PHONE python3 "$LAB/lab.py" tgcheck "${1:-10}" 2>/dev/null || true; }
 quic() { PHONE python3 "$LAB/lab.py" quiccheck "$1" "${2:-3}" 2>/dev/null || true; }
 pool_full() { grep -c 'pool is full' "$TMP/byedpi.log" || true; }
 
 load_test() {  # поток DNS + сайт каждые 5 с; печатает «открылся N из M»
-    PHONE python3 "$LAB/lab.py" dnsload "$LOAD_SECONDS" "$LOAD_PARALLEL" > "$TMP/load.txt" 2>&1 &
+    PHONE python3 "$LAB/lab.py" dnsload "$LOAD_SECONDS" "$LOAD_PARALLEL" "$dns" > "$TMP/load.txt" 2>&1 &
     local load=$! good=0 total=0
     for _ in $(seq 1 $((LOAD_SECONDS / 5))); do
         sleep 5
@@ -312,10 +338,16 @@ for PROFILE in $PROFILES; do
     fi
     sed 's/^/    /' "$TMP/search.txt" | grep -v 'Обход DPI: запуск' || true
     label=$(cat "$TMP/out/chosen.label" 2>/dev/null || echo "")
+    dns=$(cat "$TMP/out/chosen.dns" 2>/dev/null || echo 1.1.1.1)
+    phone_dns "$dns"
     check "$([ "$search_ok" = 1 ] && grep -q 'заблокированные сайты открываются' "$TMP/search.txt" && echo 1 || echo 0)" \
         "выбрана стратегия, пробивающая заблокированные: «$label»"
     case "$PROFILE" in
         oct2026) check "$(echo "$label" | grep -q tlsrec && echo 1 || echo 0)" "как на телефоне в 0.8.7 — tlsrec" ;;
+        nov2026)
+            check "$(echo "$label" | grep -q tlsrec && echo 1 || echo 0)" "как на телефоне в 0.8.8 — tlsrec"
+            check "$([ "$dns" = 9.9.9.9 ] && echo 1 || echo 0)" \
+                "UDP-DNS к 1.1.1.1 и 8.8.8.8 закрыт — DNS телефона $dns (обход не отвергнут из-за DNS)" ;;
         jun2026) check "$(echo "$label" | grep -qE 'oob|disoob' && echo 1 || echo 0)" "как на телефоне в 0.8.6 — OOB-семейство" ;;
     esac
     [ "$search_ok" = 1 ] || continue
@@ -334,6 +366,39 @@ for PROFILE in $PROFILES; do
     echo "$st" | sed 's/^/    /'
     check "$(echo "$st" | grep -q 'QUIC (UDP 443):.*Meta' && echo "$st" | grep -q 'Telegram → Psiphon' && echo 1 || echo 0)" \
         "сводка ByeDPI: QUIC к Meta виден, Telegram шёл через Psiphon"
+
+    if [ "$PROFILE" = nov2026 ]; then
+        echo "3) Скорость: загрузка 32 МБ через обход DPI (прямое соединение через «оператора»):"
+        speed_run
+        BYPASS_SPEEDS=("${SPEEDS[@]}")
+        check "$SPEED_OK" "через обход все загрузки дошли"
+        echo "   то же через «Psiphon» (подключение через Psiphon, как в журнале 0.8.8):"
+        stop_phone
+        # Фиктивный DNS (mapdns у hev, Tun2SocksConfig.FAKE_DNS): имена резолвит «Psiphon»
+        phone_dns "$(awk '/^mapdns:/ { m = 1 } m && /address:/ { print $2; exit }' "$TMP/hev-psiphon.yml")"
+        TUNNEL python3 -u "$TMP/lab.py" socks "$PSIPHON_PORT" "$PSIPHON_DELAY_MS" "$PSIPHON_KBIT" \
+            > "$TMP/psiphon.log" 2>&1 &
+        PIDS+=($!)
+        cp "$TMP/hev-psiphon.yml" "$TMP/hev.yml"
+        if [ "$IPV6" = 0 ]; then sed -i "/ipv6:/d" "$TMP/hev.yml"; fi
+        sed -i "s/^tunnel:/tunnel:\n  name: tun0/" "$TMP/hev.yml"
+        NS phone env ${PRELOAD:+LD_PRELOAD=$PRELOAD} "$HEV" "$TMP/hev.yml" > "$TMP/hev.log" 2>&1 &
+        PIDS+=($!)
+        NS phone python3 "$LAB/lab.py" routes 0
+        sleep 1
+        speed_run
+        PSIPHON_SPEEDS=("${SPEEDS[@]}")
+        check "$SPEED_OK" "через «Psiphon» все загрузки дошли"
+        ok=1
+        for i in "${!BYPASS_SPEEDS[@]}"; do
+            awk -v a="${BYPASS_SPEEDS[$i]}" -v b="${PSIPHON_SPEEDS[$i]}" 'BEGIN { exit !(a >= 3 * b && a >= 2) }' || ok=0
+        done
+        check "$ok" "обход DPI быстрее Psiphon минимум втрое (и не меньше 2 МБ/с): ${BYPASS_SPEEDS[*]} против ${PSIPHON_SPEEDS[*]} МБ/с"
+        stop_phone
+        phone_dns "$dns"
+        start_phone "$TMP/hev-new.yml" "${ARGS[@]}"
+        start_helper 1
+    fi
 
     if [ "$PROFILE" = oct2026 ]; then
         echo "3) Нагрузка как у телефона (DNS $LOAD_PARALLEL потоков, ${LOAD_SECONDS} с):"

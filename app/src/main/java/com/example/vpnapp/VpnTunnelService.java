@@ -26,10 +26,12 @@ import java.io.IOException;
 import java.net.Inet6Address;
 import java.net.InetAddress;
 import java.util.ArrayList;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 
 /**
  * VPN: весь трафик телефона → tun → tun2socks → локальный SOCKS5 (Psiphon или Tor).
@@ -126,6 +128,9 @@ public class VpnTunnelService extends VpnService
     private boolean helperHinted;    // подсказка про «Авто» в журнале уже была
     // Режим «Обход DPI»: Psiphon запущен только как запасной путь и сам подключением не станет
     private boolean psiphonHelperOnly;
+    // DNS телефона при обходе DPI: тот из NetProbe.DNS_SERVERS, что ответил через стратегию
+    private final Map<BypassProfile, String> bypassDnsOf = new IdentityHashMap<>();
+    private String bypassDns = NetProbe.DNS_SERVERS[0];
     @Nullable private String bypassIp;
     @Nullable private String bypassCc;
     private int torPercent;
@@ -135,7 +140,7 @@ public class VpnTunnelService extends VpnService
     @Nullable private NetProbe.Result probe;
     @Nullable private BypassSearch.Score directScore;  // прямая проверка: эталон для обхода DPI
     private boolean directDone;
-    private boolean tunDirectDns;  // текущий tun поднят с реальным DNS (для обхода DPI)
+    @Nullable private String tunDns;  // реальный DNS текущего tun (обход DPI); null — фиктивный
     private boolean underlyingIpv6;  // у сети оператора есть глобальный IPv6
 
     @Override
@@ -221,6 +226,8 @@ public class VpnTunnelService extends VpnService
         helperPsiphonPort = 0;
         helperHinted = false;
         psiphonHelperOnly = false;
+        bypassDnsOf.clear();
+        bypassDns = NetProbe.DNS_SERVERS[0];
         bypassIp = null;
         bypassCc = null;
         torPercent = 0;
@@ -698,7 +705,7 @@ public class VpnTunnelService extends VpnService
     @Override
     public void onBypassListening(int slot, int port, BypassProfile profile) {
         if (!active || !bypassActive) return;
-        if (engine != null) {
+        if (!bypassSearching()) {
             if (StatusBus.ENGINE_BYPASS.equals(engine) && slot == bypassSlot) {
                 DiagLog.add("Обход DPI: «" + profile.label + "» снова работает");
             } else {
@@ -716,8 +723,9 @@ public class VpnTunnelService extends VpnService
     }
 
     private void onBypassScored(int id, int slot, int run, BypassProfile profile, BypassSearch.Score score) {
-        if (!active || id != connection || !bypassActive || engine != null || bypassSearch == null) return;
+        if (!active || id != connection || !bypassSearching()) return;
         if (run != bypassRun[slot]) return;  // результат прошлого запуска этого слота
+        if (score.dns != null) bypassDnsOf.put(profile, score.dns);
         bypassSearch.report(profile, score);  // в журнал — вместе с итогом пачки
         decideBypass();
     }
@@ -737,10 +745,20 @@ public class VpnTunnelService extends VpnService
             fail(R.string.error_bypass_stopped);
             return;
         }
-        if (engine != null || bypassSearch == null) return;
+        if (!bypassSearching()) return;
         bypassRun[slot]++;  // проверка этого запуска уже не нужна
         bypassSearch.report(profile, NetProbe.nothing());
         decideBypass();
+    }
+
+    /**
+     * Обход DPI ещё перебирает стратегии: пока никто не подключился, или в «Авто» раньше успел
+     * Psiphon — тогда обход ищет дальше и, если пробьёт соцсети, подключение переходит на него:
+     * прямое соединение заметно быстрее Psiphon (сервер за границей).
+     */
+    private boolean bypassSearching() {
+        return bypassActive && bypassSearch != null && (engine == null
+                || (StatusBus.ENGINE_PSIPHON.equals(engine) && helperPort > 0));
     }
 
     /** Пачка проверена: подключиться, проверить следующую или сдаться (решает BypassSearch). */
@@ -749,6 +767,15 @@ public class VpnTunnelService extends VpnService
         if (search == null || !search.ready()) return;
         BypassSearch.Decision d = search.decide();
         for (String note : d.notes) DiagLog.add(note);
+        boolean onPsiphon = StatusBus.ENGINE_PSIPHON.equals(engine);
+        if (d.claim != null && onPsiphon && !d.full) {
+            // Psiphon открывает всё; обход только для обычных сайтов — не замена ему
+            DiagLog.add("Обход DPI открывает только обычные сайты: остаюсь на Psiphon");
+            stopBypassSlots();
+            bypassActive = false;
+            bypassText = "";
+            return;
+        }
         if (d.claim != null) {
             int slot = -1;
             for (int i = 0; i < bypass.length; i++) {
@@ -761,6 +788,11 @@ public class VpnTunnelService extends VpnService
                 // Запоминаем выбор для этой сети (кроме своей строки и быстрого повтора запомненного)
                 if (!d.fromMemory && BypassProfile.parse("", prefs.getByedpiArgs()) == null) {
                     prefs.setBypassBest(networkId, d.claim, d.full);
+                }
+                if (onPsiphon) {
+                    // Psiphon остаётся запасным путём (Telegram и закрытое по адресу)
+                    DiagLog.add("Переключаюсь с Psiphon на обход DPI (быстрее: прямое соединение)");
+                    helperPsiphonPort = socksPort;
                 }
                 claimBypass(slot, d.claim, d.full);
                 return;
@@ -776,7 +808,8 @@ public class VpnTunnelService extends VpnService
         stopBypassSlots();
         bypassActive = false;
         bypassText = "";
-        DiagLog.add("Обход DPI не помог ни одной стратегией");
+        DiagLog.add("Обход DPI не помог ни одной стратегией"
+                + (onPsiphon ? ": остаюсь на Psiphon" : ""));
         if (engine == null && psiphonHelperOnly && psiphonActive) {
             // Запасной путь без обхода DPI не нужен
             psiphonActive = false;
@@ -796,6 +829,12 @@ public class VpnTunnelService extends VpnService
         bypassSlot = slot;
         bypassFull = full;
         bypassText = "";
+        String dns = bypassDnsOf.get(profile);
+        bypassDns = dns != null ? dns : NetProbe.DNS_SERVERS[0];
+        if (!bypassDns.equals(NetProbe.DNS_SERVERS[0])) {
+            DiagLog.add("DNS телефона: " + bypassDns + " (" + NetProbe.DNS_SERVERS[0]
+                    + " через обход не отвечает)");
+        }
         stopOtherEngines(StatusBus.ENGINE_BYPASS);
         if (helperPort > 0 && helperPsiphonPort > 0) {
             relay.setUpstream(helperPsiphonPort);
@@ -834,8 +873,9 @@ public class VpnTunnelService extends VpnService
                 ? conns.takeNewUnreachable(BYPASS_UNREACH_CHECKS) : new ArrayList<>();
         String summary = conns != null ? conns.drain() : "";
         String helper = helperPort > 0 ? relay.drainStats() : "";
+        String dns = bypassDns;
         new Thread(() -> {
-            NetProbe.Health h = NetProbe.bypassHealth(port);
+            NetProbe.Health h = NetProbe.bypassHealth(port, dns);
             // Почему адрес не открылся ни одной стратегией: по адресу или по DPI
             List<String> why = new ArrayList<>();
             for (String ip : unreach) {
@@ -921,8 +961,12 @@ public class VpnTunnelService extends VpnService
         // Обход DPI с запасным путём: Psiphon не останавливаем, он нужен для Telegram и того,
         // что напрямую не открывается
         boolean keepPsiphon = StatusBus.ENGINE_BYPASS.equals(winner) && helperPort > 0;
+        // «Авто»: Psiphon успел раньше — обход DPI ищет дальше, чтобы перейти на него (быстрее)
+        boolean keepBypass = StatusBus.ENGINE_PSIPHON.equals(winner) && helperPort > 0
+                && bypassActive && bypassSearch != null;
         DiagLog.add("Подключено через " + winner + ": остальные способы останавливаются"
-                + (keepPsiphon && psiphonActive ? " (кроме Psiphon — он запасной путь)" : ""));
+                + (keepPsiphon && psiphonActive ? " (кроме Psiphon — он запасной путь)" : "")
+                + (keepBypass ? " (кроме обхода DPI: если пробьёт соцсети, перейду на него — он быстрее)" : ""));
         if (!StatusBus.ENGINE_TOR.equals(winner) && torActive) {
             torActive = false;
             tor.stop();
@@ -932,7 +976,7 @@ public class VpnTunnelService extends VpnService
             psiphonActive = false;
             psiphon.stop();
         }
-        if (!StatusBus.ENGINE_BYPASS.equals(winner) && bypassActive) {
+        if (!StatusBus.ENGINE_BYPASS.equals(winner) && bypassActive && !keepBypass) {
             bypassActive = false;
             stopBypassSlots();
         }
@@ -943,7 +987,7 @@ public class VpnTunnelService extends VpnService
     private boolean startTunnel() {
         // Обходу DPI нужен реальный DNS без mapdns: при необходимости переустанавливаем tun
         boolean direct = StatusBus.ENGINE_BYPASS.equals(engine);
-        if (tun == null || direct != tunDirectDns) {
+        if (tun == null || !Objects.equals(direct ? bypassDns : null, tunDns)) {
             stopTunnel();
             try {
                 if (tun != null) tun.close();
@@ -1230,13 +1274,14 @@ public class VpnTunnelService extends VpnService
         }
         if (directDns) {
             // Обход DPI: реальный резолвер, запросы идут через SOCKS напрямую
-            b.addDnsServer(Tun2SocksConfig.DIRECT_DNS);
-            if (ipv6) b.addDnsServer(Tun2SocksConfig.DIRECT_DNS6);
+            b.addDnsServer(bypassDns);
+            // IPv6-адрес есть только у основного (1.1.1.1); запасные — только IPv4
+            if (ipv6 && Tun2SocksConfig.DIRECT_DNS.equals(bypassDns)) b.addDnsServer(Tun2SocksConfig.DIRECT_DNS6);
         } else {
             // Tor/Psiphon: фиктивный DNS, перехватывает mapdns
             b.addDnsServer(Tun2SocksConfig.FAKE_DNS);
         }
-        tunDirectDns = directDns;
+        tunDns = directDns ? bypassDns : null;
         try {
             // Само приложение (Tor, мосты и Psiphon) ходит в сеть напрямую
             b.addDisallowedApplication(getPackageName());

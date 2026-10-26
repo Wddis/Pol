@@ -110,7 +110,13 @@ final class NetProbe {
     private static final long SITE_DEADLINE_MS = 20_000;
     // Больше ~16 КБ, после которых ТСПУ «замораживает» часть соединений к зарубежным хостингам
     static final int ENOUGH_BYTES = 20 * 1024;
-    private static final String DNS_SERVER = "1.1.1.1";
+    /**
+     * DNS-серверы для телефона при обходе DPI, по предпочтению: зарубежные (не подменяют ответы),
+     * затем Яндекс. Берётся первый, который отвечает через обход (UDP через SOCKS ByeDPI): в 0.8.8
+     * оператор перестал пропускать UDP-DNS к 1.1.1.1, и все стратегии считались нерабочими
+     * («DNS через обход не отвечает») — обход DPI не подключался, всё шло через медленный Psiphon.
+     */
+    static final String[] DNS_SERVERS = {"1.1.1.1", "8.8.8.8", "9.9.9.9", "77.88.8.8"};
     private static final int DNS_TIMEOUT_MS = 2_500;
     private static final long DNS_WAIT_MS = 12_000;
     private static final String UA = "Mozilla/5.0 (Linux; Android 11) AppleWebKit/537.36 "
@@ -130,6 +136,7 @@ final class NetProbe {
     /** Забыть адреса сайтов: новое подключение, сеть могла смениться. */
     static void resetDns() {
         DNS_CACHE.clear();
+        DIRECT_DNS.clear();
     }
 
     /** Прямая проверка (без VPN): «белые списки» и эталон обычного интернета. */
@@ -138,8 +145,8 @@ final class NetProbe {
         DiagLog.add("Сеть напрямую: зарубежные сайты " + s.foreign + "/" + FOREIGN.length
                 + ", российские " + s.local + "/" + LOCAL.length
                 + ", заблокированные " + s.blocked + "/" + s.blockedTotal + " · " + s.detail);
-        DiagLog.add("Адреса заблокированных сайтов (DNS " + DNS_SERVER + ", если не ответил — системный): "
-                + addresses(BLOCKED));
+        DiagLog.add("DNS напрямую: " + directDnsStatus());
+        DiagLog.add("Адреса заблокированных сайтов: " + addresses(BLOCKED));
         classifyBlockedLater();
         Result r = s.foreign > 0 ? Result.OK : s.local > 0 ? Result.WHITELIST : Result.OFFLINE;
         return new Direct(r, s);
@@ -214,9 +221,9 @@ final class NetProbe {
      * (generate_204 — ответ без тела, почти без трафика). Если не вышло — тот же сайт напрямую:
      * так видно, сломан ли ByeDPI или пропала сама сеть.
      */
-    static Health bypassHealth(int socksPort) {
+    static Health bypassHealth(int socksPort, String dnsServer) {
         Site site = FOREIGN[0];
-        boolean dns = socksDnsWorks(socksPort, LOCAL[0].host);
+        boolean dns = socksDnsWorks(socksPort, LOCAL[0].host, dnsServer);
         InetAddress ip = resolve(site.host);
         boolean ok = ip != null && fetch(site.host, site.path, ip, 443, socksPort);
         boolean direct = !ok && ip != null && fetch(site.host, site.path, ip, 443, 0);
@@ -289,9 +296,10 @@ final class NetProbe {
         all.addAll(Arrays.asList(LOCAL));
         ExecutorService pool = Executors.newFixedThreadPool(all.size() + 1);
         try {
-            // DNS телефона идёт через тот же SOCKS (UDP): проверяем одновременно с сайтами
-            Future<Boolean> dnsFuture = socksPort > 0
-                    ? pool.submit(() -> socksDnsWorks(socksPort, LOCAL[0].host)) : null;
+            // DNS телефона идёт через тот же SOCKS (UDP): проверяем одновременно с сайтами,
+            // какой из серверов DNS_SERVERS отвечает
+            Future<String> dnsFuture = socksPort > 0
+                    ? pool.submit(() -> socksDnsServer(socksPort, LOCAL[0].host)) : null;
             List<Future<String>> futures = new ArrayList<>();
             for (Site site : all) futures.add(pool.submit(() -> why(site, socksPort)));
             long deadline = System.nanoTime()
@@ -319,24 +327,30 @@ final class NetProbe {
                 // (TLS), сбрасывает или «замораживает» уже после ответа (N КБ)
                 if (!ok[i] && i < BLOCKED.length && fail[i] != null) detail.append('(').append(fail[i]).append(')');
             }
-            if (dnsFuture != null && !futureTrue(dnsFuture, deadline)) {
-                // Сайты по IP открываются, но имена у телефона не определятся — интернета не будет
-                return new BypassSearch.Score(0, BLOCKED.length, 0, 0, FOREIGN.length + LOCAL.length,
-                        "DNS через обход (UDP " + DNS_SERVER + ") не отвечает · " + detail);
+            String dns = null;
+            if (dnsFuture != null) {
+                dns = futureValue(dnsFuture, deadline);
+                if (dns == null) {
+                    // Сайты по IP открываются, но имена у телефона не определятся — интернета не будет
+                    return new BypassSearch.Score(0, BLOCKED.length, 0, 0, FOREIGN.length + LOCAL.length,
+                            "DNS через обход (UDP " + String.join(", ", DNS_SERVERS) + ") не отвечает · " + detail);
+                }
+                if (!dns.equals(DNS_SERVERS[0])) detail.append(" · DNS ").append(dns);
             }
             return new BypassSearch.Score(blocked, BLOCKED.length, foreign, local,
-                    FOREIGN.length + LOCAL.length, detail.toString());
+                    FOREIGN.length + LOCAL.length, detail.toString(), dns);
         } finally {
             pool.shutdownNow();
         }
     }
 
-    private static boolean futureTrue(Future<Boolean> f, long deadlineNanos) {
+    @Nullable
+    private static <T> T futureValue(Future<T> f, long deadlineNanos) {
         try {
             long left = Math.max(1, deadlineNanos - System.nanoTime());
             return f.get(left, TimeUnit.NANOSECONDS);
         } catch (Exception e) {
-            return false;
+            return null;
         }
     }
 
@@ -475,17 +489,51 @@ final class NetProbe {
 
     // ---------- DNS через SOCKS5 UDP ASSOCIATE: так резолвит имена телефон при обходе DPI ----------
 
-    /** Отвечает ли DNS (1.1.1.1) через SOCKS-UDP: две попытки, как у резолвера Android. */
-    static boolean socksDnsWorks(int socksPort, String host) {
+    /** Отвечает ли DNS-сервер через SOCKS-UDP: две попытки, как у резолвера Android. */
+    static boolean socksDnsWorks(int socksPort, String host, String server) {
+        InetAddress srv;
+        try {
+            srv = InetAddress.getByName(server);  // литерал адреса, без DNS
+        } catch (IOException e) {
+            return false;
+        }
         for (int attempt = 0; attempt < 2; attempt++) {
             try {
-                if (socksQueryA(socksPort, host,
-                        InetAddress.getByAddress(new byte[]{1, 1, 1, 1})) != null) return true;
+                if (socksQueryA(socksPort, host, srv) != null) return true;
             } catch (IOException ignored) {
                 // повтор
             }
         }
         return false;
+    }
+
+    /**
+     * Какой DNS-сервер телефона ответит через обход: все из {@link #DNS_SERVERS} одновременно,
+     * берётся первый по предпочтению из ответивших; null — не ответил ни один.
+     */
+    @Nullable
+    static String socksDnsServer(int socksPort, String host) {
+        return firstAnswering(server -> socksDnsWorks(socksPort, host, server));
+    }
+
+    private interface DnsCheck {
+        boolean works(String server) throws Exception;
+    }
+
+    @Nullable
+    private static String firstAnswering(DnsCheck check) {
+        ExecutorService pool = Executors.newFixedThreadPool(DNS_SERVERS.length);
+        try {
+            List<Future<Boolean>> res = new ArrayList<>();
+            for (String s : DNS_SERVERS) res.add(pool.submit(() -> check.works(s)));
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(3L * DNS_TIMEOUT_MS);
+            for (int i = 0; i < DNS_SERVERS.length; i++) {
+                if (Boolean.TRUE.equals(futureValue(res.get(i), deadline))) return DNS_SERVERS[i];
+            }
+            return null;
+        } finally {
+            pool.shutdownNow();
+        }
     }
 
     /**
@@ -562,7 +610,7 @@ final class NetProbe {
         return b;
     }
 
-    // ---------- DNS: как у телефона при обходе DPI (1.1.1.1), один раз на подключение ----------
+    // ---------- DNS: как у телефона при обходе DPI (DNS_SERVERS), один раз на подключение ----------
 
     @Nullable
     private static InetAddress resolve(String host) {
@@ -599,17 +647,54 @@ final class NetProbe {
         return sb.toString();
     }
 
+    // Какие DNS-серверы ответили напрямую (для журнала)
+    private static final ConcurrentHashMap<String, Boolean> DIRECT_DNS = new ConcurrentHashMap<>();
+
+    /** «1.1.1.1 −, 8.8.8.8 +, …» — какие серверы ответили при прямой проверке. */
+    private static String directDnsStatus() {
+        StringBuilder sb = new StringBuilder();
+        for (String s : DNS_SERVERS) {
+            Boolean ok = DIRECT_DNS.get(s);
+            if (sb.length() > 0) sb.append(", ");
+            sb.append(s).append(ok == null ? " ?" : ok ? " +" : " −");
+        }
+        return sb.toString();
+    }
+
     @Nullable
     private static InetAddress lookup(String host) {
-        for (int attempt = 0; attempt < 2; attempt++) {
-            try {
-                InetAddress a = queryA(host, InetAddress.getByAddress(new byte[]{1, 1, 1, 1}));
-                if (a != null) return a;
-            } catch (IOException ignored) {
-                // повтор, затем системный DNS
+        // Все серверы одновременно, берётся ответ первого по предпочтению
+        ExecutorService pool = Executors.newFixedThreadPool(DNS_SERVERS.length);
+        try {
+            List<Future<InetAddress>> res = new ArrayList<>();
+            for (String s : DNS_SERVERS) {
+                res.add(pool.submit(() -> {
+                    InetAddress srv = InetAddress.getByName(s);
+                    for (int attempt = 0; attempt < 2; attempt++) {
+                        try {
+                            InetAddress a = queryA(host, srv);
+                            if (a != null) return a;
+                        } catch (IOException ignored) {
+                            // повтор
+                        }
+                    }
+                    return null;
+                }));
             }
+            long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(3L * DNS_TIMEOUT_MS);
+            InetAddress found = null;
+            for (int i = 0; i < DNS_SERVERS.length && found == null; i++) {
+                found = futureValue(res.get(i), deadline);
+            }
+            // Для журнала: кто уже ответил или не ответил (остальные — «?»)
+            for (int i = 0; i < DNS_SERVERS.length; i++) {
+                if (res.get(i).isDone()) DIRECT_DNS.put(DNS_SERVERS[i], futureValue(res.get(i), 0) != null);
+            }
+            if (found != null) return found;
+        } finally {
+            pool.shutdownNow();
         }
-        // 1.1.1.1 не ответил — системный DNS
+        // Ни один не ответил — системный DNS
         try {
             for (InetAddress a : InetAddress.getAllByName(host)) {
                 if (a instanceof Inet4Address) return a;
