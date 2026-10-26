@@ -21,6 +21,7 @@ IPv6 у «оператора» нет (как в мобильной сети б�
 """
 import socket
 import struct
+import subprocess
 import sys
 import threading
 import time
@@ -91,6 +92,13 @@ def up(ipv6):
         for r in routes:
             n.route("add", **r)
         return n
+
+    # rp_filter выключен во всех netns: на раннере CI значения наследуются от системы, а у «телефона»
+    # до запуска VPN нет маршрута в основной таблице (у ODA — своя таблица по uid), и проверка
+    # обратного пути отбрасывала ответы
+    for ns in ("phone", "isp", "srv"):
+        subprocess.run(["nsenter", f"--net=/var/run/netns/{ns}", "sh", "-c",
+                        "for f in /proc/sys/net/ipv4/conf/*/rp_filter; do echo 0 > $f; done"], check=True)
 
     conf("isp", [("i0", "10.10.0.1", 24), ("i1", "10.20.0.1", 24)],
          [dict(dst="0.0.0.0/0", gateway="10.20.0.2")]).close()
