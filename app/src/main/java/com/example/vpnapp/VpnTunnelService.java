@@ -5,12 +5,16 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.net.NetworkCapabilities;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.os.ParcelFileDescriptor;
 import android.telephony.TelephonyManager;
+import android.text.TextUtils;
 import android.util.Log;
 
 import androidx.annotation.Nullable;
@@ -22,11 +26,13 @@ import java.util.List;
 import java.util.Locale;
 
 /**
- * VPN: весь трафик телефона → tun → tun2socks → SOCKS5 Tor.
- * Если Tor заблокирован, по очереди пробуются мосты (см. ConnectPlan).
+ * VPN: весь трафик телефона → tun → tun2socks → локальный SOCKS5 (Psiphon или Tor).
+ * В режиме «Авто» Psiphon и Tor подключаются одновременно, работает тот, кто успел первым,
+ * второй останавливается. Tor по очереди пробует мосты (см. ConnectPlan).
  * Вся логика идёт в потоке worker, UI узнаёт о состоянии через StatusBus.
  */
-public class VpnTunnelService extends VpnService implements TorController.Listener {
+public class VpnTunnelService extends VpnService
+        implements TorController.Listener, PsiphonController.Listener {
 
     public static final String ACTION_START = "com.example.vpnapp.action.START";
     public static final String ACTION_STOP = "com.example.vpnapp.action.STOP";
@@ -50,10 +56,15 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     // DNSTT очень медленный: даём больше времени
     private static final long DNSTT_STALL_MS = 120_000;
     private static final long DNSTT_HARD_MS = 240_000;
+    // Psiphon сам перебирает серверы и способы маскировки: столько ждём первого туннеля
+    private static final long PSIPHON_TIMEOUT_MS = 8 * 60_000;
+    // Перезапуски Psiphon, если его процесс завершился после подключения
+    private static final int PSIPHON_RESTARTS = 3;
 
     private HandlerThread thread;
     private Handler worker;
     private TorController tor;
+    private PsiphonController psiphon;
     private PtController pt;
     private Prefs prefs;
 
@@ -63,10 +74,22 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     private boolean tunnelRunning;
     private int socksPort;
     private int generation;  // отсекает устаревшие результаты фоновых задач
-    private int connection;  // номер подключения: отсекает ответ Moat прошлого подключения
+    private int connection;  // номер подключения: отсекает ответы прошлого подключения
     private List<BridgeSet> plan = new ArrayList<>();
     private int attempt;
     @Nullable private String lastReason;
+    // Чем подключены (StatusBus.ENGINE_*); пока не подключены — null
+    @Nullable private String engine;
+    private boolean torActive;      // Tor пробует способы или подключён
+    private boolean psiphonActive;  // Psiphon подключается или подключён
+    private boolean psiphonUsed;    // в этом подключении пробовали Psiphon
+    private int psiphonRestarts;
+    private String psiphonText = "";
+    private int torPercent;
+    private int torError = R.string.error_blocked;
+    private String networkId = "UNKNOWN";
+    @Nullable private String netCountry;
+    @Nullable private NetProbe.Result probe;
 
     @Override
     public void onCreate() {
@@ -77,6 +100,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         thread.start();
         worker = new Handler(thread.getLooper());
         tor = new TorController(this, worker);
+        psiphon = new PsiphonController(this, worker);
         pt = new PtController(this);
         VpnNotification.ensureChannel(this);
     }
@@ -90,7 +114,7 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         }
         // Foreground нужно объявить сразу, иначе система остановит сервис
         if (!goForeground(getString(R.string.status_connecting))) {
-            StatusBus.post(ConnectionState.ERROR, "", getString(R.string.error_foreground), 0);
+            StatusBus.post(ConnectionState.ERROR, "", getString(R.string.error_foreground), 0, "");
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -133,12 +157,24 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         if (active) return;
         active = true;
         int id = ++connection;
-        String country = networkCountry();
+        netCountry = networkCountry();
+        // Тип сети определяем до подъёма VPN, пока активна сеть оператора
+        networkId = networkId();
+        engine = null;
+        probe = null;
+        psiphonRestarts = 0;
+        psiphonText = "";
+        torPercent = 0;
+        lastReason = null;
+        torError = R.string.error_blocked;
+        BridgeMode mode = prefs.getMode();
+        boolean psiphonBuilt = PsiphonController.isAvailable(this);
+        psiphonUsed = (mode == BridgeMode.AUTO || mode == BridgeMode.PSIPHON) && psiphonBuilt;
         DiagLog.add("========== новое подключение ==========");
         DiagLog.add("ODA " + appVersion() + ", Android " + Build.VERSION.RELEASE
-                + ", режим " + prefs.getMode() + ", страна " + prefs.getCountry()
-                + ", сеть " + country);
-        // Интерфейс поднимаем сразу: пока Tor не готов, трафик блокируется, а не уходит мимо
+                + ", режим " + mode + ", страна " + prefs.getCountry()
+                + ", сеть " + networkId.split("-")[0] + " " + netCountry);
+        // Интерфейс поднимаем сразу: пока туннель не готов, трафик блокируется, а не уходит мимо
         try {
             tun = establishTun();
         } catch (IOException | RuntimeException e) {
@@ -146,22 +182,43 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
             fail(R.string.error_tun);
             return;
         }
+        probeNetwork(id);
+        if (mode == BridgeMode.PSIPHON && !psiphonBuilt) {
+            fail(R.string.error_psiphon_missing);
+            return;
+        }
+        if (psiphonUsed) {
+            startPsiphon();
+        } else if (mode == BridgeMode.AUTO) {
+            DiagLog.add("Psiphon нет в этой сборке: только Tor");
+        }
+        if (mode != BridgeMode.PSIPHON) startTor(id);
+    }
+
+    private void startPsiphon() {
+        psiphonActive = true;
+        psiphon.start(prefs.getCountry(), networkId, netCountry, PSIPHON_TIMEOUT_MS, this);
+    }
+
+    /** Tor: план мостов; в «Авто» — с запросом рабочих мостов у Moat. */
+    private void startTor(int id) {
+        torActive = true;
+        String country = netCountry;
         if (!ConnectPlan.needsMoat(prefs.getMode())) {
             startPlan(ConnectPlan.build(this, prefs, null, country));
             return;
         }
-        // Режим «Авто»: спрашиваем у Moat, какие мосты работают в этой сети.
-        // Ждём ответа, только если начать не с чего: нет прошлого рабочего моста,
+        // Ждём ответа Moat, только если начать не с чего: нет прошлого рабочего моста,
         // нет мостов Moat с прошлого раза и сеть без известных блокировок
         boolean waitMoat = prefs.getLastGood() == null && prefs.getMoatCache().isEmpty()
                 && !ConnectPlan.isCensored(country);
         if (waitMoat) {
-            publish(ConnectionState.CONNECTING, getString(R.string.detail_moat), "");
+            publish(ConnectionState.CONNECTING, progressText(), "");
             DiagLog.add("Moat: запрос рабочих мостов…");
         } else {
             DiagLog.add("Moat: запрос в фоне, подключение его не ждёт");
             startPlan(ConnectPlan.build(this, prefs, null, country));
-            if (!active) return;
+            if (!active || !torActive) return;
         }
         Context app = getApplicationContext();
         new Thread(() -> {
@@ -179,7 +236,8 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
 
     private void onMoat(int id, boolean waited, @Nullable MoatClient.Result result,
                         @Nullable String country) {
-        if (!active || id != connection) return;
+        // Уже подключены (например, через Psiphon) или Tor остановлен — мосты не нужны
+        if (!active || id != connection || !torActive || engine != null) return;
         if (waited) {
             startPlan(ConnectPlan.build(this, prefs, result, country));
             return;
@@ -190,6 +248,22 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         logPlan("План обновлён по ответу Moat:");
     }
 
+    /** Проверка сети напрямую: если закрыто всё зарубежное, подскажем про «белые списки». */
+    private void probeNetwork(int id) {
+        new Thread(() -> {
+            NetProbe.Result r = NetProbe.run();
+            worker.post(() -> {
+                if (!active || id != connection) return;
+                probe = r;
+                if (r == NetProbe.Result.OK) return;
+                DiagLog.add(r == NetProbe.Result.WHITELIST
+                        ? "Похоже на «белые списки»: зарубежные сайты закрыты даже напрямую"
+                        : "Нет доступа в интернет даже напрямую");
+                if (engine == null) publish(ConnectionState.CONNECTING, progressText(), "");
+            });
+        }, "oda-probe").start();
+    }
+
     private void reconnect() {
         if (active) teardown();
         connect();
@@ -197,13 +271,13 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
 
     private void startPlan(List<BridgeSet> newPlan) {
         if (newPlan.isEmpty()) {
-            fail(prefs.getMode() == BridgeMode.CUSTOM
+            torGaveUp(prefs.getMode() == BridgeMode.CUSTOM
                     ? R.string.error_no_custom_bridges : R.string.error_tor_start);
             return;
         }
         plan = newPlan;
         attempt = 0;
-        logPlan("План:");
+        logPlan("План Tor:");
         startAttempt();
     }
 
@@ -224,8 +298,9 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         stopTunnel();
         BridgeSet set = plan.get(attempt);
         lastReason = null;
-        DiagLog.add("Попытка " + (attempt + 1) + "/" + plan.size() + ": " + set.label);
-        publish(ConnectionState.CONNECTING, progressText(0), "");
+        torPercent = 0;
+        DiagLog.add("Попытка Tor " + (attempt + 1) + "/" + plan.size() + ": " + set.label);
+        publish(ConnectionState.CONNECTING, progressText(), "");
         List<String> bridgeTorrc;
         try {
             bridgeTorrc = pt.start(set);
@@ -269,10 +344,37 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
             startAttempt();
             return;
         }
-        // Ничего не сработало: сбрасываем «последний рабочий» способ
-        DiagLog.add("Все способы не сработали");
+        torGaveUp(lastError == R.string.error_timeout ? R.string.error_blocked : lastError);
+    }
+
+    /** Tor перебрал все способы: ждём Psiphon, если он ещё пробует, иначе ошибка. */
+    private void torGaveUp(int error) {
+        torActive = false;
+        torError = error;
+        tor.stop();
+        pt.stop();
+        // Сбрасываем «последний рабочий» мост: в этой сети он не прошёл
         prefs.setLastGood(null);
-        fail(lastError == R.string.error_timeout ? R.string.error_blocked : lastError);
+        if (psiphonActive) {
+            DiagLog.add("Tor не подключился, Psiphon продолжает");
+            publish(ConnectionState.CONNECTING, progressText(), "");
+            return;
+        }
+        failAll();
+    }
+
+    /** Не сработал ни один способ: ошибка с самой полезной подсказкой. */
+    private void failAll() {
+        DiagLog.add("Все способы не сработали");
+        if (probe == NetProbe.Result.WHITELIST) {
+            fail(R.string.error_whitelist);
+        } else if (probe == NetProbe.Result.OFFLINE) {
+            fail(R.string.error_offline);
+        } else if (prefs.getMode() == BridgeMode.PSIPHON) {
+            fail(R.string.error_psiphon_failed);
+        } else {
+            fail(psiphonUsed ? R.string.error_all_blocked : torError);
+        }
     }
 
     private void changeCountry() {
@@ -280,9 +382,20 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
             connect();
             return;
         }
-        if (socksPort == 0) {
-            // Tor ещё загружается: перезапускаем текущий способ с новой страной
-            if (!plan.isEmpty()) startAttempt();
+        if (StatusBus.ENGINE_PSIPHON.equals(engine)) {
+            // Psiphon: перезапуск с новой страной (серверы уже известны, это быстро)
+            engine = null;
+            generation++;
+            stopTunnel();
+            socksPort = 0;
+            publish(ConnectionState.CONNECTING, getString(R.string.detail_switching), "");
+            startPsiphon();
+            return;
+        }
+        if (engine == null) {
+            // Ещё подключаемся: перезапускаем текущие попытки с новой страной
+            if (psiphonActive) startPsiphon();
+            if (torActive && !plan.isEmpty()) startAttempt();
             return;
         }
         int gen = ++generation;
@@ -303,14 +416,24 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         }, "oda-country").start();
     }
 
+    // ---------- Tor ----------
+
     @Override
     public void onProgress(int percent, @Nullable String reason) {
+        torPercent = percent;
         lastReason = reason;
-        publish(ConnectionState.CONNECTING, progressText(percent), "");
+        if (engine == null) publish(ConnectionState.CONNECTING, progressText(), "");
     }
 
     @Override
     public void onReady(int port) {
+        if (!active || engine != null) return;
+        engine = StatusBus.ENGINE_TOR;
+        if (psiphonActive) {
+            DiagLog.add("Tor подключился первым: Psiphon останавливается");
+            psiphonActive = false;
+            psiphon.stop();
+        }
         socksPort = port;
         DiagLog.add("Tor 100%, SOCKS порт " + port);
         if (startTunnel()) checkIp();
@@ -318,12 +441,91 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
 
     @Override
     public void onError(int messageRes, boolean retry) {
+        // Tor упал после подключения: туннель остановит следующая попытка
+        if (StatusBus.ENGINE_TOR.equals(engine)) engine = null;
         if (retry) {
             nextAttempt(messageRes);
         } else {
-            fail(messageRes);
+            torGaveUp(messageRes);
         }
     }
+
+    // ---------- Psiphon ----------
+
+    @Override
+    public void onPsiphonProgress(String text) {
+        psiphonText = text;
+        if (engine == null) publish(ConnectionState.CONNECTING, progressText(), "");
+    }
+
+    @Override
+    public void onPsiphonReady(int port, @Nullable String serverRegion) {
+        if (!active) return;
+        if (engine != null) {
+            // Уже подключены через Tor
+            psiphonActive = false;
+            psiphon.stop();
+            return;
+        }
+        engine = StatusBus.ENGINE_PSIPHON;
+        if (torActive) {
+            DiagLog.add("Psiphon подключился первым: Tor и мосты останавливаются");
+            torActive = false;
+            tor.stop();
+            pt.stop();
+        }
+        socksPort = port;
+        if (startTunnel()) checkIp();
+    }
+
+    @Override
+    public void onPsiphonTunnel(boolean up) {
+        if (!StatusBus.ENGINE_PSIPHON.equals(engine)) return;
+        if (up) {
+            DiagLog.add("Psiphon: туннель восстановлен");
+            checkIp();
+        } else {
+            DiagLog.add("Psiphon: туннель пропал, Psiphon переподключается");
+            generation++;
+            publish(ConnectionState.CONNECTING, getString(R.string.psiphon_reconnecting), "");
+        }
+    }
+
+    @Override
+    public void onPsiphonError(String reason) {
+        if (!active) return;
+        DiagLog.add("Psiphon: " + reason);
+        if (StatusBus.ENGINE_PSIPHON.equals(engine)) {
+            // Psiphon был подключён и завершился: перезапускаем его
+            engine = null;
+            generation++;
+            stopTunnel();
+            socksPort = 0;
+            if (psiphonRestarts++ < PSIPHON_RESTARTS) {
+                publish(ConnectionState.CONNECTING, getString(R.string.psiphon_reconnecting), "");
+                startPsiphon();
+                return;
+            }
+            psiphonActive = false;
+            if (prefs.getMode() == BridgeMode.PSIPHON) {
+                fail(R.string.error_psiphon_stopped);
+                return;
+            }
+            // Psiphon не держится: пробуем Tor
+            DiagLog.add("Psiphon не держится, пробую Tor");
+            startTor(connection);
+            return;
+        }
+        psiphonActive = false;
+        if (engine != null) return;
+        if (torActive) {
+            publish(ConnectionState.CONNECTING, progressText(), "");
+            return;
+        }
+        failAll();
+    }
+
+    // ---------- Туннель и проверка IP ----------
 
     private boolean startTunnel() {
         ParcelFileDescriptor t = tun;
@@ -355,25 +557,42 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         int gen = ++generation;
         publish(ConnectionState.CONNECTING, getString(R.string.detail_checking), "");
         int port = socksPort;
+        boolean viaPsiphon = StatusBus.ENGINE_PSIPHON.equals(engine);
         new Thread(() -> {
             String ip = null;
+            String cc = null;
             for (int i = 0; i < IP_CHECK_ATTEMPTS && ip == null; i++) {
                 try {
-                    ip = IpChecker.fetchExitIp(port);
+                    if (viaPsiphon) {
+                        IpChecker.Exit exit = IpChecker.fetchTrace(port);
+                        ip = exit.ip;
+                        cc = exit.country;
+                    } else {
+                        ip = IpChecker.fetchExitIp(port);
+                    }
                 } catch (IOException e) {
                     Log.w(TAG, "ip check: " + e);
                 }
             }
-            String cc = ip != null ? tor.countryOf(ip) : null;
-            String fp = tor.firstHopFingerprint();
+            String fp = null;
+            if (!viaPsiphon) {
+                cc = ip != null ? tor.countryOf(ip) : null;
+                fp = tor.firstHopFingerprint();
+            }
             String exitIp = ip;
-            worker.post(() -> onIpChecked(gen, exitIp, cc, fp));
+            String exitCc = cc;
+            String hop = fp;
+            worker.post(() -> onIpChecked(gen, exitIp, exitCc, hop));
         }, "oda-ipcheck").start();
     }
 
     private void onIpChecked(int gen, @Nullable String ip, @Nullable String cc, @Nullable String fp) {
         if (!active || gen != generation) return;
         DiagLog.add("Проверка IP: " + (ip != null ? ip + " (" + cc + ")" : "не удалась"));
+        if (StatusBus.ENGINE_PSIPHON.equals(engine)) {
+            publish(ConnectionState.ON, psiphonDetail(ip, cc), "");
+            return;
+        }
         String detail;
         if (ip != null) {
             String code = cc != null && !cc.isEmpty() && !"??".equals(cc)
@@ -390,19 +609,56 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
             DiagLog.add("Сработал: " + good.label + (used != null ? " (" + fp.substring(0, 8) + "…)" : ""));
             if (prefs.getMode() == BridgeMode.AUTO) prefs.setLastGood(good);
             if (getString(R.string.mode_obfs4).equals(good.label)) prefs.setObfs4Failed(false);
-            detail = good.label + " · " + detail;
-        } else if (set != null && prefs.getMode() == BridgeMode.AUTO) {
-            prefs.setLastGood(set);
-            prefs.setDirectFailed(false);
+            detail = "Tor · " + good.label + " · " + detail;
+        } else {
+            if (set != null && prefs.getMode() == BridgeMode.AUTO) {
+                prefs.setLastGood(set);
+                prefs.setDirectFailed(false);
+            }
+            detail = "Tor · " + detail;
         }
         publish(ConnectionState.ON, detail, "");
     }
 
-    private String progressText(int percent) {
-        String tor = getString(R.string.detail_bootstrap, percent);
+    /** Строка под статусом при подключении через Psiphon. */
+    private String psiphonDetail(@Nullable String ip, @Nullable String cc) {
+        String proto = psiphon.protocol();
+        StringBuilder sb = new StringBuilder("Psiphon");
+        if (proto != null && !proto.isEmpty()) sb.append(" (").append(proto).append(')');
+        String code = cc != null ? cc.toUpperCase(Locale.ROOT) : psiphon.serverRegion();
+        sb.append(" · ");
+        if (ip == null) {
+            sb.append(getString(R.string.detail_ip_unknown));
+        } else if (code == null || code.isEmpty()) {
+            sb.append(getString(R.string.detail_ip_only, ip));
+        } else {
+            sb.append(getString(R.string.detail_ip, ip, Country.nameOf(this, code)));
+        }
+        if (psiphon.isRegionFallback()) sb.append('\n').append(getString(R.string.detail_region_fallback));
+        return sb.toString();
+    }
+
+    // ---------- Текст статуса ----------
+
+    /** Подсказка о сети и ход подключения каждого способа (по строке на способ). */
+    private String progressText() {
+        List<String> lines = new ArrayList<>();
+        if (probe == NetProbe.Result.WHITELIST) {
+            lines.add(getString(R.string.hint_whitelist));
+        } else if (probe == NetProbe.Result.OFFLINE) {
+            lines.add(getString(R.string.hint_offline));
+        }
+        if (psiphonActive && !psiphonText.isEmpty()) lines.add(psiphonText);
+        if (torActive) lines.add(torText());
+        return TextUtils.join("\n", lines);
+    }
+
+    private String torText() {
+        // План ещё не готов: ждём ответа Moat
+        if (plan.isEmpty() || attempt >= plan.size()) return getString(R.string.detail_moat);
+        String tor = getString(R.string.detail_bootstrap, torPercent);
         String why = reasonText(lastReason);
         if (why != null) tor = tor + " · " + why;
-        if (plan.isEmpty() || attempt >= plan.size()) return tor;
         String label = plan.get(attempt).label;
         if (plan.size() > 1) {
             label = getString(R.string.detail_attempt, attempt + 1, plan.size(), label);
@@ -442,7 +698,9 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         }
     }
 
-    /** Код страны сети оператора (подсказка для Moat), без разрешений. */
+    // ---------- Сеть ----------
+
+    /** Код страны сети оператора (подсказка для Moat и Psiphon), без разрешений. */
     @Nullable
     private String networkCountry() {
         TelephonyManager tm = (TelephonyManager) getSystemService(TELEPHONY_SERVICE);
@@ -452,6 +710,28 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         return cc == null || cc.isEmpty() ? null : cc;
     }
 
+    /** Тип сети для Psiphon: "WIFI", "MOBILE-25001" (код оператора), … */
+    private String networkId() {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        if (cm == null) return "UNKNOWN";
+        try {
+            Network n = cm.getActiveNetwork();
+            NetworkCapabilities caps = n != null ? cm.getNetworkCapabilities(n) : null;
+            if (caps == null) return "UNKNOWN";
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return "WIFI";
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
+                TelephonyManager tm = (TelephonyManager) getSystemService(TELEPHONY_SERVICE);
+                String op = tm != null ? tm.getNetworkOperator() : null;
+                return op != null && !op.isEmpty() ? "MOBILE-" + op : "MOBILE";
+            }
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)) return "WIRED";
+            if (caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return "VPN";
+        } catch (RuntimeException e) {
+            Log.w(TAG, "network type: " + e);
+        }
+        return "UNKNOWN";
+    }
+
     private ParcelFileDescriptor establishTun() throws IOException {
         Builder b = new Builder()
                 .setSession(getString(R.string.app_name))
@@ -459,12 +739,12 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
                 .addAddress(Tun2Socks.TUN_IPV4, 32)
                 .addRoute("0.0.0.0", 0)
                 .addDnsServer(Tun2Socks.FAKE_DNS)
-                // IPv6 тоже в туннель, чтобы он не утекал мимо Tor
+                // IPv6 тоже в туннель, чтобы он не утекал мимо
                 .addAddress(Tun2Socks.TUN_IPV6, 128)
                 .addRoute("::", 0)
                 .setConfigureIntent(VpnNotification.openApp(this));
         try {
-            // Само приложение (Tor и мосты внутри него) ходит в сеть напрямую
+            // Само приложение (Tor, мосты и Psiphon) ходит в сеть напрямую
             b.addDisallowedApplication(getPackageName());
         } catch (PackageManager.NameNotFoundException e) {
             throw new IOException(e);
@@ -493,6 +773,12 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
         active = false;
         generation++;
         connection++;
+        engine = null;
+        if (psiphonActive) {
+            psiphonActive = false;
+            psiphon.stop();
+        }
+        torActive = false;
         // Сам Tor не останавливается (повторный запуск в процессе приводил к падению),
         // у него только выключается сеть
         DiagLog.add("Отключение: сеть Tor выключена");
@@ -519,10 +805,10 @@ public class VpnTunnelService extends VpnService implements TorController.Listen
     }
 
     private void publish(ConnectionState state, String detail, String error) {
-        StatusBus.post(state, detail, error, state == ConnectionState.ON ? socksPort : 0);
+        boolean on = state == ConnectionState.ON;
+        StatusBus.post(state, detail, error, on ? socksPort : 0, on && engine != null ? engine : "");
         if (active) {
-            String title = getString(state == ConnectionState.ON
-                    ? R.string.status_on : R.string.status_connecting);
+            String title = getString(on ? R.string.status_on : R.string.status_connecting);
             VpnNotification.update(this, title + " · " + prefs.getCountry(), detail);
         }
     }

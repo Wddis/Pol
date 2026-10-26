@@ -28,7 +28,7 @@ jobs:
       # NDK для tun2socks: Android Gradle Plugin сам ставит нужную версию
       # через sdkmanager, если её нет на раннере.
 
-      # Свой клиент Snowflake с маскировкой DTLS (covert-dtls): Go + NDK раннера
+      # Свой клиент Snowflake с маскировкой DTLS (covert-dtls) и Psiphon: Go + NDK раннера
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
@@ -38,15 +38,21 @@ jobs:
       - name: Build Snowflake client
         run: bash scripts/build-snowflake.sh
 
+      - name: Build Psiphon client and server list
+        run: bash scripts/build-psiphon.sh
+
       - name: Build debug APK
         run: |
           chmod +x gradlew
           ./gradlew assembleDebug --stacktrace
 
-      - name: Check Snowflake client in APK
+      - name: Check Snowflake and Psiphon in APK
         run: |
-          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep libsnowflake.so
-          test "$(unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -c libsnowflake.so)" -eq 2
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          unzip -l "$APK" | grep -E 'libsnowflake.so|libpsiphon.so|psiphon/server_list.txt'
+          test "$(unzip -l "$APK" | grep -c libsnowflake.so)" -eq 2
+          test "$(unzip -l "$APK" | grep -c libpsiphon.so)" -eq 2
+          test "$(unzip -l "$APK" | grep -c assets/psiphon/server_list.txt)" -eq 1
 
       - name: Upload APK
         uses: actions/upload-artifact@v7

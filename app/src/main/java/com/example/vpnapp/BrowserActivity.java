@@ -21,10 +21,12 @@ import androidx.webkit.ProxyConfig;
 import androidx.webkit.ProxyController;
 import androidx.webkit.WebViewFeature;
 
-/** Встроенный браузер для проверки: все запросы идут через SOCKS-прокси Tor. */
+/** Встроенный браузер для проверки: все запросы идут через SOCKS-прокси Tor или Psiphon. */
 public class BrowserActivity extends AppCompatActivity {
 
     private static final String CHECK_URL = "https://check.torproject.org/";
+    // Psiphon не Tor: проверяем IP, страну и утечки DNS
+    private static final String CHECK_URL_PSIPHON = "https://ipleak.net/";
 
     private WebView web;
     private boolean proxySet;
@@ -67,12 +69,14 @@ public class BrowserActivity extends AppCompatActivity {
             }
         });
 
-        int port = StatusBus.current().socksPort;
+        StatusBus.Status status = StatusBus.current();
+        int port = status.socksPort;
+        String url = StatusBus.ENGINE_PSIPHON.equals(status.engine) ? CHECK_URL_PSIPHON : CHECK_URL;
         if (port <= 0) {
             showMessage(R.string.browser_not_connected);
             return;
         }
-        // Без поддержки прокси страницу не грузим: иначе запрос уйдёт мимо Tor
+        // Без поддержки прокси страницу не грузим: иначе запрос уйдёт мимо туннеля
         if (!WebViewFeature.isFeatureSupported(WebViewFeature.PROXY_OVERRIDE)) {
             showMessage(R.string.browser_no_proxy);
             return;
@@ -83,7 +87,7 @@ public class BrowserActivity extends AppCompatActivity {
         ProxyController.getInstance().setProxyOverride(config,
                 ContextCompat.getMainExecutor(this), () -> {
                     proxySet = true;
-                    if (!isDestroyed()) web.loadUrl(CHECK_URL);
+                    if (!isDestroyed()) web.loadUrl(url);
                 });
     }
 

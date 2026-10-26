@@ -11,7 +11,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** Порядок способов подключения для выбранного режима. */
+/** Порядок способов подключения к Tor для выбранного режима (Psiphon запускается отдельно). */
 final class ConnectPlan {
 
     private static final String PT_DNSTT = "dnstt";
@@ -41,6 +41,9 @@ final class ConnectPlan {
                                  @Nullable String networkCountry) {
         List<BridgeSet> plan = new ArrayList<>();
         switch (prefs.getMode()) {
+            case PSIPHON:
+                // Только Psiphon: Tor не нужен
+                break;
             case SNOWFLAKE:
                 add(plan, snowflakeAll(context));
                 break;

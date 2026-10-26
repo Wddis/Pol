@@ -1,8 +1,9 @@
 package com.example.vpnapp;
 
-/** Режим подключения к сети Tor, выбирается в листе «Мосты». */
+/** Способ подключения, выбирается в листе «Способ подключения». */
 enum BridgeMode {
     AUTO(R.string.mode_auto, R.string.mode_auto_hint),
+    PSIPHON(R.string.mode_psiphon, R.string.mode_psiphon_hint),
     SNOWFLAKE(R.string.mode_snowflake, R.string.mode_snowflake_hint),
     OBFS4(R.string.mode_obfs4, R.string.mode_obfs4_hint),
     MEEK(R.string.mode_meek, R.string.mode_meek_hint),

@@ -15,8 +15,8 @@ android {
         applicationId = 'com.example.vpnapp'
         minSdk = 24
         targetSdk = 36
-        versionCode = 6
-        versionName = '0.6'
+        versionCode = 7
+        versionName = '0.7'
 
         // Только ARM: реальные телефоны (x86 нужен лишь эмуляторам, экономим ~15 МБ)
         ndk {
@@ -31,8 +31,8 @@ android {
         }
     }
 
-    // Свой клиент Snowflake (libsnowflake.so, scripts/build-snowflake.sh) Tor запускает
-    // как программу: библиотеки должны быть распакованы из APK в папку приложения
+    // Свой клиент Snowflake (libsnowflake.so) и Psiphon (libpsiphon.so) запускаются
+    // как программы: библиотеки должны быть распакованы из APK в папку приложения
     packaging {
         jniLibs {
             useLegacyPackaging = true

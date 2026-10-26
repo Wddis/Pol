@@ -189,7 +189,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     }
 
     private void startVpn() {
-        render(ConnectionState.CONNECTING, getString(R.string.detail_bootstrap, 0), "", true);
+        render(ConnectionState.CONNECTING, getString(R.string.detail_starting), "", true);
         sendToService(VpnTunnelService.ACTION_START);
         askNotificationPermission();
     }
