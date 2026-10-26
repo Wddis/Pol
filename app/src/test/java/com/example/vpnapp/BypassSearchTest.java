@@ -282,8 +282,8 @@ public class BypassSearchTest {
             check(sum.startsWith("соединений 4: список → disoob SNI 1, split SNI 2, disoob SNI после сбоя 1"), "summary groups: " + sum);
             check(sum.contains("после сбоя: scontent-hel3-1.cdninstagram.com 157.240.200.36 → disoob SNI после сбоя"), "summary fallback: " + sum);
             check(sum.contains("не открылись ничем: ") && sum.contains("149.154.167.51 (Telegram)"), "summary unreach: " + sum);
-            check(sum.contains("; QUIC (UDP 443): Meta 1, ::ffff:142.250.1.1 1") || sum.contains("; QUIC (UDP 443): ::ffff:142.250.1.1 1, Meta 1"),
-                    "summary QUIC: " + sum);
+            check(sum.contains("; QUIC (UDP 443): Meta 1, Google 1") || sum.contains("; QUIC (UDP 443): Google 1, Meta 1"),
+                    "summary QUIC (::ffff: — как IPv4): " + sum);
             check(st.drain().isEmpty(), "drained");
             check("Meta".equals(ByeDpiStats.owner("157.240.1.1")) && ByeDpiStats.owner("8.8.8.8") == null, "owners");
             // Проверка «почему» получает адреса и после сводки (в 0.8.7 сводка их стирала)

@@ -102,7 +102,7 @@ final class ByeDpiStats {
             String addr = field(line, "addr=");
             if (fd >= 0 && addr != null) {
                 if (fdAddr.size() > MAX_FDS) fdAddr.clear();
-                fdAddr.put(fd, stripPort(addr));
+                fdAddr.put(fd, plain(stripPort(addr)));
             }
         } else if (line.startsWith("desync TCP:")) {
             int g = intField(line, "group=");
@@ -126,7 +126,7 @@ final class ByeDpiStats {
             int fd = intField(line, "fd=");
             if (fd >= 0) fdAddr.remove(fd);
         } else if (line.startsWith("save:")) {
-            String ip = field(line, "ip=");
+            String ip = plain(field(line, "ip="));
             int g = intField(line, "id=");
             if (ip != null && g >= 0 && fallback.size() < MAX_IPS) {
                 String key = ip + "\t" + g;
@@ -134,7 +134,7 @@ final class ByeDpiStats {
                 fallback.put(key, n == null ? 1 : n + 1);
             }
         } else if (line.startsWith("unreach ip:")) {
-            String ip = line.substring("unreach ip:".length()).trim();
+            String ip = plain(line.substring("unreach ip:".length()).trim());
             if (!ip.isEmpty() && unreach.size() < MAX_IPS) {
                 Integer n = unreach.get(ip);
                 unreach.put(ip, n == null ? 1 : n + 1);
@@ -145,7 +145,7 @@ final class ByeDpiStats {
         } else if (line.startsWith("udp addr:")) {
             String addr = field(line, "addr=");
             if (addr != null && addr.endsWith(":443") && quic.size() < MAX_IPS) {
-                String ip = stripPort(addr);
+                String ip = plain(stripPort(addr));
                 String o = owner(ip);
                 String key = o != null ? o : ip;
                 Integer n = quic.get(key);
@@ -319,6 +319,18 @@ final class ByeDpiStats {
         } catch (NumberFormatException e) {
             return -1;
         }
+    }
+
+    /**
+     * «::ffff:1.2.3.4» → «1.2.3.4»: с IPv6-сокетами (Android) ByeDPI пишет так адреса IPv4 (UDP,
+     * повторные соединения), и без этого сводка не узнавала владельца (на раннере CI с IPv6
+     * «QUIC (UDP 443): ::ffff:31.13.72.174» вместо «Meta»).
+     */
+    @Nullable
+    static String plain(@Nullable String ip) {
+        if (ip == null) return null;
+        String low = ip.toLowerCase(Locale.ROOT);
+        return low.startsWith("::ffff:") && low.indexOf('.') > 0 ? ip.substring(7) : ip;
     }
 
     /** «1.2.3.4:443» → «1.2.3.4»; «2a03::1:443» → «2a03::1» (ByeDPI пишет IPv6 без скобок). */
