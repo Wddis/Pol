@@ -82,17 +82,17 @@ final class NetProbe {
     static Bypass bypassQuality(int socksPort) {
         java.net.Proxy proxy = new java.net.Proxy(java.net.Proxy.Type.SOCKS,
                 new java.net.InetSocketAddress("127.0.0.1", socksPort));
-        if (anyReachableVia(CANARY, proxy)) return Bypass.UNBLOCKS;
-        if (anyReachableVia(FOREIGN, proxy)) return Bypass.BASIC;
-        return Bypass.NONE;
-    }
-
-    private static boolean anyReachableVia(String[] urls, java.net.Proxy proxy) {
-        ExecutorService pool = Executors.newFixedThreadPool(urls.length);
+        // Заблокированные и обычные сайты проверяем одновременно, чтобы на стратегию уходило
+        // не больше одного таймаута, а не два подряд
+        ExecutorService pool = Executors.newFixedThreadPool(CANARY.length + FOREIGN.length);
         try {
-            List<Future<Boolean>> fs = new ArrayList<>();
-            for (String url : urls) fs.add(pool.submit(() -> reachableVia(url, proxy)));
-            return count(fs) > 0;
+            List<Future<Boolean>> canary = new ArrayList<>();
+            for (String url : CANARY) canary.add(pool.submit(() -> reachableVia(url, proxy)));
+            List<Future<Boolean>> foreign = new ArrayList<>();
+            for (String url : FOREIGN) foreign.add(pool.submit(() -> reachableVia(url, proxy)));
+            if (count(canary) > 0) return Bypass.UNBLOCKS;
+            if (count(foreign) > 0) return Bypass.BASIC;
+            return Bypass.NONE;
         } finally {
             pool.shutdownNow();
         }
