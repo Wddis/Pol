@@ -32,6 +32,7 @@
     <string name="bypass_trying">Обход DPI: стратегия «%1$s»…</string>
     <string name="bypass_checking">Обход DPI (%1$s): проверка…</string>
     <string name="bypass_connected">Обход DPI (прямое соединение)</string>
+    <string name="bypass_connected_partial">Обход DPI (обычные сайты; соцсети могут не открыться)</string>
 
     <!-- Проверка сети напрямую -->
     <string name="hint_whitelist">Зарубежные сайты закрыты даже без VPN: похоже на «белые списки» оператора</string>

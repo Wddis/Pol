@@ -89,6 +89,9 @@ public class VpnTunnelService extends VpnService
     private boolean bypassActive;   // обход DPI пробует стратегии или подключён
     private int bypassProfile;      // индекс текущей стратегии в bypassPlan
     private List<BypassController.Profile> bypassPlan = new ArrayList<>();
+    private int bypassFallback = -1;   // стратегия, давшая хотя бы обычный интернет (запас)
+    private boolean bypassClaimingFallback;  // идёт повторный запуск запасной стратегии
+    private boolean bypassFull;     // обход пробил заблокированные сайты (не только обычные)
     private String bypassText = "";
     private int torPercent;
     private int torError = R.string.error_blocked;
@@ -215,6 +218,8 @@ public class VpnTunnelService extends VpnService
     private void startBypass() {
         bypassActive = true;
         bypassProfile = 0;
+        bypassFallback = -1;
+        bypassClaimingFallback = false;
         bypassPlan = buildBypassPlan();
         startBypassProfile();
     }
@@ -584,30 +589,51 @@ public class VpnTunnelService extends VpnService
             bypass.stop();
             return;
         }
-        // Проверяем реальным запросом: открылся ли зарубежный сайт через обход
+        // Проверяем на реально заблокированных сайтах: пробивает ли стратегия DPI
         int id = connection;
         bypassText = getString(R.string.bypass_checking, profileLabel);
         publish(ConnectionState.CONNECTING, progressText(), "");
         new Thread(() -> {
-            boolean ok = NetProbe.foreignReachableVia(port);
-            worker.post(() -> onBypassVerified(id, port, profileLabel, ok));
+            NetProbe.Bypass q = NetProbe.bypassQuality(port);
+            worker.post(() -> onBypassVerified(id, port, profileLabel, q));
         }, "oda-bypass-check").start();
     }
 
-    private void onBypassVerified(int id, int port, String label, boolean ok) {
+    private void onBypassVerified(int id, int port, String label, NetProbe.Bypass quality) {
         if (!active || id != connection || !bypassActive || engine != null) return;
-        if (ok) {
-            DiagLog.add("Обход DPI сработал (" + label + "): зарубежный сайт открылся");
-            // Запоминаем рабочую стратегию: в следующий раз применится сразу, без перебора
+        if (quality == NetProbe.Bypass.UNBLOCKS) {
+            DiagLog.add("Обход DPI сработал (" + label + "): заблокированный сайт открылся");
+            // Запоминаем стратегию, пробившую блокировку: в следующий раз сразу, без перебора
             if (BypassController.customProfile(prefs.getByedpiArgs()) == null) prefs.setBypassGood(label);
-            engine = StatusBus.ENGINE_BYPASS;
-            stopOtherEngines(StatusBus.ENGINE_BYPASS);
-            socksPort = port;
-            if (startTunnel()) checkIp();
+            claimBypass(port, label, true);
             return;
         }
-        DiagLog.add("Обход DPI (" + label + "): зарубежный сайт не открылся");
+        // Запасная стратегия уже выбрана и перезапущена: берём обычный интернет
+        if (bypassClaimingFallback) {
+            if (quality == NetProbe.Bypass.BASIC) {
+                DiagLog.add("Обход DPI (" + label + "): соцсети закрыты, но обычные сайты работают");
+                claimBypass(port, label, false);
+            } else {
+                bypassActive = false;
+                if (engine == null && !torActive && !psiphonActive) failAll();
+            }
+            return;
+        }
+        if (quality == NetProbe.Bypass.BASIC) {
+            DiagLog.add("Обход DPI (" + label + "): обычные сайты есть, заблокированные — нет, ищу дальше");
+            if (bypassFallback < 0) bypassFallback = bypassProfile;
+        } else {
+            DiagLog.add("Обход DPI (" + label + "): ничего не открылось");
+        }
         nextBypassProfile();
+    }
+
+    private void claimBypass(int port, String label, boolean full) {
+        engine = StatusBus.ENGINE_BYPASS;
+        bypassFull = full;
+        stopOtherEngines(StatusBus.ENGINE_BYPASS);
+        socksPort = port;
+        if (startTunnel()) checkIp();
     }
 
     @Override
@@ -622,6 +648,15 @@ public class VpnTunnelService extends VpnService
         bypassActive = true;  // stop() сбросил слушателя, но перебор продолжается
         bypassProfile++;
         if (bypassProfile < bypassPlan.size()) {
+            startBypassProfile();
+            return;
+        }
+        // Ни одна стратегия не пробила блокировку. Если какая-то дала хотя бы обычный
+        // интернет — берём её (соцсети не откроются, но сеть будет), иначе сдаёмся
+        if (bypassFallback >= 0) {
+            bypassClaimingFallback = true;
+            bypassProfile = bypassFallback;
+            DiagLog.add("Обход DPI: заблокированные сайты не пробились, включаю обычный интернет");
             startBypassProfile();
             return;
         }
@@ -786,7 +821,8 @@ public class VpnTunnelService extends VpnService
 
     /** Строка под статусом при подключении через обход DPI (прямое соединение, свой IP). */
     private String bypassDetail(@Nullable String ip, @Nullable String cc) {
-        StringBuilder sb = new StringBuilder(getString(R.string.bypass_connected));
+        StringBuilder sb = new StringBuilder(getString(
+                bypassFull ? R.string.bypass_connected : R.string.bypass_connected_partial));
         sb.append(" · ");
         if (ip == null) {
             sb.append(getString(R.string.detail_ip_unknown));

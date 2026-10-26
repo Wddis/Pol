@@ -27,6 +27,16 @@ final class NetProbe {
         OFFLINE
     }
 
+    /** Насколько хорошо обход DPI работает через свой SOCKS. */
+    enum Bypass {
+        /** Открылся заблокированный сайт (соцсеть): обход реально бьёт DPI. */
+        UNBLOCKS,
+        /** Открываются только обычные сайты, заблокированные — нет. */
+        BASIC,
+        /** Не открывается ничего. */
+        NONE
+    }
+
     private static final String[] FOREIGN = {
             "https://www.google.com/generate_204",
             "https://www.cloudflare.com/cdn-cgi/trace",
@@ -36,6 +46,13 @@ final class NetProbe {
             "https://ya.ru/",
             "https://vk.com/",
             "https://www.gosuslugi.ru/",
+    };
+    // Сайты, заблокированные в РФ по DPI/имени (не по IP): напрямую не открываются,
+    // а через рабочий обход DPI отвечают. По ним и проверяем, что стратегия реально бьёт фильтр.
+    private static final String[] CANARY = {
+            "https://www.instagram.com/",
+            "https://rutracker.org/",
+            "https://x.com/",
     };
     private static final int TIMEOUT_MS = 7_000;
 
@@ -59,16 +76,22 @@ final class NetProbe {
     }
 
     /**
-     * Доступен ли хоть один зарубежный сайт ЧЕРЕЗ локальный SOCKS (проверка обхода DPI).
-     * Если напрямую зарубежное закрыто, а через ByeDPI открылось — обход сработал.
+     * Качество обхода DPI через локальный SOCKS: открылся ли заблокированный сайт (UNBLOCKS),
+     * только обычный (BASIC) или ничего (NONE). Проверка идёт мимо VPN, через сам SOCKS ByeDPI.
      */
-    static boolean foreignReachableVia(int socksPort) {
+    static Bypass bypassQuality(int socksPort) {
         java.net.Proxy proxy = new java.net.Proxy(java.net.Proxy.Type.SOCKS,
                 new java.net.InetSocketAddress("127.0.0.1", socksPort));
-        ExecutorService pool = Executors.newFixedThreadPool(FOREIGN.length);
+        if (anyReachableVia(CANARY, proxy)) return Bypass.UNBLOCKS;
+        if (anyReachableVia(FOREIGN, proxy)) return Bypass.BASIC;
+        return Bypass.NONE;
+    }
+
+    private static boolean anyReachableVia(String[] urls, java.net.Proxy proxy) {
+        ExecutorService pool = Executors.newFixedThreadPool(urls.length);
         try {
             List<Future<Boolean>> fs = new ArrayList<>();
-            for (String url : FOREIGN) fs.add(pool.submit(() -> reachableVia(url, proxy)));
+            for (String url : urls) fs.add(pool.submit(() -> reachableVia(url, proxy)));
             return count(fs) > 0;
         } finally {
             pool.shutdownNow();

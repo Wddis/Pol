@@ -53,12 +53,14 @@ final class BypassController {
     // пробуем по очереди и проверяем каждую реальным запросом к зарубежному сайту.
     // Формат аргументов — см. README ByeDPI (-s split, -d disorder, -f fake, -o oob, --tlsrec, --auto).
     static final List<Profile> PROFILES = Arrays.asList(
-            new Profile("split SNI", "-s", "1+s"),
+            // fake+disorder с QUIC-fake — часто нужно для Meta (Instagram); сильные идут первыми
+            new Profile("fake+disorder", "-f", "-1", "-t", "8", "-d", "1+s", "--udp-fake", "2"),
             new Profile("disorder SNI", "-d", "1+s"),
             new Profile("split+tlsrec", "-s", "1+s", "--tlsrec", "1+s"),
-            new Profile("fake+disorder", "-f", "-1", "-t", "8", "-d", "1+s"),
+            new Profile("split SNI", "-s", "1+s"),
             new Profile("oob SNI", "-o", "1+s"),
-            new Profile("auto", "-s", "1+s", "-d", "1+s", "-o", "1+s", "--auto=torst,ssl_err,redirect"));
+            new Profile("fake+split+disorder", "-f", "-1", "-t", "8", "-s", "1+s",
+                    "-d", "1+s", "--tlsrec", "1+s", "--udp-fake", "2"));
 
     private static final String TAG = "BypassController";
     private static final String LIB = "libbyedpi.so";

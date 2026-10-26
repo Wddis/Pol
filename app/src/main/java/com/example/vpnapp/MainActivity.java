@@ -259,6 +259,9 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private void showBridgeMode() {
         String mode = getString(prefs.getMode().title).toUpperCase(Locale.ROOT);
         bridgesLink.setText(getString(R.string.link_bridges, mode));
+        // Обход DPI идёт напрямую, своей страны выхода нет — прячем выбор страны
+        boolean hasCountry = prefs.getMode() != BridgeMode.BYPASS;
+        findViewById(R.id.countryRow).setVisibility(hasCountry ? View.VISIBLE : View.GONE);
     }
 
     private void openLog() {
