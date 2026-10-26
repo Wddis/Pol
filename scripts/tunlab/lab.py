@@ -16,7 +16,7 @@ IPv6 у «оператора» нет (как в мобильной сети б�
 не открывались (tun2socks принимает соединение раньше, чем ByeDPI узнаёт, что IPv6 нет).
 
 Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков>
-         | socks <порт> | tgcheck <сек> | quiccheck <ip> <сек> | notun
+         | socks <порт> | tgcheck <сек> | quiccheck <ip> <сек> | notun | dnscheck | dump
 Нужен pyroute2 (pip install pyroute2) и root.
 """
 import socket
@@ -394,6 +394,34 @@ if __name__ == "__main__":
         socks(int(sys.argv[2]))
     elif cmd == "tgcheck":
         tgcheck(float(sys.argv[2]))
+    elif cmd == "dnscheck":
+        # DNS-запрос к 1.1.1.1 (мимо VPN, если запущен от uid приложения): есть ли путь через «оператора»
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(3)
+        q = b"\x12\x34\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x02ya\x02ru\x00\x00\x01\x00\x01"
+        try:
+            s.sendto(q, (DNS_IP, 53))
+            s.recv(512)
+            print("ok")
+        except OSError as e:
+            print("fail", e)
+            sys.exit(1)
+    elif cmd == "dump":
+        # Настройки «оператора» для разбора, почему пакеты не идут (запускать в netns isp)
+        from pyroute2 import IPRoute
+        with IPRoute() as ip:
+            for r in ip.get_rules():
+                print("rule", r.get_attr("FRA_PRIORITY"), r.get_attr("FRA_IFNAME"), r.get_attr("FRA_TABLE"))
+            for t in (10, 254):
+                for r in ip.get_routes(table=t):
+                    print("route table", t, r.get_attr("RTA_DST"), r["dst_len"], r.get_attr("RTA_OIF"),
+                          r.get_attr("RTA_GATEWAY"))
+            for l in ip.get_links():
+                print("link", l["index"], l.get_attr("IFLA_IFNAME"), l["flags"])
+        import glob
+        for f in sorted(glob.glob("/proc/sys/net/ipv4/conf/*/forwarding") + glob.glob("/proc/sys/net/ipv4/conf/*/rp_filter")):
+            print(f, open(f).read().strip())
+        print("ip_forward", open("/proc/sys/net/ipv4/ip_forward").read().strip())
     elif cmd == "notun":
         from pyroute2 import IPRoute
         with IPRoute() as ip:

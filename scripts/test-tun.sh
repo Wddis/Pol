@@ -155,6 +155,16 @@ start_net() {  # $1 — профиль ТСПУ: сеть, «оператор» 
         sleep 0.1
     done
     grep -q "tspu: готов" "$TMP/tspu.out" || { echo "  ✗ модель ТСПУ не запустилась:"; cat "$TMP/tspu.out"; exit 1; }
+    # Путь через «оператора» должен быть: иначе перебор потратит минуты впустую
+    local d
+    d=$(APP python3 "$TMP/lab.py" dnscheck 2>&1 || true)
+    if [ "$d" != ok ]; then
+        echo "  ✗ через модель ТСПУ не идут пакеты (DNS напрямую: $d). Настройки «оператора»:"
+        NS isp python3 "$TMP/lab.py" dump | sed 's/^/    /'
+        sleep 11
+        sed 's/^/    /' "$TMP/tspu.out"
+        exit 1
+    fi
 }
 
 start_phone() {  # $1 — конфиг hev, дальше — аргументы ByeDPI: ByeDPI, tun2socks, маршруты телефона
@@ -376,6 +386,7 @@ else
     echo "--- ByeDPI (хвост)"; tail -20 "$TMP/byedpi.log" || true
     echo "--- hev (хвост)"; tail -20 "$TMP/hev.log" || true
     echo "--- ТСПУ (решения, хвост)"; tail -30 "$TMP/tspu.log" 2>/dev/null || true
+    echo "--- ТСПУ (вывод)"; tail -20 "$TMP/tspu.out" 2>/dev/null || true
     echo "--- «Psiphon» (хвост)"; tail -20 "$TMP/psiphon.log" 2>/dev/null || true
     echo "--- HelperRelay (хвост)"; tail -20 "$TMP/relay.log" 2>/dev/null || true
     exit 1

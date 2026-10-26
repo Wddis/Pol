@@ -68,11 +68,14 @@ def setup():
     ip.rule("add", iifname="i0", table=10, priority=100)
     ip.rule("add", iifname="i1", table=10, priority=101)
     ip.close()
-    for k in ("all", "default", "i0", "i1", "dpi0", "dpi1"):
-        with open(f"/proc/sys/net/ipv4/conf/{k}/rp_filter", "w") as f:
-            f.write("0")
+    # Явно на каждом интерфейсе: в новом netns значения бывают унаследованы от системы (на раннере
+    # CI ip_forward уже включён, и запись «1» не доходит до новых dpi0/dpi1 — пакеты не пересылаются)
     with open("/proc/sys/net/ipv4/ip_forward", "w") as f:
         f.write("1")
+    for k in ("all", "default", "i0", "i1", "dpi0", "dpi1"):
+        for opt, val in (("rp_filter", "0"), ("forwarding", "1"), ("accept_local", "1")):
+            with open(f"/proc/sys/net/ipv4/conf/{k}/{opt}", "w") as f:
+                f.write(val)
     return a, b
 
 
@@ -186,14 +189,19 @@ def main():
     fin, fout = setup()
     flows = {}
     print("tspu: готов (" + sys.argv[1] + ")", flush=True)
-    last_gc = time.time()
+    last_gc = last_stat = time.time()
+    n_in = n_out = 0
     while True:
         select.select([fin], [], [], 5)
         try:
             pkt = os.read(fin, 65535)
         except BlockingIOError:
             continue
+        n_in += 1
         now = time.time()
+        if now - last_stat > 10:  # для отладки стенда: идут ли пакеты через модель
+            print(f"tspu: пакетов прочитано {n_in}, соединений {len(flows)}", flush=True)
+            last_stat = now
         if now - last_gc > 30:
             for k in [k for k, f in flows.items() if now - f.seen > 120]:
                 del flows[k]
