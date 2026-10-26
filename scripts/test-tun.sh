@@ -93,11 +93,9 @@ openssl x509 -req -in "$TMP/site.csr" -CA "$TMP/ca.pem" -CAkey "$TMP/ca.key" -CA
     -out "$TMP/site.pem" -days 2 -extfile "$TMP/san.ext" 2>/dev/null
 chmod 644 "$TMP"/*.pem "$TMP"/*.key
 
-# DNS телефона в VPN — как у VpnService.Builder при обходе DPI
-{
-    echo "nameserver 1.1.1.1"
-    [ "$IPV6" = 1 ] && echo "nameserver 2606:4700:4700::1111"
-} > "$TMP/resolv.conf"
+# DNS телефона в VPN — как у VpnService.Builder при обходе DPI. У «оператора» нет IPv6, поэтому
+# приложение не направляет IPv6 в VPN (ни маршрута ::/0, ни IPv6-DNS) — так и здесь
+echo "nameserver 1.1.1.1" > "$TMP/resolv.conf"
 echo "hosts: files dns" > "$TMP/nsswitch.conf"
 
 TUNLAB config "$PORT" > "$TMP/hev-new.yml"
@@ -138,7 +136,7 @@ start_lab() {  # $1 — конфиг hev, дальше — аргументы By
     fi
     NS phone env ${PRELOAD:+LD_PRELOAD=$PRELOAD} "$HEV" "$TMP/hev.yml" > "$TMP/hev.log" 2>&1 &
     PIDS+=($!)
-    NS phone python3 "$LAB/lab.py" routes "$IPV6"
+    NS phone python3 "$LAB/lab.py" routes 0
     for _ in $(seq 1 50); do
         grep -q "srv: готов" "$TMP/srv.log" 2>/dev/null && break
         sleep 0.1

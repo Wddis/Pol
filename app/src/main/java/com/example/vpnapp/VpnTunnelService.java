@@ -6,6 +6,8 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.pm.ServiceInfo;
 import android.net.ConnectivityManager;
+import android.net.LinkAddress;
+import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
 import android.net.VpnService;
@@ -21,6 +23,8 @@ import androidx.annotation.Nullable;
 import androidx.core.app.ServiceCompat;
 
 import java.io.IOException;
+import java.net.Inet6Address;
+import java.net.InetAddress;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -120,6 +124,7 @@ public class VpnTunnelService extends VpnService
     @Nullable private BypassSearch.Score directScore;  // прямая проверка: эталон для обхода DPI
     private boolean directDone;
     private boolean tunDirectDns;  // текущий tun поднят с реальным DNS (для обхода DPI)
+    private boolean underlyingIpv6;  // у сети оператора есть глобальный IPv6
 
     @Override
     public void onCreate() {
@@ -191,6 +196,7 @@ public class VpnTunnelService extends VpnService
         netCountry = networkCountry();
         // Тип сети определяем до подъёма VPN, пока активна сеть оператора
         networkId = networkId();
+        underlyingIpv6 = underlyingHasIpv6();
         engine = null;
         probe = null;
         directScore = null;
@@ -209,7 +215,8 @@ public class VpnTunnelService extends VpnService
         DiagLog.add("========== новое подключение ==========");
         DiagLog.add("ODA " + appVersion() + ", Android " + Build.VERSION.RELEASE
                 + ", режим " + mode + ", страна " + prefs.getCountry()
-                + ", сеть " + networkId.split("-")[0] + " " + netCountry);
+                + ", сеть " + networkId.split("-")[0] + " " + netCountry
+                + (underlyingIpv6 ? ", IPv6 есть" : ", IPv6 нет"));
         // Интерфейс поднимаем сразу: пока туннель не готов, трафик блокируется, а не уходит мимо
         try {
             tun = establishTun(false);
@@ -1043,6 +1050,28 @@ public class VpnTunnelService extends VpnService
         return cc == null || cc.isEmpty() ? null : cc;
     }
 
+    /** Есть ли у активной сети (до подъёма VPN) глобальный IPv6-адрес. */
+    private boolean underlyingHasIpv6() {
+        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        if (cm == null) return false;
+        try {
+            Network n = cm.getActiveNetwork();
+            LinkProperties lp = n != null ? cm.getLinkProperties(n) : null;
+            if (lp == null) return false;
+            for (LinkAddress la : lp.getLinkAddresses()) {
+                InetAddress a = la.getAddress();
+                // глобальный: не loopback, не link-local и не ULA (fc00::/7)
+                if (a instanceof Inet6Address && !a.isLoopbackAddress() && !a.isLinkLocalAddress()
+                        && (a.getAddress()[0] & 0xfe) != 0xfc) {
+                    return true;
+                }
+            }
+        } catch (RuntimeException e) {
+            Log.w(TAG, "ipv6: " + e);
+        }
+        return false;
+    }
+
     /** Тип сети для Psiphon: "WIFI", "MOBILE-25001" (код оператора), … */
     private String networkId() {
         ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
@@ -1066,19 +1095,25 @@ public class VpnTunnelService extends VpnService
     }
 
     private ParcelFileDescriptor establishTun(boolean directDns) throws IOException {
+        // Tor/Psiphon: IPv6 тоже в туннель, чтобы он не утекал мимо. Обход DPI соединяет напрямую:
+        // если у сети оператора нет IPv6, IPv6 в VPN не нужен и вреден — tun2socks принимает
+        // соединение приложения раньше, чем ByeDPI пробует сайт по IPv6, и приложение получает
+        // сброс уже «установленного» соединения вместо быстрого отката на IPv4
+        boolean ipv6 = !directDns || underlyingIpv6;
         Builder b = new Builder()
                 .setSession(getString(R.string.app_name))
                 .setMtu(Tun2SocksConfig.MTU)
                 .addAddress(Tun2SocksConfig.TUN_IPV4, 32)
                 .addRoute("0.0.0.0", 0)
-                // IPv6 тоже в туннель, чтобы он не утекал мимо
-                .addAddress(Tun2SocksConfig.TUN_IPV6, 128)
-                .addRoute("::", 0)
                 .setConfigureIntent(VpnNotification.openApp(this));
+        if (ipv6) {
+            b.addAddress(Tun2SocksConfig.TUN_IPV6, 128);
+            b.addRoute("::", 0);
+        }
         if (directDns) {
             // Обход DPI: реальный резолвер, запросы идут через SOCKS напрямую
             b.addDnsServer(Tun2SocksConfig.DIRECT_DNS);
-            b.addDnsServer(Tun2SocksConfig.DIRECT_DNS6);
+            if (ipv6) b.addDnsServer(Tun2SocksConfig.DIRECT_DNS6);
         } else {
             // Tor/Psiphon: фиктивный DNS, перехватывает mapdns
             b.addDnsServer(Tun2SocksConfig.FAKE_DNS);

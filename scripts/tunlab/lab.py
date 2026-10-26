@@ -6,7 +6,9 @@
           работают от uid 2000 и идут мимо VPN (как addDisallowedApplication в Android);
   isp   — «оператор»: маршрутизатор с DPI (iptables string: пакет с именем сайта отбрасывается);
   srv   — «интернет»: DNS 1.1.1.1 (UDP и TCP) и HTTPS-сайты с адресами из журналов.
-IPv6 у «оператора» нет (как в мобильной сети без IPv6), но у телефона он есть в VPN.
+IPv6 у «оператора» нет (как в мобильной сети без IPv6); тогда и приложение не направляет IPv6
+в VPN (routes 0). routes 1 — IPv6 в VPN без IPv6 у оператора: так было до 0.8.6, и сайты с AAAA
+не открывались (tun2socks принимает соединение раньше, чем ByeDPI узнаёт, что IPv6 нет).
 
 Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков>
 Нужен pyroute2 (pip install pyroute2) и root.
