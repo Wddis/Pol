@@ -100,9 +100,10 @@ final class NetProbe {
     };
 
     private static final int CONNECT_TIMEOUT_MS = 6_000;
-    // Больше таймаута --auto (4 с) у цепочек: сбой мягкой стратегии + повтор через сильную
-    private static final int READ_TIMEOUT_MS = 9_000;
-    private static final long SITE_DEADLINE_MS = 15_000;
+    // С запасом на цепочки: --auto -T 4 в ядре Android 4.x срабатывает на ближайшем повторе
+    // пакета после 4 с (фактически 4–7 с), затем переподключение через сильную стратегию
+    private static final int READ_TIMEOUT_MS = 12_000;
+    private static final long SITE_DEADLINE_MS = 20_000;
     // Больше ~16 КБ, после которых ТСПУ «замораживает» часть соединений к зарубежным хостингам
     static final int ENOUGH_BYTES = 20 * 1024;
     private static final String DNS_SERVER = "1.1.1.1";
