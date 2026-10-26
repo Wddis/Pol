@@ -237,11 +237,12 @@ speed_run() {  # загрузка /big «браузером телефона» �
     SPEEDS=()
     for h in www.cloudflare.com www.facebook.com i.instagram.com rr1---sn-n8v7znz7.googlevideo.com; do
         r=$(PHONE curl -sS --noproxy '*' --cacert "$TMP/ca.pem" -o /dev/null -m 90 \
-            -w "%{http_code} %{speed_download} %{time_starttransfer}" "https://$h/big" 2>/dev/null || true)
-        set -- ${r:-нет 0 0}
+            -w "%{http_code} %{speed_download} %{time_namelookup} %{time_connect} %{time_appconnect} %{time_starttransfer}" \
+            "https://$h/big" 2>/dev/null || true)
+        set -- ${r:-нет 0 0 0 0 0}
         local mb
         mb=$(awk -v b="$2" 'BEGIN { printf "%.2f", b / 1048576 }')
-        echo "    $h: $1, $mb МБ/с, первый байт через $3 с"
+        echo "    $h: $1, $mb МБ/с; DNS $3 с, TCP $4 с, TLS $5 с, первый байт $6 с"
         [ "$1" = 200 ] || ok=0
         SPEEDS+=("$mb")
     done
@@ -369,6 +370,12 @@ for PROFILE in $PROFILES; do
 
     if [ "$PROFILE" = nov2026 ]; then
         echo "3) Скорость: загрузка 32 МБ через обход DPI (прямое соединение через «оператора»):"
+        r=$(APP curl -sS --noproxy '*' --cacert "$TMP/ca.pem" -o /dev/null -m 90 \
+            --resolve "www.cloudflare.com:443:$(python3 -B -c "import sys; sys.path.insert(0, '$LAB'); import lab; print(lab.SITES['www.cloudflare.com'])")" \
+            -w "%{speed_download} %{time_connect} %{time_appconnect} %{time_starttransfer}" \
+            https://www.cloudflare.com/big 2>/dev/null || true)
+        set -- ${r:-0 0 0 0}
+        echo "    для сравнения — без VPN, мимо ByeDPI (www.cloudflare.com): $(awk -v b="$1" 'BEGIN { printf "%.2f", b / 1048576 }') МБ/с; TCP $2 с, TLS $3 с, первый байт $4 с"
         speed_run
         BYPASS_SPEEDS=("${SPEEDS[@]}")
         check "$SPEED_OK" "через обход все загрузки дошли"
