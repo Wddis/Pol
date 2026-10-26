@@ -19,6 +19,7 @@ public final class Prefs {
     private static final String KEY_MODE = "bridge_mode";
     private static final String KEY_CUSTOM = "custom_bridges";
     private static final String KEY_BYEDPI = "byedpi_args";
+    private static final String KEY_BYPASS_GOOD = "bypass_good";
     private static final String KEY_LAST_GOOD = "last_good";
     private static final String KEY_MOAT = "moat_cache";
     private static final String KEY_DIRECT_FAILED = "direct_failed";
@@ -62,6 +63,16 @@ public final class Prefs {
 
     void setByedpiArgs(String text) {
         sp.edit().putString(KEY_BYEDPI, text).apply();
+    }
+
+    /** Название стратегии обхода DPI, сработавшей в прошлый раз (чтобы не перебирать заново). */
+    @Nullable
+    String getBypassGood() {
+        return sp.getString(KEY_BYPASS_GOOD, null);
+    }
+
+    void setBypassGood(@Nullable String label) {
+        sp.edit().putString(KEY_BYPASS_GOOD, label).apply();
     }
 
     @Nullable

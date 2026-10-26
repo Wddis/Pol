@@ -87,7 +87,8 @@ public class VpnTunnelService extends VpnService
     private int psiphonRestarts;
     private String psiphonText = "";
     private boolean bypassActive;   // обход DPI пробует стратегии или подключён
-    private int bypassProfile;      // индекс текущей стратегии обхода
+    private int bypassProfile;      // индекс текущей стратегии в bypassPlan
+    private List<BypassController.Profile> bypassPlan = new ArrayList<>();
     private String bypassText = "";
     private int torPercent;
     private int torError = R.string.error_blocked;
@@ -213,13 +214,30 @@ public class VpnTunnelService extends VpnService
     private void startBypass() {
         bypassActive = true;
         bypassProfile = 0;
+        bypassPlan = buildBypassPlan();
         startBypassProfile();
     }
 
-    private void startBypassProfile() {
+    /** План стратегий обхода: своя строка, иначе встроенные с сработавшей ранее — первой. */
+    private List<BypassController.Profile> buildBypassPlan() {
         BypassController.Profile custom = BypassController.customProfile(prefs.getByedpiArgs());
-        BypassController.Profile profile = custom != null
-                ? custom : BypassController.PROFILES.get(bypassProfile);
+        if (custom != null) return new ArrayList<>(java.util.Collections.singletonList(custom));
+        List<BypassController.Profile> plan = new ArrayList<>(BypassController.PROFILES);
+        String good = prefs.getBypassGood();
+        if (good != null) {
+            // Сработавшую в прошлый раз стратегию пробуем первой — обычно это сразу успех
+            for (int i = 0; i < plan.size(); i++) {
+                if (plan.get(i).label.equals(good)) {
+                    plan.add(0, plan.remove(i));
+                    break;
+                }
+            }
+        }
+        return plan;
+    }
+
+    private void startBypassProfile() {
+        BypassController.Profile profile = bypassPlan.get(bypassProfile);
         bypassText = getString(R.string.bypass_trying, profile.label);
         if (engine == null) publish(ConnectionState.CONNECTING, progressText(), "");
         bypass.start(profile, this);
@@ -579,6 +597,8 @@ public class VpnTunnelService extends VpnService
         if (!active || id != connection || !bypassActive || engine != null) return;
         if (ok) {
             DiagLog.add("Обход DPI сработал (" + label + "): зарубежный сайт открылся");
+            // Запоминаем рабочую стратегию: в следующий раз применится сразу, без перебора
+            if (BypassController.customProfile(prefs.getByedpiArgs()) == null) prefs.setBypassGood(label);
             engine = StatusBus.ENGINE_BYPASS;
             stopOtherEngines(StatusBus.ENGINE_BYPASS);
             socksPort = port;
@@ -599,10 +619,8 @@ public class VpnTunnelService extends VpnService
     private void nextBypassProfile() {
         bypass.stop();
         bypassActive = true;  // stop() сбросил слушателя, но перебор продолжается
-        // Свою строку не перебираем — она одна
-        boolean custom = BypassController.customProfile(prefs.getByedpiArgs()) != null;
         bypassProfile++;
-        if (!custom && bypassProfile < BypassController.PROFILES.size()) {
+        if (bypassProfile < bypassPlan.size()) {
             startBypassProfile();
             return;
         }
