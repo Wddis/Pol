@@ -84,6 +84,42 @@
                     android:text="@string/bridges_where" />
             </LinearLayout>
 
+            <!-- Обход DPI: свои аргументы ByeDPI (необязательно) -->
+            <LinearLayout
+                android:id="@+id/byedpiBox"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:paddingStart="@dimen/space_3"
+                android:paddingEnd="@dimen/space_3"
+                android:visibility="gone">
+
+                <EditText
+                    android:id="@+id/byedpiInput"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_1"
+                    android:background="@drawable/bg_input"
+                    android:fontFamily="monospace"
+                    android:gravity="top|start"
+                    android:hint="@string/byedpi_hint"
+                    android:importantForAutofill="no"
+                    android:inputType="textMultiLine|textNoSuggestions"
+                    android:minLines="1"
+                    android:maxLines="3"
+                    android:padding="@dimen/space_2"
+                    android:textColor="@color/text"
+                    android:textColorHint="@color/text_secondary"
+                    android:textSize="12sp" />
+
+                <TextView
+                    style="@style/Text.Oda.Small"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="@dimen/space_1"
+                    android:text="@string/byedpi_where" />
+            </LinearLayout>
+
             <com.google.android.material.button.MaterialButton
                 android:id="@+id/save"
                 android:layout_width="match_parent"

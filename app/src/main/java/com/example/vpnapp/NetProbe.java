@@ -58,6 +58,39 @@ final class NetProbe {
         }
     }
 
+    /**
+     * Доступен ли хоть один зарубежный сайт ЧЕРЕЗ локальный SOCKS (проверка обхода DPI).
+     * Если напрямую зарубежное закрыто, а через ByeDPI открылось — обход сработал.
+     */
+    static boolean foreignReachableVia(int socksPort) {
+        java.net.Proxy proxy = new java.net.Proxy(java.net.Proxy.Type.SOCKS,
+                new java.net.InetSocketAddress("127.0.0.1", socksPort));
+        ExecutorService pool = Executors.newFixedThreadPool(FOREIGN.length);
+        try {
+            List<Future<Boolean>> fs = new ArrayList<>();
+            for (String url : FOREIGN) fs.add(pool.submit(() -> reachableVia(url, proxy)));
+            return count(fs) > 0;
+        } finally {
+            pool.shutdownNow();
+        }
+    }
+
+    private static boolean reachableVia(String url, java.net.Proxy proxy) {
+        HttpURLConnection c = null;
+        try {
+            c = (HttpURLConnection) new URL(url).openConnection(proxy);
+            c.setConnectTimeout(TIMEOUT_MS);
+            c.setReadTimeout(TIMEOUT_MS);
+            c.setInstanceFollowRedirects(false);
+            c.setUseCaches(false);
+            return c.getResponseCode() > 0;
+        } catch (IOException | RuntimeException e) {
+            return false;
+        } finally {
+            if (c != null) c.disconnect();
+        }
+    }
+
     private static List<Future<Boolean>> submit(ExecutorService pool, String[] urls) {
         List<Future<Boolean>> result = new ArrayList<>();
         for (String url : urls) result.add(pool.submit(() -> reachable(url)));

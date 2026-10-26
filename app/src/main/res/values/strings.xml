@@ -28,6 +28,11 @@
     <string name="psiphon_reconnecting">Psiphon переподключается…</string>
     <string name="psiphon_timeout">не подключился вовремя</string>
 
+    <!-- Обход DPI (ByeDPI) -->
+    <string name="bypass_trying">Обход DPI: стратегия «%1$s»…</string>
+    <string name="bypass_checking">Обход DPI (%1$s): проверка…</string>
+    <string name="bypass_connected">Обход DPI (прямое соединение)</string>
+
     <!-- Проверка сети напрямую -->
     <string name="hint_whitelist">Зарубежные сайты закрыты даже без VPN: похоже на «белые списки» оператора</string>
     <string name="hint_offline">Нет доступа в интернет</string>
@@ -66,6 +71,8 @@
     <string name="error_psiphon_missing">В этой сборке нет Psiphon. Выберите «Авто» или способ через Tor</string>
     <string name="error_psiphon_stopped">Psiphon неожиданно остановился</string>
     <string name="error_psiphon_failed">Psiphon не подключился. Попробуйте «Авто» или другую сеть (Wi-Fi). Подробности в ЖУРНАЛЕ</string>
+    <string name="error_bypass_missing">В этой сборке нет модуля обхода DPI. Выберите «Авто» или другой способ</string>
+    <string name="error_bypass_failed">Обход DPI не помог: сайты закрыты не по DPI, а по IP, либо «белые списки». Попробуйте «Авто» (Psiphon/Tor) или Wi-Fi. Подробности в ЖУРНАЛЕ</string>
     <string name="error_no_custom_bridges">Добавьте свои мосты в «СПОСОБ» или выберите «Авто»</string>
     <string name="error_tor_stopped">Tor неожиданно остановился</string>
     <string name="error_tor_start">Не удалось запустить Tor</string>
@@ -76,7 +83,9 @@
     <!-- Режимы мостов -->
     <string name="bridges_title">Способ подключения</string>
     <string name="mode_auto">Авто</string>
-    <string name="mode_auto_hint">Psiphon и Tor одновременно: работает тот, кто подключится первым. Свои мосты тоже используются</string>
+    <string name="mode_auto_hint">Обход DPI, Psiphon и Tor одновременно: работает тот, кто подключится первым</string>
+    <string name="mode_bypass">Обход DPI</string>
+    <string name="mode_bypass_hint">Без сервера и ключей: прямое соединение с обходом фильтра. Быстро, но без выбора страны и без анонимности. Не поможет против блокировки по IP</string>
     <string name="mode_psiphon">Psiphon</string>
     <string name="mode_psiphon_hint">Сеть Psiphon: десяток способов маскировки, подключается быстрее Tor. Не анонимна, как Tor</string>
     <string name="mode_snowflake">Snowflake</string>
@@ -98,6 +107,8 @@
     <string name="bridges_parsed_none">Мосты не распознаны</string>
     <string name="bridges_invalid">, не распознано: %1$d</string>
     <string name="bridges_save">СОХРАНИТЬ</string>
+    <string name="byedpi_hint">Свои аргументы ByeDPI (необязательно), напр. -s 1+s -d 1+s</string>
+    <string name="byedpi_where">Пусто — приложение само переберёт стратегии обхода. Готовые строки под вашего оператора можно найти в сообществах ByeDPI</string>
 
     <!-- Уведомление -->
     <string name="notif_channel">VPN</string>

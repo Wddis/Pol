@@ -32,7 +32,7 @@ import java.util.Locale;
  * Вся логика идёт в потоке worker, UI узнаёт о состоянии через StatusBus.
  */
 public class VpnTunnelService extends VpnService
-        implements TorController.Listener, PsiphonController.Listener {
+        implements TorController.Listener, PsiphonController.Listener, BypassController.Listener {
 
     public static final String ACTION_START = "com.example.vpnapp.action.START";
     public static final String ACTION_STOP = "com.example.vpnapp.action.STOP";
@@ -65,6 +65,7 @@ public class VpnTunnelService extends VpnService
     private Handler worker;
     private TorController tor;
     private PsiphonController psiphon;
+    private BypassController bypass;
     private PtController pt;
     private Prefs prefs;
 
@@ -85,6 +86,9 @@ public class VpnTunnelService extends VpnService
     private boolean psiphonUsed;    // в этом подключении пробовали Psiphon
     private int psiphonRestarts;
     private String psiphonText = "";
+    private boolean bypassActive;   // обход DPI пробует стратегии или подключён
+    private int bypassProfile;      // индекс текущей стратегии обхода
+    private String bypassText = "";
     private int torPercent;
     private int torError = R.string.error_blocked;
     private String networkId = "UNKNOWN";
@@ -101,6 +105,7 @@ public class VpnTunnelService extends VpnService
         worker = new Handler(thread.getLooper());
         tor = new TorController(this, worker);
         psiphon = new PsiphonController(this, worker);
+        bypass = new BypassController(this, worker);
         pt = new PtController(this);
         VpnNotification.ensureChannel(this);
     }
@@ -164,12 +169,16 @@ public class VpnTunnelService extends VpnService
         probe = null;
         psiphonRestarts = 0;
         psiphonText = "";
+        bypassText = "";
+        bypassProfile = 0;
         torPercent = 0;
         lastReason = null;
         torError = R.string.error_blocked;
         BridgeMode mode = prefs.getMode();
         boolean psiphonBuilt = PsiphonController.isAvailable(this);
+        boolean bypassBuilt = BypassController.isAvailable(this);
         psiphonUsed = (mode == BridgeMode.AUTO || mode == BridgeMode.PSIPHON) && psiphonBuilt;
+        boolean bypassUsed = (mode == BridgeMode.AUTO || mode == BridgeMode.BYPASS) && bypassBuilt;
         DiagLog.add("========== новое подключение ==========");
         DiagLog.add("ODA " + appVersion() + ", Android " + Build.VERSION.RELEASE
                 + ", режим " + mode + ", страна " + prefs.getCountry()
@@ -187,12 +196,33 @@ public class VpnTunnelService extends VpnService
             fail(R.string.error_psiphon_missing);
             return;
         }
+        if (mode == BridgeMode.BYPASS && !bypassBuilt) {
+            fail(R.string.error_bypass_missing);
+            return;
+        }
+        // Обход DPI запускаем первым: когда срабатывает, он самый быстрый (прямое соединение)
+        if (bypassUsed) startBypass();
         if (psiphonUsed) {
             startPsiphon();
-        } else if (mode == BridgeMode.AUTO) {
+        } else if (mode == BridgeMode.AUTO && !bypassBuilt) {
             DiagLog.add("Psiphon нет в этой сборке: только Tor");
         }
-        if (mode != BridgeMode.PSIPHON) startTor(id);
+        if (mode == BridgeMode.AUTO) startTor(id);
+    }
+
+    private void startBypass() {
+        bypassActive = true;
+        bypassProfile = 0;
+        startBypassProfile();
+    }
+
+    private void startBypassProfile() {
+        BypassController.Profile custom = BypassController.customProfile(prefs.getByedpiArgs());
+        BypassController.Profile profile = custom != null
+                ? custom : BypassController.PROFILES.get(bypassProfile);
+        bypassText = getString(R.string.bypass_trying, profile.label);
+        if (engine == null) publish(ConnectionState.CONNECTING, progressText(), "");
+        bypass.start(profile, this);
     }
 
     private void startPsiphon() {
@@ -355,8 +385,8 @@ public class VpnTunnelService extends VpnService
         pt.stop();
         // Сбрасываем «последний рабочий» мост: в этой сети он не прошёл
         prefs.setLastGood(null);
-        if (psiphonActive) {
-            DiagLog.add("Tor не подключился, Psiphon продолжает");
+        if (psiphonActive || bypassActive) {
+            DiagLog.add("Tor не подключился, другие способы продолжают");
             publish(ConnectionState.CONNECTING, progressText(), "");
             return;
         }
@@ -372,6 +402,8 @@ public class VpnTunnelService extends VpnService
             fail(R.string.error_offline);
         } else if (prefs.getMode() == BridgeMode.PSIPHON) {
             fail(R.string.error_psiphon_failed);
+        } else if (prefs.getMode() == BridgeMode.BYPASS) {
+            fail(R.string.error_bypass_failed);
         } else {
             fail(psiphonUsed ? R.string.error_all_blocked : torError);
         }
@@ -380,6 +412,11 @@ public class VpnTunnelService extends VpnService
     private void changeCountry() {
         if (!active) {
             connect();
+            return;
+        }
+        if (StatusBus.ENGINE_BYPASS.equals(engine)) {
+            // Обход DPI — прямое соединение, страна выхода к нему не применяется
+            DiagLog.add("Обход DPI: смена страны не применяется (прямое соединение)");
             return;
         }
         if (StatusBus.ENGINE_PSIPHON.equals(engine)) {
@@ -396,6 +433,7 @@ public class VpnTunnelService extends VpnService
             // Ещё подключаемся: перезапускаем текущие попытки с новой страной
             if (psiphonActive) startPsiphon();
             if (torActive && !plan.isEmpty()) startAttempt();
+            // обход DPI страну не использует — его не трогаем
             return;
         }
         int gen = ++generation;
@@ -429,11 +467,7 @@ public class VpnTunnelService extends VpnService
     public void onReady(int port) {
         if (!active || engine != null) return;
         engine = StatusBus.ENGINE_TOR;
-        if (psiphonActive) {
-            DiagLog.add("Tor подключился первым: Psiphon останавливается");
-            psiphonActive = false;
-            psiphon.stop();
-        }
+        stopOtherEngines(StatusBus.ENGINE_TOR);
         socksPort = port;
         DiagLog.add("Tor 100%, SOCKS порт " + port);
         if (startTunnel()) checkIp();
@@ -468,12 +502,7 @@ public class VpnTunnelService extends VpnService
             return;
         }
         engine = StatusBus.ENGINE_PSIPHON;
-        if (torActive) {
-            DiagLog.add("Psiphon подключился первым: Tor и мосты останавливаются");
-            torActive = false;
-            tor.stop();
-            pt.stop();
-        }
+        stopOtherEngines(StatusBus.ENGINE_PSIPHON);
         socksPort = port;
         if (startTunnel()) checkIp();
     }
@@ -518,11 +547,91 @@ public class VpnTunnelService extends VpnService
         }
         psiphonActive = false;
         if (engine != null) return;
-        if (torActive) {
+        if (torActive || bypassActive) {
             publish(ConnectionState.CONNECTING, progressText(), "");
             return;
         }
         failAll();
+    }
+
+    // ---------- Обход DPI (ByeDPI) ----------
+
+    @Override
+    public void onBypassListening(int port, String profileLabel) {
+        if (!active || !bypassActive) return;
+        if (engine != null) {
+            // Кто-то уже подключился раньше
+            bypassActive = false;
+            bypass.stop();
+            return;
+        }
+        // Проверяем реальным запросом: открылся ли зарубежный сайт через обход
+        int id = connection;
+        bypassText = getString(R.string.bypass_checking, profileLabel);
+        publish(ConnectionState.CONNECTING, progressText(), "");
+        new Thread(() -> {
+            boolean ok = NetProbe.foreignReachableVia(port);
+            worker.post(() -> onBypassVerified(id, port, profileLabel, ok));
+        }, "oda-bypass-check").start();
+    }
+
+    private void onBypassVerified(int id, int port, String label, boolean ok) {
+        if (!active || id != connection || !bypassActive || engine != null) return;
+        if (ok) {
+            DiagLog.add("Обход DPI сработал (" + label + "): зарубежный сайт открылся");
+            engine = StatusBus.ENGINE_BYPASS;
+            stopOtherEngines(StatusBus.ENGINE_BYPASS);
+            socksPort = port;
+            if (startTunnel()) checkIp();
+            return;
+        }
+        DiagLog.add("Обход DPI (" + label + "): зарубежный сайт не открылся");
+        nextBypassProfile();
+    }
+
+    @Override
+    public void onBypassError(String reason) {
+        if (!active || !bypassActive) return;
+        nextBypassProfile();
+    }
+
+    /** Следующая стратегия обхода; если кончились — обход сдаётся. */
+    private void nextBypassProfile() {
+        bypass.stop();
+        bypassActive = true;  // stop() сбросил слушателя, но перебор продолжается
+        // Свою строку не перебираем — она одна
+        boolean custom = BypassController.customProfile(prefs.getByedpiArgs()) != null;
+        bypassProfile++;
+        if (!custom && bypassProfile < BypassController.PROFILES.size()) {
+            startBypassProfile();
+            return;
+        }
+        bypassActive = false;
+        bypassText = "";
+        DiagLog.add("Обход DPI не помог ни одной стратегией");
+        if (engine == null && !torActive && !psiphonActive) {
+            failAll();
+        } else if (engine == null) {
+            publish(ConnectionState.CONNECTING, progressText(), "");
+        }
+    }
+
+    /** Остановить все способы, кроме победившего. */
+    private void stopOtherEngines(String winner) {
+        DiagLog.add("Подключено через " + winner + ": остальные способы останавливаются");
+        if (!StatusBus.ENGINE_TOR.equals(winner) && torActive) {
+            torActive = false;
+            tor.stop();
+            pt.stop();
+        }
+        if (!StatusBus.ENGINE_PSIPHON.equals(winner) && psiphonActive) {
+            psiphonActive = false;
+            psiphon.stop();
+        }
+        if (!StatusBus.ENGINE_BYPASS.equals(winner) && bypassActive) {
+            bypassActive = false;
+            bypass.stop();
+        }
     }
 
     // ---------- Туннель и проверка IP ----------
@@ -557,13 +666,14 @@ public class VpnTunnelService extends VpnService
         int gen = ++generation;
         publish(ConnectionState.CONNECTING, getString(R.string.detail_checking), "");
         int port = socksPort;
-        boolean viaPsiphon = StatusBus.ENGINE_PSIPHON.equals(engine);
+        boolean viaTrace = StatusBus.ENGINE_PSIPHON.equals(engine)
+                || StatusBus.ENGINE_BYPASS.equals(engine);
         new Thread(() -> {
             String ip = null;
             String cc = null;
             for (int i = 0; i < IP_CHECK_ATTEMPTS && ip == null; i++) {
                 try {
-                    if (viaPsiphon) {
+                    if (viaTrace) {
                         IpChecker.Exit exit = IpChecker.fetchTrace(port);
                         ip = exit.ip;
                         cc = exit.country;
@@ -575,7 +685,7 @@ public class VpnTunnelService extends VpnService
                 }
             }
             String fp = null;
-            if (!viaPsiphon) {
+            if (!viaTrace) {
                 cc = ip != null ? tor.countryOf(ip) : null;
                 fp = tor.firstHopFingerprint();
             }
@@ -589,6 +699,10 @@ public class VpnTunnelService extends VpnService
     private void onIpChecked(int gen, @Nullable String ip, @Nullable String cc, @Nullable String fp) {
         if (!active || gen != generation) return;
         DiagLog.add("Проверка IP: " + (ip != null ? ip + " (" + cc + ")" : "не удалась"));
+        if (StatusBus.ENGINE_BYPASS.equals(engine)) {
+            publish(ConnectionState.ON, bypassDetail(ip, cc), "");
+            return;
+        }
         if (StatusBus.ENGINE_PSIPHON.equals(engine)) {
             publish(ConnectionState.ON, psiphonDetail(ip, cc), "");
             return;
@@ -638,6 +752,20 @@ public class VpnTunnelService extends VpnService
         return sb.toString();
     }
 
+    /** Строка под статусом при подключении через обход DPI (прямое соединение, свой IP). */
+    private String bypassDetail(@Nullable String ip, @Nullable String cc) {
+        StringBuilder sb = new StringBuilder(getString(R.string.bypass_connected));
+        sb.append(" · ");
+        if (ip == null) {
+            sb.append(getString(R.string.detail_ip_unknown));
+        } else if (cc == null || cc.isEmpty()) {
+            sb.append(getString(R.string.detail_ip_only, ip));
+        } else {
+            sb.append(getString(R.string.detail_ip, ip, Country.nameOf(this, cc.toUpperCase(Locale.ROOT))));
+        }
+        return sb.toString();
+    }
+
     // ---------- Текст статуса ----------
 
     /** Подсказка о сети и ход подключения каждого способа (по строке на способ). */
@@ -648,6 +776,7 @@ public class VpnTunnelService extends VpnService
         } else if (probe == NetProbe.Result.OFFLINE) {
             lines.add(getString(R.string.hint_offline));
         }
+        if (bypassActive && !bypassText.isEmpty()) lines.add(bypassText);
         if (psiphonActive && !psiphonText.isEmpty()) lines.add(psiphonText);
         if (torActive) lines.add(torText());
         return TextUtils.join("\n", lines);
@@ -777,6 +906,10 @@ public class VpnTunnelService extends VpnService
         if (psiphonActive) {
             psiphonActive = false;
             psiphon.stop();
+        }
+        if (bypassActive) {
+            bypassActive = false;
+            bypass.stop();
         }
         torActive = false;
         // Сам Tor не останавливается (повторный запуск в процессе приводил к падению),

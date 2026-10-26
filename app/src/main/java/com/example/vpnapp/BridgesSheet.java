@@ -40,6 +40,8 @@ public class BridgesSheet extends BottomSheetDialogFragment {
     private View customBox;
     private EditText customInput;
     private TextView parseResult;
+    private View byedpiBox;
+    private EditText byedpiInput;
 
     @Nullable
     @Override
@@ -51,11 +53,16 @@ public class BridgesSheet extends BottomSheetDialogFragment {
         customBox = root.findViewById(R.id.customBox);
         customInput = root.findViewById(R.id.customInput);
         parseResult = root.findViewById(R.id.parseResult);
+        byedpiBox = root.findViewById(R.id.byedpiBox);
+        byedpiInput = root.findViewById(R.id.byedpiInput);
 
         selected = savedInstanceState != null
                 ? BridgeMode.from(savedInstanceState.getString(STATE_MODE))
                 : prefs.getMode();
-        if (savedInstanceState == null) customInput.setText(prefs.getCustomBridges());
+        if (savedInstanceState == null) {
+            customInput.setText(prefs.getCustomBridges());
+            byedpiInput.setText(prefs.getByedpiArgs());
+        }
         showParseResult();
         customInput.addTextChangedListener(new TextWatcher() {
             @Override
@@ -147,13 +154,19 @@ public class BridgesSheet extends BottomSheetDialogFragment {
         // Поле своих мостов видно в режимах «Свои» и «Авто» (Авто их тоже пробует)
         boolean showCustom = selected == BridgeMode.CUSTOM || selected == BridgeMode.AUTO;
         customBox.setVisibility(showCustom ? View.VISIBLE : View.GONE);
+        // Поле своих аргументов ByeDPI — в режимах «Обход DPI» и «Авто»
+        boolean showByedpi = selected == BridgeMode.BYPASS || selected == BridgeMode.AUTO;
+        byedpiBox.setVisibility(showByedpi ? View.VISIBLE : View.GONE);
     }
 
     private void save(Prefs prefs) {
         String text = customInput.getText().toString().trim();
-        boolean changed = prefs.getMode() != selected || !text.equals(prefs.getCustomBridges());
+        String byedpi = byedpiInput.getText().toString().trim();
+        boolean changed = prefs.getMode() != selected || !text.equals(prefs.getCustomBridges())
+                || !byedpi.equals(prefs.getByedpiArgs());
         prefs.setMode(selected);
         prefs.setCustomBridges(text);
+        prefs.setByedpiArgs(byedpi);
         if (changed) {
             // Новые настройки: старый «рабочий» способ больше не приоритетен
             prefs.setLastGood(null);

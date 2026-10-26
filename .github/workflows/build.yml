@@ -41,6 +41,9 @@ jobs:
       - name: Build Psiphon client and server list
         run: bash scripts/build-psiphon.sh
 
+      - name: Build ByeDPI (DPI bypass)
+        run: bash scripts/build-byedpi.sh
+
       - name: Build debug APK
         run: |
           chmod +x gradlew
@@ -49,9 +52,10 @@ jobs:
       - name: Check Snowflake and Psiphon in APK
         run: |
           APK=app/build/outputs/apk/debug/app-debug.apk
-          unzip -l "$APK" | grep -E 'libsnowflake.so|libpsiphon.so|psiphon/server_list.txt'
+          unzip -l "$APK" | grep -E 'libsnowflake.so|libpsiphon.so|libbyedpi.so|psiphon/server_list.txt'
           test "$(unzip -l "$APK" | grep -c libsnowflake.so)" -eq 2
           test "$(unzip -l "$APK" | grep -c libpsiphon.so)" -eq 2
+          test "$(unzip -l "$APK" | grep -c libbyedpi.so)" -eq 2
           test "$(unzip -l "$APK" | grep -c assets/psiphon/server_list.txt)" -eq 1
 
       - name: Upload APK

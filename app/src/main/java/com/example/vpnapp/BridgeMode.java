@@ -3,6 +3,7 @@ package com.example.vpnapp;
 /** Способ подключения, выбирается в листе «Способ подключения». */
 enum BridgeMode {
     AUTO(R.string.mode_auto, R.string.mode_auto_hint),
+    BYPASS(R.string.mode_bypass, R.string.mode_bypass_hint),
     PSIPHON(R.string.mode_psiphon, R.string.mode_psiphon_hint),
     SNOWFLAKE(R.string.mode_snowflake, R.string.mode_snowflake_hint),
     OBFS4(R.string.mode_obfs4, R.string.mode_obfs4_hint),

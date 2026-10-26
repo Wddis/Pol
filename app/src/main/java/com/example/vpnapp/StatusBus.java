@@ -36,6 +36,7 @@ public final class StatusBus {
 
     public static final String ENGINE_TOR = "tor";
     public static final String ENGINE_PSIPHON = "psiphon";
+    public static final String ENGINE_BYPASS = "bypass";
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final List<Listener> LISTENERS = new CopyOnWriteArrayList<>();

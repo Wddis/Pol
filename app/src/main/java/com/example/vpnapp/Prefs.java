@@ -18,6 +18,7 @@ public final class Prefs {
     private static final String KEY_COUNTRY = "country";
     private static final String KEY_MODE = "bridge_mode";
     private static final String KEY_CUSTOM = "custom_bridges";
+    private static final String KEY_BYEDPI = "byedpi_args";
     private static final String KEY_LAST_GOOD = "last_good";
     private static final String KEY_MOAT = "moat_cache";
     private static final String KEY_DIRECT_FAILED = "direct_failed";
@@ -52,6 +53,15 @@ public final class Prefs {
 
     void setCustomBridges(String text) {
         sp.edit().putString(KEY_CUSTOM, text).apply();
+    }
+
+    /** Свои аргументы ByeDPI для обхода DPI (пусто — встроенный перебор стратегий). */
+    String getByedpiArgs() {
+        return sp.getString(KEY_BYEDPI, "");
+    }
+
+    void setByedpiArgs(String text) {
+        sp.edit().putString(KEY_BYEDPI, text).apply();
     }
 
     @Nullable
