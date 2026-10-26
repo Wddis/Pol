@@ -156,11 +156,18 @@ start_net() {  # $1 — профиль ТСПУ: сеть, «оператор» 
     done
     grep -q "tspu: готов" "$TMP/tspu.out" || { echo "  ✗ модель ТСПУ не запустилась:"; cat "$TMP/tspu.out"; exit 1; }
     # Путь через «оператора» должен быть: иначе перебор потратит минуты впустую
-    local d
-    d=$(APP python3 "$TMP/lab.py" dnscheck 2>&1 || true)
+    local d i
+    for i in 1 2 3; do
+        d=$(APP python3 "$TMP/lab.py" dnscheck 2>&1 || true)
+        [ "$d" = ok ] && break
+    done
     if [ "$d" != ok ]; then
         echo "  ✗ через модель ТСПУ не идут пакеты (DNS напрямую: $d). Настройки «оператора»:"
         NS isp python3 "$TMP/lab.py" dump | sed 's/^/    /'
+        echo "    — счётчики интерфейсов «оператора»:"
+        NS isp cat /proc/net/dev | sed 's/^/    /'
+        echo "    — снмп «оператора» (IP: InHdrErrors, InAddrErrors, ForwDatagrams, InDiscards…):"
+        NS isp cat /proc/net/snmp | head -2 | sed 's/^/    /'
         sleep 11
         sed 's/^/    /' "$TMP/tspu.out"
         exit 1

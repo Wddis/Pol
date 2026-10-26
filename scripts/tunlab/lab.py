@@ -411,7 +411,7 @@ if __name__ == "__main__":
         from pyroute2 import IPRoute
         with IPRoute() as ip:
             for r in ip.get_rules():
-                print("rule", r.get_attr("FRA_PRIORITY"), r.get_attr("FRA_IFNAME"), r.get_attr("FRA_TABLE"))
+                print("rule", r.get_attr("FRA_PRIORITY"), "iif", r.get_attr("FRA_IIFNAME"), "table", r.get_attr("FRA_TABLE"))
             for t in (10, 254):
                 for r in ip.get_routes(table=t):
                     print("route table", t, r.get_attr("RTA_DST"), r["dst_len"], r.get_attr("RTA_OIF"),

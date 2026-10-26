@@ -198,6 +198,13 @@ def main():
         except BlockingIOError:
             continue
         n_in += 1
+        if n_in <= 40:  # для отладки стенда: первые пакеты (что пришло в модель)
+            v = pkt[0] >> 4
+            if v == 4 and len(pkt) >= 20:
+                print(f"tspu: вход v4 {ipaddress.ip_address(pkt[12:16])} → {ipaddress.ip_address(pkt[16:20])} "
+                      f"proto {pkt[9]} ttl {pkt[8]} len {len(pkt)}", flush=True)
+            else:
+                print(f"tspu: вход v{v} len {len(pkt)}", flush=True)
         now = time.time()
         if now - last_stat > 10:  # для отладки стенда: идут ли пакеты через модель
             print(f"tspu: пакетов прочитано {n_in}, соединений {len(flows)}", flush=True)
