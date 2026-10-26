@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Проверка обхода DPI на компьютере, без Android SDK (секунды; запускается и в CI):
 # 1) логика выбора стратегии (BypassSearch) на сценариях — app/src/test/.../BypassSearchTest.java;
-# 2) каждая встроенная строка стратегии принимается ядром ByeDPI (сборка хостовым gcc из подмодуля).
+# 2) каждая встроенная строка стратегии — так, как её запускает приложение (с маршрутом: список
+#    доменов, сети Telegram, запасной путь) — принимается ядром ByeDPI (хостовый gcc, подмодуль).
 # Нужны JDK (javac, java) и gcc.
 set -euo pipefail
 
@@ -18,7 +19,7 @@ package androidx.annotation;
 public @interface Nullable {}
 JAVA
 javac -nowarn -encoding UTF-8 -d "$TMP/classes" "$TMP/stub/androidx/annotation/Nullable.java" \
-    "$SRC/BypassProfile.java" "$SRC/BypassSearch.java" \
+    "$SRC/BypassProfile.java" "$SRC/BypassSearch.java" "$SRC/ByeDpiStats.java" "$SRC/HelperRelay.java" \
     "$ROOT/app/src/test/java/com/example/vpnapp/BypassSearchTest.java"
 java -cp "$TMP/classes" com.example.vpnapp.BypassSearchTest
 echo "Логика выбора стратегии: OK"
@@ -36,11 +37,10 @@ gcc -std=c99 -O1 -D_DEFAULT_SOURCE -I"$BYEDPI" -w -o "$TMP/ciadpi" $SRCS
 
 port=21800
 n=0
-while IFS= read -r line; do
+while IFS=$'\t' read -r -a args; do
     port=$((port + 1))
     n=$((n + 1))
-    # shellcheck disable=SC2086
-    "$TMP/ciadpi" -i 127.0.0.1 -p "$port" $line > "$TMP/out.txt" 2>&1 &
+    "$TMP/ciadpi" -i 127.0.0.1 -p "$port" "${args[@]}" > "$TMP/out.txt" 2>&1 &
     pid=$!
     ok=0
     for _ in $(seq 1 30); do
@@ -51,7 +51,7 @@ while IFS= read -r line; do
     kill "$pid" 2>/dev/null || true
     wait "$pid" 2>/dev/null || true
     if [ "$ok" != 1 ]; then
-        echo "ByeDPI не принял строку: $line" >&2
+        echo "ByeDPI не принял строку: ${args[*]}" >&2
         cat "$TMP/out.txt" >&2
         exit 1
     fi

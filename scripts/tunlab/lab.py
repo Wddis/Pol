@@ -4,13 +4,19 @@
 Три сетевых пространства (netns):
   phone — «телефон»: VPN-интерфейс tun0 (hev-socks5-tunnel) и ByeDPI. ByeDPI и проверки ODA
           работают от uid 2000 и идут мимо VPN (как addDisallowedApplication в Android);
-  isp   — «оператор»: маршрутизатор с DPI (iptables string: пакет с именем сайта отбрасывается);
-  srv   — «интернет»: DNS 1.1.1.1 (UDP и TCP) и HTTPS-сайты с адресами из журналов.
+          «Psiphon» (SOCKS5, команда socks) работает от uid 2001 и ходит в «интернет» мимо
+          оператора — по отдельному каналу p1/s1, как зашифрованный туннель за границу;
+  isp   — «оператор»: маршрутизатор с DPI (правила iptables ставит test-tun.sh): пакет с именем
+          заблокированного сайта отбрасывается; у «CDN соцсети» и «сервера Telegram» режутся
+          все пакеты с данными (блокировка по адресу: TCP соединяется, данные не доходят);
+  srv   — «интернет»: DNS 1.1.1.1 (UDP и TCP), HTTPS-сайты с адресами из журналов
+          и «сервер Telegram» (TG_IP:443, не TLS: отвечает эхом, как MTProto — не по имени сайта).
 IPv6 у «оператора» нет (как в мобильной сети без IPv6); тогда и приложение не направляет IPv6
 в VPN (routes 0). routes 1 — IPv6 в VPN без IPv6 у оператора: так было до 0.8.6, и сайты с AAAA
 не открывались (tun2socks принимает соединение раньше, чем ByeDPI узнаёт, что IPv6 нет).
 
 Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков>
+         | socks <порт> | tgcheck <сек>
 Нужен pyroute2 (pip install pyroute2) и root.
 """
 import socket
@@ -20,8 +26,13 @@ import threading
 import time
 
 APP_UID = 2000
+TUNNEL_UID = 2001  # «Psiphon»: его трафик идёт мимо оператора (туннель за границу)
 SITES = {  # все сайты NetProbe; IPv4 — как в журналах пользователя
     "www.instagram.com": "57.144.62.34",
+    # Приложение Instagram ходит не на www: API на том же узле Meta, картинки — на CDN.
+    # Адрес CDN в стенде закрыт по IP (см. test-tun.sh) — его не откроет ни одна стратегия
+    "i.instagram.com": "57.144.62.34",
+    "scontent-hel3-1.cdninstagram.com": "157.240.200.36",
     "www.facebook.com": "57.144.62.1",
     "x.com": "162.159.140.229",
     "rutracker.org": "104.21.32.39",
@@ -39,6 +50,7 @@ SITES6 = {
     "ya.ru": "2a02:6b8::2:242",
 }
 DNS_IP = "1.1.1.1"
+TG_IP = "149.154.167.51"  # DC2 Telegram: протокол без имени сайта, режется по адресу
 
 
 def down():
@@ -58,7 +70,9 @@ def up(ipv6):
     ip = IPRoute()
     ip.link("add", ifname="p0", kind="veth", peer="i0")
     ip.link("add", ifname="s0", kind="veth", peer="i1")
-    for ifn, ns in (("p0", "phone"), ("i0", "isp"), ("i1", "isp"), ("s0", "srv")):
+    ip.link("add", ifname="p1", kind="veth", peer="s1")  # «туннель за границу» мимо оператора
+    for ifn, ns in (("p0", "phone"), ("i0", "isp"), ("i1", "isp"), ("s0", "srv"),
+                    ("p1", "phone"), ("s1", "srv")):
         ip.link("set", index=ip.link_lookup(ifname=ifn)[0], net_ns_fd=ns)
     ip.close()
 
@@ -75,9 +89,13 @@ def up(ipv6):
 
     conf("isp", [("i0", "10.10.0.1", 24), ("i1", "10.20.0.1", 24)],
          [dict(dst="0.0.0.0/0", gateway="10.20.0.2")]).close()
-    conf("srv", [("s0", "10.20.0.2", 24), ("lo", DNS_IP, 32)] + [("lo", a, 32) for a in SITES.values()],
+    conf("srv", [("s0", "10.20.0.2", 24), ("s1", "10.30.0.2", 24), ("lo", DNS_IP, 32), ("lo", TG_IP, 32)]
+         + [("lo", a, 32) for a in sorted(set(SITES.values()))],
          [dict(dst="0.0.0.0/0", gateway="10.20.0.1")]).close()
-    n = conf("phone", [("p0", "10.10.0.2", 24)])
+    n = conf("phone", [("p0", "10.10.0.2", 24), ("p1", "10.30.0.1", 24)])
+    # «Psiphon» ходит в интернет по своему каналу, мимо DPI оператора (таблица 101)
+    n.route("add", dst="0.0.0.0/0", gateway="10.30.0.2", table=101)
+    n.rule("add", uid_range=f"{TUNNEL_UID}:{TUNNEL_UID}", table=101, priority=99)
     # «Приложение ODA» исключено из VPN: его трафик идёт в сеть оператора (таблица 100)
     n.route("add", dst="0.0.0.0/0", gateway="10.10.0.1", table=100)
     n.rule("add", uid_range=f"{APP_UID}:{APP_UID}", table=100, priority=100)
@@ -179,6 +197,20 @@ def serve(cert, key):
         finally:
             c.close()
 
+    def telegram(c):
+        """«Сервер Telegram»: не TLS, первым говорит клиент; отвечает эхом каждого блока."""
+        try:
+            c.settimeout(20)
+            while True:
+                d = c.recv(4096)
+                if not d:
+                    return
+                c.sendall(d)
+        except Exception:
+            pass
+        finally:
+            c.close()
+
     def https():
         s = socket.socket()
         s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -186,7 +218,8 @@ def serve(cert, key):
         s.listen(256)
         while True:
             c, _ = s.accept()
-            threading.Thread(target=handle, args=(c,), daemon=True).start()
+            target = telegram if c.getsockname()[0] == TG_IP else handle
+            threading.Thread(target=target, args=(c,), daemon=True).start()
 
     for f in (dns_udp, dns_tcp, https):
         threading.Thread(target=f, daemon=True).start()
@@ -233,6 +266,88 @@ def dnsload(seconds, parallel):
     print(f"DNS-нагрузка: ответов {ok} из {ok + fail} за {seconds} с")
 
 
+# ---------- «Psiphon»: SOCKS5 (CONNECT) с выходом мимо оператора ----------
+
+def socks(port):
+    def pipe(a, b):
+        try:
+            while True:
+                d = a.recv(65536)
+                if not d:
+                    break
+                b.sendall(d)
+            b.shutdown(socket.SHUT_WR)
+        except OSError:
+            pass
+
+    def serve_one(c):
+        r = None
+        try:
+            c.settimeout(20)
+            h = c.recv(2)
+            c.recv(h[1])
+            c.sendall(b"\x05\x00")
+            q = c.recv(4)
+            if q[3] == 1:
+                host = socket.inet_ntoa(c.recv(4))
+            elif q[3] == 3:
+                host = c.recv(c.recv(1)[0]).decode()
+            else:
+                host = socket.inet_ntop(socket.AF_INET6, c.recv(16))
+            port_ = struct.unpack(">H", c.recv(2))[0]
+            r = socket.create_connection((host, port_), timeout=10)
+            r.settimeout(None)
+            c.settimeout(None)
+            c.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("0.0.0.0") + b"\x00\x00")
+            t = threading.Thread(target=pipe, args=(r, c), daemon=True)
+            t.start()
+            pipe(c, r)
+            t.join()
+        except Exception as e:
+            try:
+                c.sendall(b"\x05\x01\x00\x01\x00\x00\x00\x00\x00\x00")
+            except OSError:
+                pass
+            print("socks:", e, flush=True)
+        finally:
+            c.close()
+            if r:
+                r.close()
+
+    s = socket.socket()
+    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s.bind(("127.0.0.1", port))
+    s.listen(128)
+    print("socks: готов", flush=True)
+    while True:
+        c, _ = s.accept()
+        threading.Thread(target=serve_one, args=(c,), daemon=True).start()
+
+
+def tgcheck(seconds):
+    """Как приложение Telegram: TCP к серверу (через VPN), 64 байта «рукопожатия» без имени
+    сайта и сообщение; ответ должен вернуться. Печатает ok/fail и время."""
+    import os
+    t0 = time.time()
+    try:
+        s = socket.create_connection((TG_IP, 443), timeout=seconds)
+        s.settimeout(seconds)
+        hello = b"\x5a" + os.urandom(63) + os.urandom(120)  # первый байт — не 0x16 (не TLS) и не 0xef
+        s.sendall(hello)
+        got = b""
+        while len(got) < len(hello):
+            d = s.recv(4096)
+            if not d:
+                break
+            got += d
+        s.close()
+        ok = got == hello
+    except OSError:
+        ok = False
+    print(("ok" if ok else "fail") + " %.1f" % (time.time() - t0))
+    sys.exit(0 if ok else 1)
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "up":
@@ -245,5 +360,9 @@ if __name__ == "__main__":
         serve(sys.argv[2], sys.argv[3])
     elif cmd == "dnsload":
         dnsload(int(sys.argv[2]), int(sys.argv[3]))
+    elif cmd == "socks":
+        socks(int(sys.argv[2]))
+    elif cmd == "tgcheck":
+        tgcheck(float(sys.argv[2]))
     else:
         sys.exit(__doc__)

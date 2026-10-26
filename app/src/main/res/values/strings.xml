@@ -33,6 +33,9 @@
     <string name="bypass_custom_label">свои настройки</string>
     <string name="bypass_connected">Обход DPI (прямое соединение)</string>
     <string name="bypass_connected_partial">Обход DPI: только обычные сайты</string>
+    <string name="bypass_helper_ready">Telegram и то, что обход DPI не открывает, — через Psiphon</string>
+    <string name="bypass_helper_wait">Psiphon подключается — запасной путь для Telegram и сайтов, закрытых по IP</string>
+    <string name="bypass_helper_off">Запасной путь (Psiphon) не подключился: Telegram и сайты, закрытые по IP, могут не открываться</string>
     <string name="bypass_partial_hint">Соцсети в этой сети обход DPI не открывает (похоже, блокировка по IP). Для них: «Авто» (Psiphon/Tor), своя строка ByeDPI в «СПОСОБ» или свой сервер</string>
 
     <!-- Проверка сети напрямую -->

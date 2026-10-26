@@ -5,7 +5,8 @@ import java.util.function.Function;
 
 /**
  * Тест выбора стратегии обхода DPI без Android: scripts/test-bypass.sh (javac + java, без Gradle).
- * С аргументом --print-args печатает все встроенные строки ByeDPI — скрипт проверяет их ядром.
+ * С аргументом --print-args печатает все встроенные строки ByeDPI (по строке на запуск, аргументы
+ * через табуляцию: в списке доменов есть пробелы) — скрипт проверяет их ядром.
  */
 public class BypassSearchTest {
     static int fails = 0;
@@ -44,10 +45,19 @@ public class BypassSearchTest {
 
     public static void main(String[] a) {
         if (a.length > 0 && a[0].equals("--print-args")) {
-            for (BypassProfile p : BypassProfile.MILD) System.out.println(p.argsLine());
+            List<BypassProfile> all = new ArrayList<>(BypassProfile.MILD);
             for (BypassProfile st : BypassProfile.STRONG) {
-                System.out.println(BypassProfile.chain(BypassProfile.MILD.get(0), st).argsLine());
-                System.out.println(BypassProfile.chain(null, st).argsLine());
+                all.add(BypassProfile.chain(BypassProfile.MILD.get(0), st));
+                all.add(BypassProfile.chain(null, st));
+            }
+            // Как их запускает приложение: аргументы процесса и маршрут, без запасного пути и с ним
+            for (BypassProfile p : all) {
+                for (int helper : new int[]{0, HelperRelay.PORT}) {
+                    List<String> line = new ArrayList<>(BypassProfile.processArgs(1));
+                    line = line.subList(4, line.size());  // без -i/-p: их задаёт скрипт
+                    line.addAll(BypassProfile.route(p, helper).args);
+                    System.out.println(String.join("\t", line));
+                }
             }
             return;
         }
@@ -173,6 +183,89 @@ public class BypassSearchTest {
             s.report(d.claim, sc(3, 1, 3));
             BypassSearch.Decision d2 = s.decide();
             check(d2.claim == d.claim && d2.full, "recheck passed: claimed again");
+        }
+        // 12) Маршрут цепочки: список доменов → сразу сильная, остальное — мягкая, сбой — сильная
+        {
+            BypassProfile c = BypassProfile.chain(BypassProfile.MILD.get(0), BypassProfile.STRONG.get(1));
+            BypassProfile.Route r = BypassProfile.route(c, 0);
+            check(r.groups.equals(Arrays.asList("список → disoob SNI", "split SNI", "disoob SNI после сбоя")),
+                    "route groups: " + r.groups);
+            String line = String.join(" ", r.args);
+            check(line.startsWith("-T 4:0:0:1 -V 443 -H :instagram.com cdninstagram.com "), "route starts with hosts group: " + line);
+            check(line.endsWith(" -q 1+s -A n -s 1+s -A t,r,s -q 1+s"), "route tail: " + line);
+            check(!r.helper && !line.contains("-C"), "no helper groups without helper port");
+            // Запомненная прошлой версией (строкой аргументов) — тот же маршрут
+            BypassProfile old = BypassProfile.parse("split SNI → disoob SNI", "-T 4:0:0:1 -s 1+s -A t,r,s -q 1+s");
+            check(BypassProfile.route(old, 0).args.equals(r.args), "remembered 0.8.6 chain gets the same route");
+        }
+        // 13) С запасным путём: Telegram → Psiphon (не готов — напрямую), после сбоев — Psiphon
+        {
+            BypassProfile c = BypassProfile.chain(BypassProfile.MILD.get(0), BypassProfile.STRONG.get(1));
+            BypassProfile.Route r = BypassProfile.route(c, 10808);
+            check(r.helper && r.groups.equals(Arrays.asList("Telegram → Psiphon", "Telegram напрямую",
+                    "список → disoob SNI", "список → Psiphon", "split SNI", "disoob SNI после сбоя", "Psiphon после сбоя")),
+                    "helper route groups: " + r.groups);
+            List<String> x = r.args;
+            int j = x.indexOf("-j");
+            check(j == 2 && x.get(3).startsWith(":91.105.192.0/23 ") && x.get(3).contains("149.154.160.0/20")
+                    && x.get(4).equals("-C") && x.get(5).equals("socks5://127.0.0.1:10808"), "telegram group first");
+            check(x.get(6).equals("-A") && x.get(7).equals("c") && x.get(8).equals("-A") && x.get(9).equals("n"),
+                    "telegram direct fallback on connect error");
+            int psiphon = 0;
+            for (int i = 0; i + 1 < x.size(); i++) if (x.get(i).equals("-C")) psiphon++;
+            check(psiphon == 3, "3 groups via helper: " + psiphon);
+            // Группа «… → Psiphon» сразу за той, чей сбой она подхватывает (ByeDPI не перескакивает
+            // через группу без условия)
+            String line = String.join(" ", x);
+            check(line.contains("-q 1+s -A t,r,s,c -C socks5://127.0.0.1:10808 -A n -s 1+s -A t,r,s -q 1+s -A t,r,s,c -C socks5://127.0.0.1:10808"),
+                    "helper groups order: " + line);
+        }
+        // 14) Мягкая сама по себе: без запасного пути — как есть; с ним — Telegram и «после сбоя»
+        {
+            BypassProfile m = BypassProfile.MILD.get(0);
+            check(BypassProfile.route(m, 0).args.equals(Arrays.asList(m.args)), "mild as is");
+            BypassProfile.Route r = BypassProfile.route(m, 10808);
+            check(r.groups.equals(Arrays.asList("Telegram → Psiphon", "Telegram напрямую", "split SNI", "Psiphon после сбоя")),
+                    "mild helper groups: " + r.groups);
+            check(r.args.get(0).equals("-T"), "mild with helper gets timeout for fallback");
+        }
+        // 15) Своя строка — как есть, даже с запасным путём; цепочка поверх прямого соединения
+        {
+            BypassProfile c = BypassProfile.parse("свои", "-d 1 -s 1+s -A t -o 1");
+            check(BypassProfile.route(c, 10808).args.equals(Arrays.asList(c.args)), "custom as is");
+            check(BypassProfile.chainParts(BypassProfile.parse("x", "-T 4:0:0:1 -s 1+s -A t,r,s -q 1+s -A t -o 1")) == null,
+                    "custom with own groups is not our chain");
+            BypassProfile plain = BypassProfile.chain(null, BypassProfile.STRONG.get(0));
+            BypassProfile.Route r = BypassProfile.route(plain, 0);
+            check(r.groups.equals(Arrays.asList("список → oob SNI", "без обхода", "oob SNI после сбоя")), "plain chain route: " + r.groups);
+        }
+        // 16) Сводка вывода ByeDPI
+        {
+            ByeDpiStats st = new ByeDpiStats(BypassProfile.route(
+                    BypassProfile.chain(BypassProfile.MILD.get(0), BypassProfile.STRONG.get(1)), 0).groups);
+            String[] out = {
+                    "accept: fd=5", "new conn: fd=6, pair=5, addr=57.144.62.34:443",
+                    "desync TCP: group=0, round=1, fd=6", "host: i.instagram.com (127)", "split: pos=0-128 (1), m: disoob",
+                    "new conn: fd=8, pair=7, addr=157.240.200.36:443",
+                    "desync TCP: group=1, round=1, fd=8", "host: scontent-hel3-1.cdninstagram.com (127)",
+                    "recv: Connection timed out", "save: ip=157.240.200.36, id=2",
+                    "desync TCP: group=2, round=1, fd=9", "host: scontent-hel3-1.cdninstagram.com (127)",
+                    "recv: Connection timed out", "unreach ip: 157.240.200.36",
+                    "new conn: fd=10, pair=11, addr=149.154.167.51:443", "desync TCP: group=1, round=1, fd=10",
+                    "bytes: 5a1b (184)", "split cancel: pos=0--1, n=184", "unreach ip: 149.154.167.51",
+                    "send: 3 != 10 (fd=6)", "close: fd=6 (pair=5), recv: 100, rounds: 1"};
+            int errors = 0;
+            for (String l : out) if (!st.feed(l)) errors++;
+            check(errors == 3, "error lines passed to log: " + errors);
+            String sum = st.drain();
+            check(sum.startsWith("соединений 4: список → disoob SNI 1, split SNI 2, disoob SNI после сбоя 1"), "summary groups: " + sum);
+            check(sum.contains("после сбоя: scontent-hel3-1.cdninstagram.com 157.240.200.36 → disoob SNI после сбоя"), "summary fallback: " + sum);
+            check(sum.contains("не открылись ничем: ") && sum.contains("149.154.167.51 (Telegram)"), "summary unreach: " + sum);
+            check(st.drain().isEmpty(), "drained");
+            check("Meta".equals(ByeDpiStats.owner("157.240.1.1")) && ByeDpiStats.owner("8.8.8.8") == null, "owners");
+            st.feed("unreach ip: 149.154.167.51");
+            check(st.takeNewUnreachable(5).equals(Collections.singletonList("149.154.167.51")), "new unreachable once");
+            check(st.takeNewUnreachable(5).isEmpty(), "not reported twice");
         }
         // Все цепочки разные и содержат таймаут
         Set<String> args = new HashSet<>();

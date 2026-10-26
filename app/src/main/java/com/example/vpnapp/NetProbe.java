@@ -186,6 +186,64 @@ final class NetProbe {
         return new Health(dns, ok, direct);
     }
 
+    // Нейтральное имя для проверки адреса: не заблокировано, ТСПУ на него не реагирует
+    private static final String NEUTRAL_SNI = "ya.ru";
+    private static final int REACH_TIMEOUT_MS = 5_000;
+
+    /**
+     * Почему адрес не открылся ни одной стратегией (для журнала): напрямую, мимо ByeDPI.
+     * TCP не соединяется или сервер молчит даже на TLS с другим, незаблокированным именем —
+     * режут по адресу (обход DPI тут не поможет, нужен туннель). Отвечает на другое имя —
+     * режут по имени сайта или по содержимому: значит, стратегия не пробила фильтр.
+     */
+    static String whyUnreachable(String ip, int port) {
+        InetAddress addr;
+        try {
+            addr = InetAddress.getByName(ip);  // литерал адреса, без DNS
+        } catch (IOException e) {
+            return "адрес не разобран";
+        }
+        Socket raw = new Socket();
+        try {
+            try {
+                raw.connect(new InetSocketAddress(addr, port), REACH_TIMEOUT_MS);
+            } catch (IOException e) {
+                return "TCP напрямую не соединяется — похоже на блокировку по адресу";
+            }
+            raw.setSoTimeout(REACH_TIMEOUT_MS);
+            SSLSocket ssl = (SSLSocket) tlsFactory.createSocket(raw, NEUTRAL_SNI, port, true);
+            SSLParameters params = ssl.getSSLParameters();
+            params.setServerNames(Collections.singletonList(new SNIHostName(NEUTRAL_SNI)));
+            ssl.setSSLParameters(params);
+            try {
+                ssl.startHandshake();
+            } catch (java.net.SocketTimeoutException e) {
+                return "TCP есть, но сервер молчит и на другое имя — похоже на блокировку по адресу";
+            } catch (java.net.SocketException e) {
+                return "TCP есть, но соединение сбрасывается и с другим именем — похоже на блокировку по адресу";
+            } catch (IOException e) {
+                // Conscrypt (Android) заворачивает сброс и таймаут в SSLException — смотрим текст
+                String m = String.valueOf(e.getMessage()).toLowerCase(java.util.Locale.ROOT);
+                if (m.contains("timed out") || m.contains("timeout")) {
+                    return "TCP есть, но сервер молчит и на другое имя — похоже на блокировку по адресу";
+                }
+                if (m.contains("reset")) {
+                    return "TCP есть, но соединение сбрасывается и с другим именем — похоже на блокировку по адресу";
+                }
+                // сертификат не тот, сервер закрыл, предупреждение TLS — главное, что ответил
+            }
+            return "на другое имя сервер отвечает — режут по имени сайта или виду трафика (DPI), стратегия не пробила";
+        } catch (IOException | RuntimeException e) {
+            return "проверка не удалась: " + e.getClass().getSimpleName();
+        } finally {
+            try {
+                raw.close();
+            } catch (IOException ignored) {
+                // уже закрыт
+            }
+        }
+    }
+
     /** Все сайты одновременно: на проверку уходит один таймаут, а не сумма. 0 — напрямую. */
     private static BypassSearch.Score probe(int socksPort) {
         List<Site> all = new ArrayList<>();

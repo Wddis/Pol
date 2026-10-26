@@ -4,13 +4,22 @@
 # с DPI → «интернет» (DNS 1.1.1.1 и HTTPS-сайты). Конфиг hev и аргументы ByeDPI берутся из кода
 # приложения (Tun2SocksConfig, BypassProfile), проверка стратегии — настоящий NetProbe.
 #
-# Что проверяется (см. README, «Ошибка 0.8.5»):
+# Что проверяется (см. README, «Ошибка 0.8.5» и «Приложения соцсетей и Telegram»):
+#  Режим «Обход DPI» (без запасного пути):
 #  1) сайты через VPN: DNS телефона идёт через SOCKS-UDP ByeDPI, TCP — через SOCKS;
 #  2) проверка ODA (NetProbe) мимо VPN: DNS через SOCKS-UDP, обычные сайты, сторож;
 #  3) нагрузка как у телефона: поток DNS-запросов (каждый — новая UDP-ассоциация) и сайт каждые 5 с:
 #     сайт должен открываться всегда, у ByeDPI не должно быть «pool is full»;
-#  4) контроль: тот же поток со старым конфигом (0.8.5) должен «ронять» интернет — значит, тест
-#     действительно ловит ошибку.
+#  4) соцсети как у приложения (i.instagram.com, не только www): сразу через сильную стратегию
+#     по списку доменов, без 4-секундного тайм-аута мягкой;
+#  5) закрытое по адресу (CDN соцсети, сервер Telegram) обход DPI не открывает — и проверка
+#     «почему» это видит; сводка ByeDPI называет такие адреса по имени;
+#  Режим «Авто» (запасной путь HelperRelay → «Psiphon»):
+#  6) путь закрыт (Psiphon не готов) — обычные сайты и соцсети работают как без него;
+#  7) путь открыт — Telegram и CDN, закрытый по адресу, открываются через «Psiphon», остальное —
+#     напрямую;
+#  Контроль — старый запуск ByeDPI (0.8.5–0.8.6):
+#  8) поток DNS «роняет» интернет (ошибка 0.8.5), а соцсеть открывается только после тайм-аута 4 с.
 # Нужны: gcc, make, JDK, python3 + pyroute2, iptables, openssl, curl, util-linux (nsenter, unshare).
 set -euo pipefail
 
@@ -24,9 +33,19 @@ LAB="$ROOT/scripts/tunlab"
 TMP="$(mktemp -d)"
 chmod 755 "$TMP"
 PORT=10809
+HELPER_PORT=10808   # HelperRelay (запасной путь), как в приложении
+PSIPHON_PORT=1081   # «Psiphon» стенда
 APP_UID=2000
+TUNNEL_UID=2001
 LOAD_SECONDS=40
 LOAD_PARALLEL=15
+# Сильная стратегия для стенда: его DPI (iptables string) ищет имя сайта целиком в одном пакете,
+# его бьёт «multidisorder» (имя режется на куски). Настоящий ТСПУ бьёт другая — её выбирает
+# перебор на телефоне; стенд проверяет устройство маршрута, а не саму стратегию
+STRONG="${LAB_STRONG:-multidisorder}"
+CDN_HOST=scontent-hel3-1.cdninstagram.com
+CDN_IP=157.240.200.36
+TG_IP=149.154.167.51
 
 PIDS=()
 stop_lab() {
@@ -49,6 +68,8 @@ PHONE() {
 }
 # Программа «внутри ODA»: uid приложения, мимо VPN
 APP() { NS phone setpriv --reuid "$APP_UID" --regid "$APP_UID" --clear-groups "$@"; }
+# «Psiphon»: свой uid, ходит мимо оператора (туннель за границу)
+TUNNEL() { NS phone setpriv --reuid "$TUNNEL_UID" --regid "$TUNNEL_UID" --clear-groups "$@"; }
 
 # ---------- Сборка ----------
 echo "Сборка ByeDPI, hev-socks5-tunnel и проверки ODA…"
@@ -69,10 +90,13 @@ echo 'package com.example.vpnapp; final class DiagLog { static void add(String s
     > "$TMP/stub/com/example/vpnapp/DiagLog.java"
 javac -nowarn -encoding UTF-8 -d "$TMP/classes" "$TMP/stub/androidx/annotation/Nullable.java" \
     "$TMP/stub/com/example/vpnapp/DiagLog.java" "$SRC/NetProbe.java" "$SRC/BypassSearch.java" \
-    "$SRC/BypassProfile.java" "$SRC/Tun2SocksConfig.java" "$ROOT/app/src/test/java/com/example/vpnapp/TunLab.java"
+    "$SRC/BypassProfile.java" "$SRC/Tun2SocksConfig.java" "$SRC/ByeDpiStats.java" "$SRC/HelperRelay.java" \
+    "$ROOT/app/src/test/java/com/example/vpnapp/TunLab.java"
 chmod -R a+rX "$TMP"
 JAVA="$(command -v java)"
-TUNLAB() { "$JAVA" -cp "$TMP/classes" com.example.vpnapp.TunLab "$@"; }
+# Вывод Java — в UTF-8 (по умолчанию он в кодировке системы, и русский текст станет «???»)
+JUTF=(-Dstdout.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -Dfile.encoding=UTF-8)
+TUNLAB() { "$JAVA" "${JUTF[@]}" -cp "$TMP/classes" com.example.vpnapp.TunLab "$@"; }
 
 # Без IPv6 в ядре (некоторые контейнеры) — прослойка: сокеты AF_INET6 у hev работают поверх IPv4
 IPV6=1
@@ -99,16 +123,22 @@ echo "nameserver 1.1.1.1" > "$TMP/resolv.conf"
 echo "hosts: files dns" > "$TMP/nsswitch.conf"
 
 TUNLAB config "$PORT" > "$TMP/hev-new.yml"
-read -r -a BYEDPI_NEW <<< "$(TUNLAB byedpi "$PORT")"
-# Старый конфиг (0.8.5): без тайм-аута UDP в hev и без -c у ByeDPI
+# Аргументы — по одному в строке: в списке доменов и сетей есть пробелы
+mapfile -t BYEDPI_NEW < <(TUNLAB byedpi "$PORT" 0 "$STRONG")
+mapfile -t BYEDPI_HELPER < <(TUNLAB byedpi "$PORT" "$HELPER_PORT" "$STRONG")
+# Старый запуск (0.8.5–0.8.6): без -c, без списка доменов и групп; hev без тайм-аута UDP
+mapfile -t BYEDPI_OLD < <(TUNLAB old "$PORT" "$STRONG")
 grep -v 'udp-read-write-timeout' "$TMP/hev-new.yml" > "$TMP/hev-old.yml"
-BYEDPI_OLD=()
-skip=0
-for a in "${BYEDPI_NEW[@]}"; do
-    if [ "$skip" = 1 ]; then skip=0; continue; fi
-    if [ "$a" = "-c" ]; then skip=1; continue; fi
-    BYEDPI_OLD+=("$a")
-done
+short() {  # аргументы для вывода: длинные списки сетей и доменов — одним словом
+    local a out=""
+    for a in "$@"; do
+        case "$a" in
+            ":"*" "*) [ "${a#*/}" != "$a" ] && a=":<сети Telegram>" || a=":<список доменов>" ;;
+        esac
+        out="$out $a"
+    done
+    echo "${out# }"
+}
 
 # ---------- Стенд ----------
 start_lab() {  # $1 — конфиг hev, дальше — аргументы ByeDPI
@@ -123,6 +153,11 @@ start_lab() {  # $1 — конфиг hev, дальше — аргументы By
         NS isp iptables -A FORWARD -p tcp --dport 443 -m string --string "$h" --algo bm -j DROP 2>/dev/null || dpi=0
     done
     [ "$dpi" = 1 ] || echo "  (iptables string недоступен: стенд без DPI)"
+    # Блокировка по адресу (CDN соцсети, сервер Telegram): TCP соединяется, пакеты с данными
+    # не проходят — как на телефоне («recv: Connection timed out» у ByeDPI)
+    for ip in "$CDN_IP" "$TG_IP"; do
+        NS isp iptables -A FORWARD -p tcp -d "$ip" --dport 443 -m length --length 100:65535 -j DROP
+    done
     NS srv python3 -u "$LAB/lab.py" srv "$TMP/site.pem" "$TMP/site.key" > "$TMP/srv.log" 2>&1 &
     PIDS+=($!)
     : > "$TMP/byedpi.log"
@@ -147,6 +182,32 @@ start_lab() {  # $1 — конфиг hev, дальше — аргументы By
 site() {  # открыть сайт «браузером телефона» через VPN; печатает код ответа
     PHONE curl -sS --noproxy '*' --cacert "$TMP/ca.pem" -o /dev/null -m 10 -w "%{http_code}" \
         "https://$1$2" 2>/dev/null || true
+}
+
+site_t() {  # то же, с временем: «200 0.41»; $3 — тайм-аут, с
+    PHONE curl -sS --noproxy '*' --cacert "$TMP/ca.pem" -o /dev/null -m "${3:-15}" \
+        -w "%{http_code} %{time_total}" "https://$1$2" 2>/dev/null || true
+}
+
+fast() { awk -v t="$1" -v lim="$2" 'BEGIN { exit !(t + 0 < lim + 0) }'; }  # $1 < $2 (секунды)
+
+start_helper() {  # «Psiphon» и HelperRelay; $1 — путь открыт (1) или закрыт (0)
+    TUNNEL python3 -u "$LAB/lab.py" socks "$PSIPHON_PORT" > "$TMP/psiphon.log" 2>&1 &
+    PIDS+=($!)
+    local up=0
+    [ "$1" = 1 ] && up="$PSIPHON_PORT"
+    APP "$JAVA" -cp "$TMP/classes" com.example.vpnapp.TunLab relay "$HELPER_PORT" "$up" > "$TMP/relay.log" 2>&1 &
+    PIDS+=($!)
+    for _ in $(seq 1 50); do
+        grep -q "socks: готов" "$TMP/psiphon.log" 2>/dev/null && grep -q "relay: готов" "$TMP/relay.log" 2>/dev/null && break
+        sleep 0.1
+    done
+}
+
+tg() { PHONE python3 "$LAB/lab.py" tgcheck "${1:-10}" 2>/dev/null || true; }
+
+stats() {  # сводка ByeDpiStats по выводу ByeDPI; $1 — порт запасного пути (0 — без него)
+    TUNLAB stats "$TMP/byedpi.log" "$1" "$STRONG"
 }
 
 pool_full() { grep -c 'pool is full' "$TMP/byedpi.log" || true; }
@@ -174,7 +235,7 @@ check() {  # $1 — условие выполнено (0/1), $2 — текст
 }
 
 echo
-echo "=== Новый конфиг: ByeDPI ${BYEDPI_NEW[*]}"
+echo "=== Режим «Обход DPI»: ByeDPI $(short "${BYEDPI_NEW[@]}")"
 echo "    hev: $(grep udp-read-write-timeout "$TMP/hev-new.yml" | xargs)"
 start_lab "$TMP/hev-new.yml" "${BYEDPI_NEW[@]}"
 
@@ -189,7 +250,7 @@ done
 check "$ok" "обычные сайты через VPN открываются"
 
 echo "2) Проверка ODA мимо VPN (NetProbe):"
-if APP "$JAVA" -Dstdout.encoding=UTF-8 -Dsun.stdout.encoding=UTF-8 -cp "$TMP/classes" com.example.vpnapp.TunLab probe "$PORT" "$TMP/ca.pem"; then probe_ok=1; else probe_ok=0; fi
+if APP "$JAVA" "${JUTF[@]}" -cp "$TMP/classes" com.example.vpnapp.TunLab probe "$PORT" "$TMP/ca.pem"; then probe_ok=1; else probe_ok=0; fi
 check "$probe_ok" "NetProbe: DNS через SOCKS-UDP, обычные сайты, сторож"
 
 echo "3) Нагрузка как у телефона (DNS $LOAD_PARALLEL потоков, ${LOAD_SECONDS} с):"
@@ -197,10 +258,102 @@ load_test
 check "$([ "$LOAD_GOOD" = "$LOAD_TOTAL" ] && echo 1 || echo 0)" "сайт открывался всё время: $LOAD_GOOD из $LOAD_TOTAL"
 check "$([ "$(pool_full)" = 0 ] && echo 1 || echo 0)" "пул ByeDPI не переполнялся"
 
+echo "4) Соцсети как у приложения (список доменов → сразу «$STRONG»):"
+ok=1
+for h in www.instagram.com i.instagram.com www.facebook.com; do
+    r=$(site_t "$h" / 15)
+    echo "    $h: ${r:-нет}"
+    set -- $r
+    { [ "${1:-}" = 200 ] && fast "${2:-99}" 3; } || ok=0
+done
+check "$ok" "соцсети открываются сразу, без тайм-аута 4 с"
+
+echo "5) Закрытое по адресу (CDN соцсети, сервер Telegram) — обход DPI не берёт:"
+r=$(site_t "$CDN_HOST" / 15)
+echo "    $CDN_HOST: ${r:-нет}"
+t=$(tg 10)
+echo "    Telegram $TG_IP: $t"
+set -- $r
+check "$([ "${1:-}" != 200 ] && [ "${t%% *}" = fail ] && echo 1 || echo 0)" "без запасного пути не открываются (как на телефоне)"
+w_cdn=$(APP "$JAVA" "${JUTF[@]}" -cp "$TMP/classes" com.example.vpnapp.TunLab why "$CDN_IP")
+w_ig=$(APP "$JAVA" "${JUTF[@]}" -cp "$TMP/classes" com.example.vpnapp.TunLab why 57.144.62.34)
+echo "    почему $CDN_IP: $w_cdn"
+echo "    почему 57.144.62.34: $w_ig"
+check "$(echo "$w_cdn" | grep -q 'по адресу' && echo "$w_ig" | grep -q 'по имени' && echo 1 || echo 0)" \
+    "проверка «почему» отличает блокировку по адресу от DPI"
+st=$(stats 0)
+echo "$st" | sed 's/^/    /'
+check "$(echo "$st" | grep -q "список → $STRONG" && echo "$st" | grep -q "не открылся: $CDN_HOST $CDN_IP" \
+    && echo "$st" | grep -q "не открылся: $TG_IP (Telegram)" && echo 1 || echo 0)" \
+    "сводка ByeDPI: соцсети шли по списку, недоступные адреса названы по имени и владельцу"
+
 echo
-echo "=== Контроль — старый конфиг 0.8.5: ByeDPI ${BYEDPI_OLD[*]}, hev без тайм-аута UDP"
+echo "=== Режим «Авто»: ByeDPI $(short "${BYEDPI_HELPER[@]}")"
+start_lab "$TMP/hev-new.yml" "${BYEDPI_HELPER[@]}"
+start_helper 0
+echo "6) Запасной путь закрыт (Psiphon ещё не готов):"
+ok=1
+for s in "ya.ru / 200" "www.google.com /generate_204 204" "i.instagram.com / 200"; do
+    set -- $s
+    code=$(site "$1" "$2")
+    echo "    $1: ${code:-нет}"
+    [ "$code" = "$3" ] || ok=0
+done
+t=$(tg 10)
+echo "    Telegram: $t"
+check "$ok" "обычные сайты и соцсети работают, пока путь закрыт"
+check "$([ "${t%% *}" = fail ] && echo 1 || echo 0)" "Telegram без Psiphon не открывается (прямо — закрыт по адресу)"
+
+start_lab "$TMP/hev-new.yml" "${BYEDPI_HELPER[@]}"
+start_helper 1
+echo "7) Запасной путь открыт (Psiphon готов):"
+t=$(tg 10)
+echo "    Telegram: $t"
+r=$(site_t "$CDN_HOST" / 20)
+echo "    $CDN_HOST: ${r:-нет}"
+r2=$(site_t "$CDN_HOST" / 20)
+echo "    $CDN_HOST ещё раз: ${r2:-нет}"
+set -- $r
+cdn1="${1:-}"
+set -- $r2
+cdn2="${1:-} ${2:-99}"
+ok=1
+for s in "ya.ru / 200" "vk.com / 200" "i.instagram.com / 200"; do
+    set -- $s
+    code=$(site "$1" "$2")
+    echo "    $1: ${code:-нет}"
+    [ "$code" = "$3" ] || ok=0
+done
+check "$([ "${t%% *}" = ok ] && echo 1 || echo 0)" "Telegram открывается через запасной путь"
+check "$([ "$cdn1" = 200 ] && [ "${cdn2%% *}" = 200 ] && fast "${cdn2##* }" 3 && echo 1 || echo 0)" \
+    "CDN, закрытый по адресу, открывается через запасной путь (второй раз — сразу, адрес запомнен)"
+check "$ok" "обычные сайты и соцсети идут напрямую"
+if APP "$JAVA" "${JUTF[@]}" -cp "$TMP/classes" com.example.vpnapp.TunLab probe "$PORT" "$TMP/ca.pem" > "$TMP/probe.txt"; then probe_ok=1; else probe_ok=0; fi
+sed 's/^/  /' "$TMP/probe.txt"
+check "$probe_ok" "NetProbe с запасным путём: DNS, обычные сайты, сторож"
+st=$(stats "$HELPER_PORT")
+echo "$st" | sed 's/^/    /'
+check "$(echo "$st" | grep -q 'Telegram → Psiphon' && echo "$st" | grep -q 'список → Psiphon' && echo 1 || echo 0)" \
+    "сводка ByeDPI: Telegram и CDN шли через Psiphon"
+check "$(grep -q 'socks:' "$TMP/psiphon.log" && ! grep -q 'socks: [^г]' "$TMP/psiphon.log" && echo 1 || echo 0)" \
+    "«Psiphon» без ошибок"
+
+echo
+echo "=== Контроль — старый запуск 0.8.5–0.8.6: ByeDPI $(short "${BYEDPI_OLD[@]}"), hev без тайм-аута UDP"
 start_lab "$TMP/hev-old.yml" "${BYEDPI_OLD[@]}"
-echo "4) Та же нагрузка:"
+echo "8) Соцсеть как у приложения:"
+r=$(site_t i.instagram.com / 15)
+echo "    i.instagram.com: ${r:-нет}"
+set -- $r
+# Без списка сначала идёт мягкая стратегия: ТСПУ (здесь — DPI стенда) режет, ByeDPI ждёт 4 с и только
+# потом пробует сильную. На стенде повтор multidisorder после сбоя бывает и неудачным: ядро склеивает
+# перепосылку частей в один пакет с полным именем — это особенность DPI стенда, а не ошибка
+if [ "${1:-}" != 200 ] || ! fast "${2:-0}" 3.5; then
+    echo "  ✓ без списка доменов соцсеть сразу не открывается (тайм-аут мягкой стратегии)"
+else
+    echo "  ! без списка соцсеть открылась сразу — контроль не воспроизвёлся (не провал)"
+fi
+echo "   Та же нагрузка DNS:"
 load_test
 if [ "$LOAD_GOOD" -lt "$LOAD_TOTAL" ] && [ "$(pool_full)" != 0 ]; then
     echo "  ✓ со старым конфигом интернет пропадает — тест ловит ошибку 0.8.5"

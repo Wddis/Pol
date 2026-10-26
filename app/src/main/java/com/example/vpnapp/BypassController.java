@@ -7,15 +7,16 @@ import android.util.Log;
 
 import androidx.annotation.Nullable;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.net.InetSocketAddress;
 import java.net.Socket;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
 
 /**
@@ -57,6 +58,7 @@ final class BypassController {
     // Поля ниже меняются только в потоке handler
     @Nullable private Listener listener;
     @Nullable private BypassProfile profile;
+    @Nullable private volatile ByeDpiStats stats;
     private int session;
     @Nullable private volatile Process process;
     private volatile int liveSession;
@@ -87,8 +89,12 @@ final class BypassController {
         return profile;
     }
 
-    /** Запуск ByeDPI с указанной стратегией. */
-    void start(BypassProfile p, Listener l) {
+    /**
+     * Запуск ByeDPI с указанной стратегией.
+     *
+     * @param helper порт запасного пути (HelperRelay → Psiphon) или 0 — см. BypassProfile.route
+     */
+    void start(BypassProfile p, int helper, Listener l) {
         stop();
         listener = l;
         profile = p;
@@ -98,9 +104,12 @@ final class BypassController {
             output.setLength(0);
             fresh.setLength(0);
         }
+        BypassProfile.Route route = BypassProfile.route(p, helper);
+        stats = new ByeDpiStats(route.groups);
         File exe = new File(context.getApplicationInfo().nativeLibraryDir, LIB);
-        DiagLog.add("Обход DPI: запуск «" + p.label + "» (порт " + port + "): " + p.argsLine());
-        new Thread(() -> run(s, exe, p), "oda-byedpi-" + slot).start();
+        DiagLog.add("Обход DPI: запуск «" + p.label + "» (порт " + port + "): " + p.argsLine()
+                + (route.groups.size() > 1 ? "; группы: " + route.describe() : ""));
+        new Thread(() -> run(s, exe, route.args), "oda-byedpi-" + slot).start();
     }
 
     /** Остановка: процесс ByeDPI завершается. */
@@ -121,7 +130,13 @@ final class BypassController {
         }
     }
 
-    /** Вывод ByeDPI с прошлого вызова (ошибки ядра, например «pool is full»). */
+    /** Сводка по соединениям (ByeDpiStats) или null, если процесс не запущен. */
+    @Nullable
+    ByeDpiStats stats() {
+        return stats;
+    }
+
+    /** Ошибки ядра ByeDPI с прошлого вызова (например «pool is full»); отладочный вывод сюда не идёт. */
     String drainOutput() {
         synchronized (output) {
             String s = fresh.toString();
@@ -130,7 +145,7 @@ final class BypassController {
         }
     }
 
-    private void run(int s, File exe, BypassProfile p) {
+    private void run(int s, File exe, List<String> strategy) {
         Process proc;
         synchronized (LAUNCH_LOCK) {
             if (s != liveSession) return;
@@ -143,7 +158,7 @@ final class BypassController {
                 List<String> cmd = new ArrayList<>();
                 cmd.add(exe.getAbsolutePath());
                 cmd.addAll(BypassProfile.processArgs(port));
-                cmd.addAll(Arrays.asList(p.args));
+                cmd.addAll(strategy);
                 proc = new ProcessBuilder(cmd)
                         .directory(dir)
                         .redirectErrorStream(true)
@@ -171,25 +186,27 @@ final class BypassController {
             handler.post(() -> fail(s, "порт не открылся"));
             return;
         }
-        handler.post(() -> onListening(s, p));
+        handler.post(() -> onListening(s));
     }
 
     /**
-     * Читает вывод процесса до его завершения (иначе он встанет на заполненном канале)
-     * и сообщает, если процесс завершился сам — в том числе уже после подключения.
+     * Читает вывод процесса до его завершения (иначе он встанет на заполненном канале — ByeDPI
+     * пишет подробно, -x 1) и сообщает, если процесс завершился сам — в том числе уже после
+     * подключения. Отладочные строки разбирает ByeDpiStats, ошибки идут в журнал.
      */
     private void readOutput(int s, Process proc) {
-        byte[] buf = new byte[1024];
-        try (InputStream in = proc.getInputStream()) {
-            int n;
-            while ((n = in.read(buf)) > 0) {
-                String chunk = new String(buf, 0, n, StandardCharsets.UTF_8);
+        ByeDpiStats st = stats;
+        try (BufferedReader in = new BufferedReader(
+                new InputStreamReader(proc.getInputStream(), StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = in.readLine()) != null) {
+                if (st != null && st.feed(line)) continue;
                 synchronized (output) {
-                    output.append(chunk);
+                    output.append(line).append('\n');
                     if (output.length() > LOG_TAIL_CHARS) {
                         output.delete(0, output.length() - LOG_TAIL_CHARS);
                     }
-                    fresh.append(chunk);
+                    fresh.append(line).append('\n');
                     if (fresh.length() > LOG_TAIL_CHARS) {
                         fresh.delete(0, fresh.length() - LOG_TAIL_CHARS);
                     }
@@ -225,9 +242,10 @@ final class BypassController {
         return false;
     }
 
-    private void onListening(int s, BypassProfile p) {
+    private void onListening(int s) {
         Listener l = listener;
-        if (s != session || l == null) return;
+        BypassProfile p = profile;
+        if (s != session || l == null || p == null) return;
         l.onBypassListening(slot, port, p);
     }
 
