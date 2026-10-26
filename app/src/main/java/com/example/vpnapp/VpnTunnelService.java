@@ -95,6 +95,7 @@ public class VpnTunnelService extends VpnService
     private String networkId = "UNKNOWN";
     @Nullable private String netCountry;
     @Nullable private NetProbe.Result probe;
+    private boolean tunDirectDns;  // текущий tun поднят с реальным DNS (для обхода DPI)
 
     @Override
     public void onCreate() {
@@ -186,7 +187,7 @@ public class VpnTunnelService extends VpnService
                 + ", сеть " + networkId.split("-")[0] + " " + netCountry);
         // Интерфейс поднимаем сразу: пока туннель не готов, трафик блокируется, а не уходит мимо
         try {
-            tun = establishTun();
+            tun = establishTun(false);
         } catch (IOException | RuntimeException e) {
             Log.e(TAG, "establish", e);
             fail(R.string.error_tun);
@@ -655,10 +656,23 @@ public class VpnTunnelService extends VpnService
     // ---------- Туннель и проверка IP ----------
 
     private boolean startTunnel() {
+        // Обходу DPI нужен реальный DNS без mapdns: при необходимости переустанавливаем tun
+        boolean direct = StatusBus.ENGINE_BYPASS.equals(engine);
+        if (tun == null || direct != tunDirectDns) {
+            stopTunnel();
+            try {
+                if (tun != null) tun.close();
+                tun = establishTun(direct);
+            } catch (IOException | RuntimeException e) {
+                Log.e(TAG, "re-establish tun", e);
+                fail(R.string.error_tun);
+                return false;
+            }
+        }
         ParcelFileDescriptor t = tun;
         boolean started;
         try {
-            started = t != null && Tun2Socks.start(this, t, socksPort);
+            started = t != null && Tun2Socks.start(this, t, socksPort, direct);
         } catch (LinkageError e) {
             // нативная библиотека не загрузилась
             Log.e(TAG, "tun2socks", e);
@@ -879,17 +893,25 @@ public class VpnTunnelService extends VpnService
         return "UNKNOWN";
     }
 
-    private ParcelFileDescriptor establishTun() throws IOException {
+    private ParcelFileDescriptor establishTun(boolean directDns) throws IOException {
         Builder b = new Builder()
                 .setSession(getString(R.string.app_name))
                 .setMtu(Tun2Socks.MTU)
                 .addAddress(Tun2Socks.TUN_IPV4, 32)
                 .addRoute("0.0.0.0", 0)
-                .addDnsServer(Tun2Socks.FAKE_DNS)
                 // IPv6 тоже в туннель, чтобы он не утекал мимо
                 .addAddress(Tun2Socks.TUN_IPV6, 128)
                 .addRoute("::", 0)
                 .setConfigureIntent(VpnNotification.openApp(this));
+        if (directDns) {
+            // Обход DPI: реальный резолвер, запросы идут через SOCKS напрямую
+            b.addDnsServer(Tun2Socks.DIRECT_DNS);
+            b.addDnsServer(Tun2Socks.DIRECT_DNS6);
+        } else {
+            // Tor/Psiphon: фиктивный DNS, перехватывает mapdns
+            b.addDnsServer(Tun2Socks.FAKE_DNS);
+        }
+        tunDirectDns = directDns;
         try {
             // Само приложение (Tor, мосты и Psiphon) ходит в сеть напрямую
             b.addDisallowedApplication(getPackageName());
