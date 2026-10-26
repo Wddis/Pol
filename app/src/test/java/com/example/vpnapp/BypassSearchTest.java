@@ -267,6 +267,28 @@ public class BypassSearchTest {
             check(st.takeNewUnreachable(5).equals(Collections.singletonList("149.154.167.51")), "new unreachable once");
             check(st.takeNewUnreachable(5).isEmpty(), "not reported twice");
         }
+        // 17) Запасной путь: адрес ::ffff:a.b.c.d от ByeDPI (IPv6-сокеты на Android) уходит в Psiphon как IPv4
+        try (java.net.ServerSocket ss = new java.net.ServerSocket(0, 1, java.net.InetAddress.getLoopbackAddress())) {
+            byte[][] got = new byte[2][];
+            Thread t = new Thread(() -> {
+                try (java.net.Socket c = new java.net.Socket(java.net.InetAddress.getLoopbackAddress(), ss.getLocalPort())) {
+                    c.getOutputStream().write(new byte[]{5, 1, 0});
+                    got[1] = c.getInputStream().readNBytes(2);
+                    byte[] req = {5, 1, 0, 4, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, (byte) 0xff, (byte) 0xff,
+                            (byte) 149, (byte) 154, (byte) 167, 51, 1, (byte) 187};
+                    c.getOutputStream().write(req);
+                    Thread.sleep(200);
+                } catch (Exception e) { got[1] = null; }
+            });
+            t.start();
+            try (java.net.Socket srv = ss.accept()) { got[0] = HelperRelay.acceptSocks(srv); }
+            t.join();
+            check(got[1] != null && got[1][0] == 5 && got[1][1] == 0, "relay answers SOCKS greeting");
+            check(Arrays.equals(got[0], new byte[]{5, 1, 0, 1, (byte) 149, (byte) 154, (byte) 167, 51, 1, (byte) 187}),
+                    "mapped IPv6 → IPv4: " + Arrays.toString(got[0]));
+        } catch (Exception e) {
+            check(false, "relay socks test: " + e);
+        }
         // Все цепочки разные и содержат таймаут
         Set<String> args = new HashSet<>();
         for (BypassProfile st : BypassProfile.STRONG) args.add(BypassProfile.chain(BypassProfile.MILD.get(0), st).argsLine());
