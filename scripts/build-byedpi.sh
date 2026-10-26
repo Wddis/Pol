@@ -25,14 +25,11 @@ if [ ! -f "$SRC/main.c" ]; then
 fi
 CLANG="$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin"
 
-# Все .c ядра, кроме службы Windows
-SRCS=""
-for f in "$SRC"/*.c; do
-    case "$(basename "$f")" in
-        win_service.c) ;;
-        *) SRCS="$SRCS $f" ;;
-    esac
-done
+# Копия подмодуля с правками ODA (scripts/byedpi.patch: --udp-drop, ::ffff: в списке сетей)
+WORK="$(mktemp -d)"
+trap 'rm -rf "$WORK"' EXIT
+SRCS="$("$ROOT/scripts/byedpi-src.sh" "$WORK")"
+SRC="$WORK"
 
 build() {
     local abi="$1" cc="$2"

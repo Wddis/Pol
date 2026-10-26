@@ -44,6 +44,24 @@ public class BypassSearchTest {
     static boolean has(BypassProfile p, String strong) { return p.label.endsWith("→ " + strong); }
 
     public static void main(String[] a) {
+        if (a.length > 1 && a[0].equals("--debug-formats")) {
+            // Каждый отладочный формат ByeDPI (LOG_S/LOG_L) — с подставленными значениями — отладка
+            ByeDpiStats st = new ByeDpiStats(Collections.singletonList("x"));
+            int n = 0;
+            try {
+                for (String f : java.nio.file.Files.readAllLines(java.nio.file.Paths.get(a[1]))) {
+                    String line = f.replace("\\n", "").replace("%.*s", "x").replace("%s", "1.2.3.4")
+                            .replaceAll("%[a-z]*[dux]", "5");
+                    n++;
+                    check(st.feed(line), "debug line not filtered: " + line);
+                }
+            } catch (java.io.IOException e) {
+                check(false, "formats: " + e);
+            }
+            check(n > 20, "debug formats read: " + n);
+            System.out.println(fails == 0 ? "Отладочные строки ByeDPI (" + n + "): OK" : "FAILURES: " + fails);
+            System.exit(fails == 0 ? 0 : 1);
+        }
         if (a.length > 0 && a[0].equals("--print-args")) {
             List<BypassProfile> all = new ArrayList<>(BypassProfile.MILD);
             for (BypassProfile st : BypassProfile.STRONG) {
@@ -73,7 +91,7 @@ public class BypassSearchTest {
             if (VERBOSE) log.forEach(System.out::println);
             check(d.claim != null && d.full && d.claim.label.equals("split SNI → oob SNI"), "user net: claims chain split→oob, full");
             check(d.claim.argsLine().equals("-T 4:0:0:1 -s 1+s -A t,r,s -o 1+s"), "chain args: " + d.claim.argsLine());
-            check((int) r[1] == 5, "user net: 5 batches (first, 3 chain batches, re-check)");
+            check((int) r[1] == 6, "user net: 6 batches (first, 4 chain batches, re-check)");
         }
         // 2) Стратегия пробивает, но ломает обычные (как oob в 0.8.4) — не берём; берём BASIC
         {
@@ -188,10 +206,11 @@ public class BypassSearchTest {
         {
             BypassProfile c = BypassProfile.chain(BypassProfile.MILD.get(0), BypassProfile.STRONG.get(1));
             BypassProfile.Route r = BypassProfile.route(c, 0);
-            check(r.groups.equals(Arrays.asList("список → disoob SNI", "split SNI", "disoob SNI после сбоя")),
+            check(r.groups.equals(Arrays.asList("QUIC Meta → отброшен", "список → disoob SNI", "split SNI", "disoob SNI после сбоя")),
                     "route groups: " + r.groups);
             String line = String.join(" ", r.args);
-            check(line.startsWith("-T 4:0:0:1 -V 443 -H :instagram.com cdninstagram.com "), "route starts with hosts group: " + line);
+            check(line.startsWith("-T 4:0:0:1 -K u -V 443 -j :31.13.24.0/21 ") && line.contains(" 2a03:2880::/32 --udp-drop -A n -V 443 -H :instagram.com cdninstagram.com "),
+                    "route starts with QUIC drop, then hosts group: " + line);
             check(line.endsWith(" -q 1+s -A n -s 1+s -A t,r,s -q 1+s"), "route tail: " + line);
             check(!r.helper && !line.contains("-C"), "no helper groups without helper port");
             // Запомненная прошлой версией (строкой аргументов) — тот же маршрут
@@ -202,14 +221,14 @@ public class BypassSearchTest {
         {
             BypassProfile c = BypassProfile.chain(BypassProfile.MILD.get(0), BypassProfile.STRONG.get(1));
             BypassProfile.Route r = BypassProfile.route(c, 10808);
-            check(r.helper && r.groups.equals(Arrays.asList("Telegram → Psiphon", "Telegram напрямую",
+            check(r.helper && r.groups.equals(Arrays.asList("QUIC Meta → отброшен", "Telegram → Psiphon", "Telegram напрямую",
                     "список → disoob SNI", "список → Psiphon", "split SNI", "disoob SNI после сбоя", "Psiphon после сбоя")),
                     "helper route groups: " + r.groups);
             List<String> x = r.args;
-            int j = x.indexOf("-j");
-            check(j == 2 && x.get(3).startsWith(":91.105.192.0/23 ") && x.get(3).contains("149.154.160.0/20")
-                    && x.get(4).equals("-C") && x.get(5).equals("socks5://127.0.0.1:10808"), "telegram group first");
-            check(x.get(6).equals("-A") && x.get(7).equals("c") && x.get(8).equals("-A") && x.get(9).equals("n"),
+            int j = x.indexOf("-A") + 2;  // после группы QUIC
+            check(x.get(j).equals("-j") && x.get(j + 1).startsWith(":91.105.192.0/23 ") && x.get(j + 1).contains("149.154.160.0/20")
+                    && x.get(j + 2).equals("-C") && x.get(j + 3).equals("socks5://127.0.0.1:10808"), "telegram group after QUIC");
+            check(x.get(j + 4).equals("-A") && x.get(j + 5).equals("c") && x.get(j + 6).equals("-A") && x.get(j + 7).equals("n"),
                     "telegram direct fallback on connect error");
             int psiphon = 0;
             for (int i = 0; i + 1 < x.size(); i++) if (x.get(i).equals("-C")) psiphon++;
@@ -237,7 +256,7 @@ public class BypassSearchTest {
                     "custom with own groups is not our chain");
             BypassProfile plain = BypassProfile.chain(null, BypassProfile.STRONG.get(0));
             BypassProfile.Route r = BypassProfile.route(plain, 0);
-            check(r.groups.equals(Arrays.asList("список → oob SNI", "без обхода", "oob SNI после сбоя")), "plain chain route: " + r.groups);
+            check(r.groups.equals(Arrays.asList("QUIC Meta → отброшен", "список → oob SNI", "без обхода", "oob SNI после сбоя")), "plain chain route: " + r.groups);
         }
         // 16) Сводка вывода ByeDPI
         {
@@ -245,15 +264,17 @@ public class BypassSearchTest {
                     BypassProfile.chain(BypassProfile.MILD.get(0), BypassProfile.STRONG.get(1)), 0).groups);
             String[] out = {
                     "accept: fd=5", "new conn: fd=6, pair=5, addr=57.144.62.34:443",
-                    "desync TCP: group=0, round=1, fd=6", "host: i.instagram.com (127)", "split: pos=0-128 (1), m: disoob",
+                    "desync TCP: group=1, round=1, fd=6", "host: i.instagram.com (127)", "split: pos=0-128 (1), m: disoob",
                     "new conn: fd=8, pair=7, addr=157.240.200.36:443",
-                    "desync TCP: group=1, round=1, fd=8", "host: scontent-hel3-1.cdninstagram.com (127)",
-                    "recv: Connection timed out", "save: ip=157.240.200.36, id=2",
-                    "desync TCP: group=2, round=1, fd=9", "host: scontent-hel3-1.cdninstagram.com (127)",
+                    "desync TCP: group=2, round=1, fd=8", "host: scontent-hel3-1.cdninstagram.com (127)",
+                    "recv: Connection timed out", "save: ip=157.240.200.36, id=3",
+                    "desync TCP: group=3, round=1, fd=9", "host: scontent-hel3-1.cdninstagram.com (127)",
                     "recv: Connection timed out", "unreach ip: 157.240.200.36",
-                    "new conn: fd=10, pair=11, addr=149.154.167.51:443", "desync TCP: group=1, round=1, fd=10",
+                    "new conn: fd=10, pair=11, addr=149.154.167.51:443", "desync TCP: group=2, round=1, fd=10",
                     "bytes: 5a1b (184)", "split cancel: pos=0--1, n=184", "unreach ip: 149.154.167.51",
-                    "send: 3 != 10 (fd=6)", "close: fd=6 (pair=5), recv: 100, rounds: 1"};
+                    "udp addr: fd=12, addr=157.240.1.1:443", "udp drop: group=0, fd=12",
+                    "udp addr: fd=13, addr=::ffff:142.250.1.1:443", "udp addr: fd=14, addr=1.1.1.1:53",
+                    "send: 3 != 10 (fd=6)", "send: pos=126-517", "close: fd=6 (pair=5), recv: 100, rounds: 1"};
             int errors = 0;
             for (String l : out) if (!st.feed(l)) errors++;
             check(errors == 3, "error lines passed to log: " + errors);
@@ -261,10 +282,13 @@ public class BypassSearchTest {
             check(sum.startsWith("соединений 4: список → disoob SNI 1, split SNI 2, disoob SNI после сбоя 1"), "summary groups: " + sum);
             check(sum.contains("после сбоя: scontent-hel3-1.cdninstagram.com 157.240.200.36 → disoob SNI после сбоя"), "summary fallback: " + sum);
             check(sum.contains("не открылись ничем: ") && sum.contains("149.154.167.51 (Telegram)"), "summary unreach: " + sum);
+            check(sum.contains("; QUIC (UDP 443): Meta 1, ::ffff:142.250.1.1 1") || sum.contains("; QUIC (UDP 443): ::ffff:142.250.1.1 1, Meta 1"),
+                    "summary QUIC: " + sum);
             check(st.drain().isEmpty(), "drained");
             check("Meta".equals(ByeDpiStats.owner("157.240.1.1")) && ByeDpiStats.owner("8.8.8.8") == null, "owners");
+            // Проверка «почему» получает адреса и после сводки (в 0.8.7 сводка их стирала)
+            check(st.takeNewUnreachable(5).equals(Arrays.asList("157.240.200.36", "149.154.167.51")), "unreachable after drain");
             st.feed("unreach ip: 149.154.167.51");
-            check(st.takeNewUnreachable(5).equals(Collections.singletonList("149.154.167.51")), "new unreachable once");
             check(st.takeNewUnreachable(5).isEmpty(), "not reported twice");
         }
         // 17) Запасной путь: адрес ::ffff:a.b.c.d от ByeDPI (IPv6-сокеты на Android) уходит в Psiphon как IPv4

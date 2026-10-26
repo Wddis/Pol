@@ -124,6 +124,8 @@ public class VpnTunnelService extends VpnService
     private int helperPort;          // порт HelperRelay для ByeDPI в этом подключении, 0 — без него
     private int helperPsiphonPort;   // SOCKS Psiphon, когда он готов как запасной путь
     private boolean helperHinted;    // подсказка про «Авто» в журнале уже была
+    // Режим «Обход DPI»: Psiphon запущен только как запасной путь и сам подключением не станет
+    private boolean psiphonHelperOnly;
     @Nullable private String bypassIp;
     @Nullable private String bypassCc;
     private int torPercent;
@@ -218,6 +220,7 @@ public class VpnTunnelService extends VpnService
         helperPort = 0;
         helperPsiphonPort = 0;
         helperHinted = false;
+        psiphonHelperOnly = false;
         bypassIp = null;
         bypassCc = null;
         torPercent = 0;
@@ -251,9 +254,11 @@ public class VpnTunnelService extends VpnService
             fail(R.string.error_bypass_missing);
             return;
         }
-        // «Авто»: если подключится обход DPI, Psiphon остаётся запасным путём для того,
-        // что напрямую не открывается (Telegram, адреса, закрытые по IP)
-        if (mode == BridgeMode.AUTO && bypassUsed && psiphonUsed) {
+        // «Авто» и «Обход DPI»: если подключится обход DPI, Psiphon — запасной путь для того,
+        // что напрямую не открывается (Telegram, адреса, закрытые по IP). В «Обходе DPI» Psiphon
+        // запускается только для этого и сам подключением не становится
+        boolean helperOnly = mode == BridgeMode.BYPASS && bypassUsed && psiphonBuilt;
+        if ((mode == BridgeMode.AUTO && bypassUsed && psiphonUsed) || helperOnly) {
             relay.setUpstream(0);
             if (relay.start()) {
                 helperPort = HelperRelay.PORT;
@@ -264,6 +269,11 @@ public class VpnTunnelService extends VpnService
         // Обход DPI запускаем первым: когда срабатывает, он самый быстрый (прямое соединение)
         if (bypassUsed) startBypass();
         if (psiphonUsed) {
+            startPsiphon();
+        } else if (helperOnly && helperPort > 0) {
+            psiphonHelperOnly = true;
+            DiagLog.add("Psiphon подключается в фоне — только как запасной путь для Telegram и того, "
+                    + "что обход DPI не откроет");
             startPsiphon();
         } else if (mode == BridgeMode.AUTO && !bypassBuilt) {
             DiagLog.add("Psiphon нет в этой сборке: только Tor");
@@ -588,6 +598,12 @@ public class VpnTunnelService extends VpnService
     @Override
     public void onPsiphonReady(int port, @Nullable String serverRegion) {
         if (!active) return;
+        if (engine == null && psiphonHelperOnly) {
+            // «Обход DPI» ещё выбирает стратегию: путь откроется, когда он подключится
+            helperPsiphonPort = port;
+            DiagLog.add("Psiphon готов как запасной путь; откроется, когда подключится обход DPI");
+            return;
+        }
         if (StatusBus.ENGINE_BYPASS.equals(engine) && helperPort > 0) {
             // Подключены обходом DPI: Psiphon — запасной путь, трафик через него идёт только тот,
             // что ByeDPI сам отправит (Telegram и то, что не открылось напрямую)
@@ -761,6 +777,11 @@ public class VpnTunnelService extends VpnService
         bypassActive = false;
         bypassText = "";
         DiagLog.add("Обход DPI не помог ни одной стратегией");
+        if (engine == null && psiphonHelperOnly && psiphonActive) {
+            // Запасной путь без обхода DPI не нужен
+            psiphonActive = false;
+            psiphon.stop();
+        }
         if (engine == null && !torActive && !psiphonActive) {
             failAll();
         } else if (engine == null) {
@@ -776,7 +797,10 @@ public class VpnTunnelService extends VpnService
         bypassFull = full;
         bypassText = "";
         stopOtherEngines(StatusBus.ENGINE_BYPASS);
-        if (helperPort > 0 && psiphonActive) {
+        if (helperPort > 0 && helperPsiphonPort > 0) {
+            relay.setUpstream(helperPsiphonPort);
+            DiagLog.add("Запасной путь открыт: Telegram и то, что обход DPI не откроет, идут через Psiphon");
+        } else if (helperPort > 0 && psiphonActive) {
             DiagLog.add("Psiphon продолжает подключаться как запасной путь: Telegram и то, "
                     + "что обход DPI не откроет, пойдут через него");
         }
@@ -806,9 +830,9 @@ public class VpnTunnelService extends VpnService
         String out = b.drainOutput();
         long[] stats = Tun2Socks.stats();
         ByeDpiStats conns = b.stats();
-        String summary = conns != null ? conns.drain() : "";
         List<String> unreach = conns != null
                 ? conns.takeNewUnreachable(BYPASS_UNREACH_CHECKS) : new ArrayList<>();
+        String summary = conns != null ? conns.drain() : "";
         String helper = helperPort > 0 ? relay.drainStats() : "";
         new Thread(() -> {
             NetProbe.Health h = NetProbe.bypassHealth(port);
@@ -825,9 +849,7 @@ public class VpnTunnelService extends VpnService
                 if (!helper.isEmpty()) DiagLog.add("Запасной путь (Psiphon): " + helper);
                 if (!why.isEmpty() && helperPort == 0 && !helperHinted) {
                     helperHinted = true;
-                    DiagLog.add(prefs.getMode() == BridgeMode.AUTO
-                            ? "Запасного пути нет (Psiphon не собран или порт занят): эти адреса не откроются"
-                            : "В режиме «Авто» такие адреса и Telegram пойдут через Psiphon, остальное — обходом DPI");
+                    DiagLog.add("Запасного пути нет (Psiphon не собран или порт занят): эти адреса не откроются");
                 }
                 onBypassHealth(gen, h, out, stats);
             });
@@ -1259,6 +1281,7 @@ public class VpnTunnelService extends VpnService
         relay.stop();
         helperPort = 0;
         helperPsiphonPort = 0;
+        psiphonHelperOnly = false;
         bypassSearch = null;
         bypassSlot = -1;
         torActive = false;

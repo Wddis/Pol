@@ -1,0 +1,68 @@
+diff -ru a/extend.c b/extend.c
+--- a/extend.c
++++ b/extend.c
+@@ -247,6 +247,12 @@
+     if (dst->sa.sa_family == AF_INET6) {
+         len = sizeof(dst->in6.sin6_addr);
+         data = (const char *)&dst->in6.sin6_addr;
++        // IPv4 в виде ::ffff:a.b.c.d (сокеты IPv6) сравнивается с IPv4-сетями списка
++        static const char pat[12] = { 0,0,0,0,0,0,0,0,0,0,(char)0xff,(char)0xff };
++        if (!memcmp(data, pat, sizeof(pat))) {
++            len = sizeof(dst->in.sin_addr);
++            data += sizeof(pat);
++        }
+     }
+     if (mem_get(ipset, data, len * 8)) {
+         return 1;
+@@ -810,6 +816,10 @@
+         }
+         pair->dp = dp;
+     }
++    if (dp->udp_drop) {
++        LOG(LOG_S, "udp drop: group=%d, fd=%d\n", dp->id, val->fd);
++        return n;
++    }
+     if (!check_round(dp->rounds, r)) {
+         return send(val->fd, buffer, n, 0);
+     }
+diff -ru a/main.c b/main.c
+--- a/main.c
++++ b/main.c
+@@ -119,6 +119,7 @@
+     "    -r, --tlsrec <pos_t>      Make TLS record at position\n"
+     "    -m, --tlsminor <ver>      Change minor version of TLS\n"
+     "    -a, --udp-fake <count>    UDP fakes count, default 0\n"
++    "    -G, --udp-drop            Drop UDP datagrams of this group\n"
+     #ifdef __linux__
+     "    -Y, --drop-sack           Drop packets with SACK extension\n"
+     #endif
+@@ -180,6 +181,7 @@
+     {"tlsrec",        1, 0, 'r'},
+     {"tlsminor",      1, 0, 'm'},
+     {"udp-fake",      1, 0, 'a'},
++    {"udp-drop",      0, 0, 'G'},
+     {"def-ttl",       1, 0, 'g'},
+     {"wait-send",     0, 0, 'Z'}, //
+     {"await-int",     1, 0, 'W'}, //
+@@ -1230,6 +1232,10 @@
+         case 'Y':
+             dp->drop_sack = 1;
+             break;
++
++        case 'G':
++            dp->udp_drop = 1;
++            break;
+         
+         case 'Z':
+             params.wait_send = 1;
+diff -ru a/params.h b/params.h
+--- a/params.h
++++ b/params.h
+@@ -96,6 +96,7 @@
+     bool md5sig;
+     struct packet fake_data;
+     int udp_fake_count;
++    bool udp_drop;
+     struct part fake_offset;
+     int fake_sni_count;
+     const char **fake_sni_list;

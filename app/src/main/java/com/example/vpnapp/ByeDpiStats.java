@@ -20,20 +20,24 @@ import java.util.Map;
  * <li>«desync TCP: group=G, round=1, fd=F» и следом «host: имя (N)» — через какую группу
  * пошло соединение и имя сайта из ClientHello (так IP связывается с именем);</li>
  * <li>«save: ip=IP, id=G» — с прошлой группой не вышло, соединение повторено через G;</li>
- * <li>«unreach ip: IP» — не вышло ни через одну группу.</li>
+ * <li>«unreach ip: IP» — не вышло ни через одну группу;</li>
+ * <li>«udp addr: fd=F, addr=IP:443» — UDP на порт 443, то есть QUIC (HTTP/3): приложения Meta
+ * и YouTube ходят им в первую очередь; считается по владельцу адреса.</li>
  * </ul>
  * Остальные отладочные строки отбрасываются; строки ошибок (recv: …, split cancel …) идут в журнал.
  * Вызовы — из разных потоков (чтение вывода и сторож), поэтому всё под одной блокировкой.
  */
 final class ByeDpiStats {
 
-    // Отладочные строки ByeDPI (LOG_S), которые в журнал не идут
-    private static final String[] DEBUG_PREFIXES = {
+    // Отладочные строки ByeDPI (LOG_S/LOG_L, все форматы из исходников подмодуля; полноту проверяет
+    // scripts/test-bypass.sh), которые в журнал не идут
+    static final String[] DEBUG_PREFIXES = {
             "accept:", "new conn:", "desync TCP:", "desync UDP:", "host:", "bytes:", "split:",
-            "close:", "udp associate:", "udp addr:", "save:", "unreach ip:", "tlsrec:",
+            "close:", "udp associate:", "udp addr:", "udp drop:", "save:", "unreach ip:", "tlsrec:",
             "modify HTTP", "sock_has_notsent", "pollout", "timeout (", "alloc new buffer",
             "buffers count", "resolve:", "not resolved:", "swop:", "time=", "hosts count", "ip count",
-            "cache ip count", "group:", "listen address", "TFO supported", "exit"};
+            "cache ip count", "group:", "listen address", "TFO supported", "exit", "send: pos=",
+            "new event:", "temp file:"};
     private static final int MAX_FDS = 8192;
     private static final int MAX_HOSTS = 2048;
     private static final int MAX_IPS = 512;
@@ -55,7 +59,10 @@ final class ByeDpiStats {
     private int[] perGroup;
     private final Map<String, Integer> fallback = new LinkedHashMap<>();   // "IP\tгруппа" → раз
     private final Map<String, Integer> unreach = new LinkedHashMap<>();    // IP → раз
-    // За всё время: какие IP уже отдавались на проверку (unreachable)
+    private final Map<String, Integer> quic = new LinkedHashMap<>();       // владелец или IP → потоков
+    // Не открывшиеся адреса, ещё не отданные на проверку «почему» (не зависит от сводки),
+    // и все, что уже отдавались
+    private final List<String> pending = new ArrayList<>();
     private final Map<String, Boolean> reported = new HashMap<>();
 
     ByeDpiStats(List<String> groups) {
@@ -132,6 +139,18 @@ final class ByeDpiStats {
                 Integer n = unreach.get(ip);
                 unreach.put(ip, n == null ? 1 : n + 1);
             }
+            if (!ip.isEmpty() && reported.size() < MAX_IPS && reported.put(ip, Boolean.TRUE) == null) {
+                pending.add(ip);
+            }
+        } else if (line.startsWith("udp addr:")) {
+            String addr = field(line, "addr=");
+            if (addr != null && addr.endsWith(":443") && quic.size() < MAX_IPS) {
+                String ip = stripPort(addr);
+                String o = owner(ip);
+                String key = o != null ? o : ip;
+                Integer n = quic.get(key);
+                quic.put(key, n == null ? 1 : n + 1);
+            }
         }
     }
 
@@ -144,7 +163,7 @@ final class ByeDpiStats {
     synchronized String drain() {
         int total = 0;
         for (int n : perGroup) total += n;
-        if (total == 0 && fallback.isEmpty() && unreach.isEmpty()) return "";
+        if (total == 0 && fallback.isEmpty() && unreach.isEmpty() && quic.isEmpty()) return "";
         StringBuilder sb = new StringBuilder("соединений ").append(total);
         String sep = ": ";
         for (int g = 0; g < perGroup.length; g++) {
@@ -178,19 +197,32 @@ final class ByeDpiStats {
                         .append(e.getValue() > 1 ? " ×" + e.getValue() : "");
             }
         }
+        if (!quic.isEmpty()) {
+            sb.append("; QUIC (UDP 443):");
+            int shown = 0;
+            for (Map.Entry<String, Integer> e : top(quic)) {
+                if (shown++ >= SHOW) {
+                    sb.append(" … ещё ").append(quic.size() - SHOW);
+                    break;
+                }
+                sb.append(shown > 1 ? ", " : " ").append(e.getKey()).append(' ').append(e.getValue());
+            }
+        }
         perGroup = new int[perGroup.length];
         fallback.clear();
         unreach.clear();
+        quic.clear();
         return sb.toString();
     }
 
-    /** Адреса, которые не открылись ничем и ещё не отдавались на проверку (каждый — один раз). */
+    /**
+     * Адреса, которые не открылись ничем и ещё не отдавались на проверку (каждый — один раз).
+     * Не зависит от {@link #drain}: в 0.8.7 сводка очищала счётчики раньше, и проверка «почему»
+     * не получала ни одного адреса.
+     */
     synchronized List<String> takeNewUnreachable(int max) {
         List<String> r = new ArrayList<>();
-        for (String ip : unreach.keySet()) {
-            if (r.size() >= max) break;
-            if (reported.size() < MAX_IPS && reported.put(ip, Boolean.TRUE) == null) r.add(ip);
-        }
+        while (!pending.isEmpty() && r.size() < max) r.add(pending.remove(0));
         return r;
     }
 
@@ -214,11 +246,7 @@ final class ByeDpiStats {
 
     // ---------- Владельцы адресов (когда имени сайта нет: Telegram, WhatsApp, QUIC) ----------
 
-    private static final String[][] OWNERS = {
-            {"Meta", "31.13.24.0/21", "31.13.64.0/18", "57.144.0.0/14", "66.220.144.0/20",
-                    "69.63.176.0/20", "69.171.224.0/19", "74.119.76.0/22", "102.132.96.0/20",
-                    "129.134.0.0/16", "157.240.0.0/16", "163.70.128.0/17", "173.252.64.0/18",
-                    "179.60.192.0/22", "185.60.216.0/22", "185.89.216.0/22", "204.15.20.0/22"},
+    static final String[][] OWNERS = {
             {"Cloudflare", "104.16.0.0/13", "104.24.0.0/14", "172.64.0.0/13", "162.158.0.0/15",
                     "188.114.96.0/20", "141.101.64.0/18", "108.162.192.0/18", "190.93.240.0/20",
                     "198.41.128.0/17", "173.245.48.0/20", "103.21.244.0/22", "103.22.200.0/22",
@@ -234,6 +262,9 @@ final class ByeDpiStats {
         if (a < 0) return null;
         for (String net : BypassProfile.TELEGRAM_NETS) {
             if (inNet(a, net)) return "Telegram";
+        }
+        for (String net : BypassProfile.META_NETS) {
+            if (net.indexOf(':') < 0 && inNet(a, net)) return "Meta";
         }
         for (String[] o : OWNERS) {
             for (int i = 1; i < o.length; i++) {

@@ -1,6 +1,6 @@
 ---
 name: oda-tun-sim
-description: Запустить имитацию телефона ODA с обходом DPI (scripts/test-tun.sh) — весь трафик «телефона» идёт через VPN-интерфейс tun0 → tun2socks (hev-socks5-tunnel) → ByeDPI, проверяются DNS через SOCKS-UDP, обычные сайты, NetProbe, сторож, устойчивость к потоку DNS, соцсети как у приложения (список доменов), блокировка по адресу (CDN, Telegram) и запасной путь через «Psiphon» (HelperRelay). Использовать после изменений в Tun2SocksConfig, BypassProfile, BypassController, NetProbe или VpnTunnelService, перед пушем, и когда нужно проверить, что обход DPI несёт трафик телефона, а не только проходит проверку ODA.
+description: Запустить имитацию телефона ODA с обходом DPI (scripts/test-tun.sh) — весь трафик «телефона» идёт через VPN-интерфейс tun0 → tun2socks (hev-socks5-tunnel) → ByeDPI → «оператор» с моделью ТСПУ (scripts/tunlab/tspu.py); стратегию выбирает настоящий перебор ODA (BypassSearch + NetProbe), затем проверяются «приложения» (обычные сайты, YouTube, Facebook/Instagram как приложение, CDN, Telegram, QUIC к Meta), запасной путь через «Psiphon» (HelperRelay), поток DNS, сводка ByeDPI. Использовать после изменений в Tun2SocksConfig, BypassProfile, BypassSearch, BypassController, NetProbe, ByeDpiStats, HelperRelay, VpnTunnelService или правки ByeDPI (scripts/byedpi.patch), перед пушем, и когда по журналу телефона нужно воспроизвести поведение ТСПУ.
 ---
 
 # Имитация телефона ODA (обход DPI)
@@ -13,81 +13,91 @@ description: Запустить имитацию телефона ODA с обх�
 Три сетевых пространства (netns), всё на одной машине Linux:
 - **phone** — «телефон»: `tun0` от hev-socks5-tunnel, весь трафик по умолчанию — в tun0.
   ByeDPI и проверки ODA работают от uid 2000 и идут мимо VPN (как `addDisallowedApplication`).
-  «Psiphon» стенда (SOCKS5, `lab.py socks`) работает от uid 2001 и ходит в «интернет» мимо оператора
+  «Psiphon» стенда (SOCKS5, `lab.py socks`) — от uid 2001, ходит в «интернет» мимо оператора
   по отдельному каналу p1/s1 (как зашифрованный туннель за границу).
-- **isp** — «оператор»: правило iptables `string` отбрасывает TCP:443-пакет, в котором имя заблокированного
-  сайта лежит целиком (если модуля нет — стенд без него); у «CDN соцсети» (157.240.200.36) и «сервера
-  Telegram» (149.154.167.51) режутся все пакеты с данными — блокировка по адресу.
-- **srv** — «интернет»: DNS 1.1.1.1 (UDP и TCP), HTTPS-сайты с адресами из журналов пользователя
-  (и i.instagram.com, scontent-hel3-1.cdninstagram.com), «сервер Telegram» без TLS (эхо).
+- **isp** — «оператор» с **моделью ТСПУ** `scripts/tunlab/tspu.py`: ядро отдаёт весь пересылаемый трафик
+  в TUN `dpi0`, программа решает и пишет пакет в `dpi1`. Собирает поток клиента по номерам
+  последовательности (поздняя часть перекрывает раннюю), ищет SNI/Host и рвёт соединение (этот и все
+  следующие пакеты); `urg` — вырезать байт OOB или оставить; `tls` — искать имя только в первой
+  TLS-записи (tlsrec пробивает) или склеивать записи; `ip_block` — сети, где не проходят пакеты с данными;
+  фейк с TTL ≤ 6 (после первого маршрутизатора) до сервера не доходит, с большим — доходит.
+  Журнал решений — `tspu.log` («блок …», «пропуск …»).
+- **srv** — «интернет»: DNS 1.1.1.1, HTTPS-сайты с адресами из журналов (instagram и i.instagram
+  31.13.72.174, facebook и graph.facebook 31.13.72.36, CDN 157.240.200.36, YouTube, googlevideo, …),
+  «сервер Telegram» 149.154.167.51:443 без TLS (эхо), UDP-эхо 443 на каждом адресе («QUIC»).
 
-Конфиг hev, маршрут ByeDPI и запасной путь берутся **из кода приложения** (`Tun2SocksConfig.yaml`,
-`BypassProfile.processArgs` + `BypassProfile.route` для цепочки «split SNI → сильная», `HelperRelay`,
-`ByeDpiStats`) через `app/src/test/java/com/example/vpnapp/TunLab.java`; проверка — настоящий `NetProbe`.
-Сильная стратегия стенда — `multidisorder` (его DPI ищет имя целиком в одном пакете; переменная
-`LAB_STRONG`): стенд проверяет устройство маршрута, а не то, какая стратегия бьёт настоящий ТСПУ.
+Профили ТСПУ (`PROFILES` в tspu.py) подобраны по журналам телефона:
+- `oct2026` — журнал 0.8.7: OOB/disoob/fake/multidisorder не пробивают, tlsrec — да; instagram, CDN
+  и Telegram закрыты по адресу; YouTube режется по имени для мягкой стратегии.
+- `jun2026` — журнал 0.8.6: OOB-семейство пробивает; CDN и Telegram закрыты по адресу.
 
-Чего стенд НЕ заменяет: реальную сеть РФ. Соцсети и Telegram проверяются только на телефоне
-пользователя по журналу («ЖУРНАЛ» → «КОПИРОВАТЬ»).
+Новый журнал телефона с другим поведением → новый профиль (или правка существующего), чтобы стенд
+повторил строки «Обход DPI (…): … · instagram± facebook± …» с телефона; только потом менять приложение.
+
+Всё остальное — **код приложения**: ByeDPI собирается из подмодуля с правками ODA
+(`scripts/byedpi-src.sh` + `scripts/byedpi.patch`), конфиг hev — `Tun2SocksConfig`, перебор —
+`TunLab search` (BypassSearch + NetProbe + процессы ByeDPI с `BypassProfile.processArgs` и `route`),
+запасной путь — `HelperRelay`, сводка — `ByeDpiStats` (через `app/src/test/java/com/example/vpnapp/TunLab.java`).
+
+Чего стенд НЕ заменяет: настоящий ТСПУ. Модель повторяет известное поведение; новое видно только
+в журнале с телефона пользователя («ЖУРНАЛ» → «КОПИРОВАТЬ»).
 
 ## Запуск
 
 ```bash
 git submodule update --init --recursive          # byedpi и hev-socks5-tunnel
 python3 -m pip install pyroute2                  # в CI: sudo python3 -m pip install --break-system-packages pyroute2
-sudo bash scripts/test-tun.sh                    # ~5 минут; без root сам перезапустится через sudo
+sudo bash scripts/test-tun.sh                    # ~8 минут; без root сам перезапустится через sudo
+LAB_PROFILES=oct2026 sudo -E bash scripts/test-tun.sh   # один профиль (~5 минут)
 ```
 
-Нужны: root, gcc, make, JDK (javac/java), python3 + pyroute2, iptables, openssl, curl,
-util-linux (nsenter, unshare, setpriv). Длинный прогон запускать в фоне и ждать завершения.
+Нужны: root, gcc, make, patch, JDK (javac/java), python3 + pyroute2, openssl, curl, procps (pgrep),
+util-linux (nsenter, unshare, setpriv). Утилита `ip` не нужна (всё через pyroute2).
+Длинный прогон запускать в фоне и ждать завершения. **Не править `test-tun.sh` во время прогона**:
+bash читает скрипт по ходу и споткнётся о сдвинутые строки (для правок — копия скрипта в `scripts/`).
 
 В CI это шаг «Simulate phone traffic through tun2socks and ByeDPI» в `.github/workflows/build.yml`.
 Для веток не `main`/`claude/**` workflow запускается вручную (workflow_dispatch, `build.yml`, ref = ветка).
 
 ## Как читать результат
 
-Режим «Обход DPI» (без запасного пути):
-1. **Сайты через VPN** — google (204), cloudflare, ya, vk, gosuslugi (200) через tun0; DNS телефона идёт
-   через SOCKS-UDP ByeDPI. Должны открыться все.
-2. **NetProbe мимо VPN** — «DNS через SOCKS-UDP ByeDPI: отвечает», обычные сайты 6/6, «Сторож: DNS +, сайт +».
-3. **Нагрузка как у телефона** — 15 потоков DNS (каждый запрос с нового порта = новая UDP-ассоциация
-   в ByeDPI) 40 с, каждые 5 с открывается vk.com. Должно быть «8 из 8» и «pool is full: 0».
-4. **Соцсети как у приложения** — www.instagram.com, i.instagram.com, www.facebook.com: 200 быстрее 3 с
-   (список доменов → сразу сильная, без тайм-аута 4 с мягкой).
-5. **Закрытое по адресу** — CDN и Telegram не открываются (так и должно быть без запасного пути);
-   «почему»: для CDN «…по адресу», для 57.144.62.34 «…по имени»; сводка ByeDPI: «список → multidisorder»,
-   «не открылся: scontent-hel3-1.cdninstagram.com 157.240.200.36» и «149.154.167.51 (Telegram)».
+Для каждого профиля:
+1. **Выбор стратегии** — журнал как у приложения («Сеть напрямую …», «Заблокированные напрямую: …
+   по адресу / по имени», «Обход DPI (стратегия): … · instagram-(TLS) facebook+ …», «подключаюсь через …»).
+   Проверки: выбрана стратегия, пробивающая заблокированные; для oct2026 — tlsrec, для jun2026 — OOB.
+2. **«Приложения» через VPN** (запасной путь открыт): обычные сайты сразу; YouTube ≤ 12 с; Facebook
+   (www и graph) сразу — список доменов; Instagram (www, i.) — в oct2026 ~4,7 с (сильная не прошла →
+   Psiphon), повтор сразу; CDN картинок — через Psiphon; Telegram «ok»; QUIC к Meta «fail» (отброшен),
+   к Google «ok»; NetProbe и сторож; сводка ByeDPI с «QUIC (UDP 443): Meta …» и «Telegram → Psiphon».
+Только oct2026:
+3. **Поток DNS** — 15 потоков 40 с, vk.com каждые 5 с: «8 из 8», «pool is full: 0».
+4. **Запасной путь закрыт** — обычные сайты, Facebook, YouTube работают; Telegram — нет;
+   «почему»: CDN «…по адресу», facebook «…по имени».
+5. **Контроль 0.8.6** (без -c, без маршрута, «split SNI → disoob SNI»): соцсети не открываются,
+   поток DNS роняет интернет. Не воспроизвелось — предупреждение «!», не провал.
 
-Режим «Авто» (HelperRelay → «Psiphon»):
-6. **Путь закрыт** — ya, google, i.instagram.com открываются; Telegram — нет.
-7. **Путь открыт** — Telegram «ok», CDN 200 (первый раз ~4–5 с: сильная не прошла → Psiphon; второй —
-   сразу, адрес запомнен), обычные сайты и соцсети напрямую; NetProbe проходит; сводка: «Telegram → Psiphon»,
-   «список → Psiphon».
-
-Контроль — старый запуск ByeDPI 0.8.5–0.8.6 (без `-c`, без списка доменов; hev без `udp-read-write-timeout`):
-8. i.instagram.com сразу не открывается (тайм-аут мягкой; на стенде повтор multidisorder бывает и неудачным), а под потоком DNS интернет пропадает
-   (`000`, рост «pool is full»). Если не воспроизвелось — предупреждение, не провал.
-
-Итог: «Имитация телефона с обходом DPI: OK» или «ОШИБКА» с хвостами журналов ByeDPI и hev.
+Итог: «Имитация телефона с обходом DPI: OK» или «ОШИБКА» с хвостами журналов ByeDPI, hev, ТСПУ,
+«Psiphon» и HelperRelay.
 
 ## Особенности окружения
 
-- **Нет IPv6 в ядре** (облачные контейнеры с `ipv6.disable=1`): hev всегда открывает сокеты AF_INET6,
-  поэтому стенд сам собирает `scripts/tunlab/v4shim.c` (LD_PRELOAD, AF_INET6 → AF_INET) и убирает
-  `ipv6:` из конфига hev. ByeDPI без IPv6 справляется сам.
-- **У «оператора» нет IPv6**, поэтому, как и приложение с 0.8.6, стенд не направляет IPv6 в VPN
-  (нет маршрута `::/0` и IPv6-DNS).
-- Файлы стенда: `scripts/test-tun.sh` (сценарий), `scripts/tunlab/lab.py` (netns, «интернет»,
-  нагрузка DNS, «Psiphon» `socks`, клиент Telegram `tgcheck`), `scripts/tunlab/v4shim.c`.
-- Не правьте `test-tun.sh` во время прогона: bash читает скрипт по ходу и споткнётся о сдвинутые строки. Временная папка — `mktemp -d`, удаляется при выходе.
+- **Нет IPv6 в ядре** (облачные контейнеры): hev всегда открывает сокеты AF_INET6, поэтому стенд сам
+  собирает `scripts/tunlab/v4shim.c` (LD_PRELOAD, AF_INET6 → AF_INET) и убирает `ipv6:` из конфига hev.
+  На раннере CI IPv6 есть: там ByeDPI пишет адреса как `::ffff:a.b.c.d` — так же, как на Android.
+- **Права**: программы стенда работают от uid 2000/2001, а домашняя папка раннера CI им закрыта —
+  всё, что они читают и пишут, лежит в `$TMP` (`lab.py`, `tspu.py`, классы, `$TMP/out` для перебора).
+  Локально это проверяется с `chmod 700 /home/user` на время прогона.
+- **Процессы**: в фоне запускается подоболочка функции (NS/APP/TUNNEL), программа — её потомок;
+  останавливать — `stop_pids` (гасит потомков), иначе порты останутся занятыми.
 - Если прогон прерван и netns остались: `sudo python3 scripts/tunlab/lab.py down`.
 
 ## Расширение
 
-- Новый сайт «интернета»: добавить имя и IPv4 в `SITES` в `lab.py` (сертификат и DNS подхватят сами).
-- Новая проверка: функция в `test-tun.sh` + `check <0|1> "текст"`; контрольные сценарии,
-  которые должны падать на старом коде, оформлять как в п. 4 (предупреждение, не провал).
-- Менять поведение приложения — в коде приложения (`Tun2SocksConfig`, `BypassProfile`, `NetProbe`),
-  а не в стенде: стенд берёт значения оттуда.
-- После изменений: `bash scripts/test-bypass.sh` (логика стратегий и строки ByeDPI) и этот стенд;
-  README («Как собрать», «Этапы») держать в актуальном состоянии.
+- Новый сайт «интернета»: имя и IPv4 в `SITES` в `lab.py` (сертификат, DNS и UDP-эхо подхватят сами).
+- Новое поведение ТСПУ: профиль или параметр в `tspu.py`; проверка — в `apps_check`/секциях
+  `test-tun.sh` через `check <0|1> "текст"`; контроль, который должен падать на старом коде, — как
+  предупреждение «!».
+- Менять поведение приложения — в коде приложения (`BypassProfile`, `NetProbe`, …) или в правке ByeDPI
+  (`scripts/byedpi.patch`, применяет `scripts/byedpi-src.sh`), а не в стенде.
+- После изменений: `bash scripts/test-bypass.sh` (логика, маршрут, строки ByeDPI, отладочные строки)
+  и этот стенд; README («Сборка», «Этапы», раздел обхода DPI) держать в актуальном состоянии.

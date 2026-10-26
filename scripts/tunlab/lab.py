@@ -6,17 +6,17 @@
           работают от uid 2000 и идут мимо VPN (как addDisallowedApplication в Android);
           «Psiphon» (SOCKS5, команда socks) работает от uid 2001 и ходит в «интернет» мимо
           оператора — по отдельному каналу p1/s1, как зашифрованный туннель за границу;
-  isp   — «оператор»: маршрутизатор с DPI (правила iptables ставит test-tun.sh): пакет с именем
-          заблокированного сайта отбрасывается; у «CDN соцсети» и «сервера Telegram» режутся
-          все пакеты с данными (блокировка по адресу: TCP соединяется, данные не доходят);
-  srv   — «интернет»: DNS 1.1.1.1 (UDP и TCP), HTTPS-сайты с адресами из журналов
-          и «сервер Telegram» (TG_IP:443, не TLS: отвечает эхом, как MTProto — не по имени сайта).
+  isp   — «оператор»: маршрутизатор с моделью ТСПУ (tspu.py, профиль выбирает test-tun.sh):
+          рвёт соединения по имени сайта, режет по адресу CDN соцсети и сервер Telegram;
+  srv   — «интернет»: DNS 1.1.1.1 (UDP и TCP), HTTPS-сайты с адресами из журналов,
+          «сервер Telegram» (TG_IP:443, не TLS: отвечает эхом, как MTProto — не по имени сайта)
+          и UDP-эхо на порту 443 («QUIC»).
 IPv6 у «оператора» нет (как в мобильной сети без IPv6); тогда и приложение не направляет IPv6
 в VPN (routes 0). routes 1 — IPv6 в VPN без IPv6 у оператора: так было до 0.8.6, и сайты с AAAA
 не открывались (tun2socks принимает соединение раньше, чем ByeDPI узнаёт, что IPv6 нет).
 
 Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков>
-         | socks <порт> | tgcheck <сек>
+         | socks <порт> | tgcheck <сек> | quiccheck <ip> <сек> | notun
 Нужен pyroute2 (pip install pyroute2) и root.
 """
 import socket
@@ -27,13 +27,17 @@ import time
 
 APP_UID = 2000
 TUNNEL_UID = 2001  # «Psiphon»: его трафик идёт мимо оператора (туннель за границу)
-SITES = {  # все сайты NetProbe; IPv4 — как в журналах пользователя
-    "www.instagram.com": "57.144.62.34",
+SITES = {  # все сайты NetProbe; IPv4 — как в журналах пользователя (0.8.7)
+    "www.instagram.com": "31.13.72.174",
     # Приложение Instagram ходит не на www: API на том же узле Meta, картинки — на CDN.
-    # Адрес CDN в стенде закрыт по IP (см. test-tun.sh) — его не откроет ни одна стратегия
-    "i.instagram.com": "57.144.62.34",
+    # Адрес CDN в стенде закрыт по IP — его не откроет ни одна стратегия
+    "i.instagram.com": "31.13.72.174",
     "scontent-hel3-1.cdninstagram.com": "157.240.200.36",
-    "www.facebook.com": "57.144.62.1",
+    "www.facebook.com": "31.13.72.36",
+    "graph.facebook.com": "31.13.72.36",
+    # YouTube: в журнале 0.8.7 мягкая стратегия для него срывалась, открывала сильная
+    "www.youtube.com": "142.250.74.78",
+    "rr1---sn-n8v7znz7.googlevideo.com": "173.194.182.6",
     "x.com": "162.159.140.229",
     "rutracker.org": "104.21.32.39",
     "www.google.com": "142.250.74.46",
@@ -46,6 +50,7 @@ SITES = {  # все сайты NetProbe; IPv4 — как в журналах п�
 # AAAA есть, но сети IPv6 у оператора нет: телефон пробует IPv6 через VPN и откатывается на IPv4
 SITES6 = {
     "www.instagram.com": "2a03:2880:f240:1e6:face:b00c:0:4420",
+    "i.instagram.com": "2a03:2880:f240:1e6:face:b00c:0:4420",
     "www.google.com": "2a00:1450:4010:c0e::63",
     "ya.ru": "2a02:6b8::2:242",
 }
@@ -117,9 +122,9 @@ def routes(ipv6):
         time.sleep(0.1)
     else:
         sys.exit("tun0 не появился (hev-socks5-tunnel не запустился)")
-    ip.route("add", dst="0.0.0.0/0", oif=links[0])
+    ip.route("replace", dst="0.0.0.0/0", oif=links[0])
     if ipv6:
-        ip.route("add", dst="::/0", oif=links[0], family=socket.AF_INET6)
+        ip.route("replace", dst="::/0", oif=links[0], family=socket.AF_INET6)
     ip.close()
 
 
@@ -221,6 +226,16 @@ def serve(cert, key):
             target = telegram if c.getsockname()[0] == TG_IP else handle
             threading.Thread(target=target, args=(c,), daemon=True).start()
 
+    def quic_echo(addr):
+        # Свой сокет на каждый адрес: ответ должен прийти с того адреса, куда шёл запрос
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.bind((addr, 443))
+        while True:
+            d, a = s.recvfrom(2048)
+            s.sendto(d, a)
+
+    for a in sorted(set(SITES.values())):
+        threading.Thread(target=quic_echo, args=(a,), daemon=True).start()
     for f in (dns_udp, dns_tcp, https):
         threading.Thread(target=f, daemon=True).start()
     print("srv: готов", flush=True)
@@ -348,6 +363,21 @@ def tgcheck(seconds):
     sys.exit(0 if ok else 1)
 
 
+def quiccheck(ip, seconds):
+    """Как приложение с QUIC: UDP-пакет (длинный заголовок QUIC) на ip:443 через VPN, ждём эхо."""
+    import os
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    s.settimeout(seconds)
+    pkt = b"\xc3\x00\x00\x00\x01" + os.urandom(1195)
+    try:
+        s.sendto(pkt, (ip, 443))
+        ok = s.recv(2048) == pkt
+    except OSError:
+        ok = False
+    print("ok" if ok else "fail")
+    sys.exit(0 if ok else 1)
+
+
 if __name__ == "__main__":
     cmd = sys.argv[1]
     if cmd == "up":
@@ -364,5 +394,14 @@ if __name__ == "__main__":
         socks(int(sys.argv[2]))
     elif cmd == "tgcheck":
         tgcheck(float(sys.argv[2]))
+    elif cmd == "notun":
+        from pyroute2 import IPRoute
+        with IPRoute() as ip:
+            for _ in range(50):
+                if not ip.link_lookup(ifname="tun0"):
+                    break
+                time.sleep(0.1)
+    elif cmd == "quiccheck":
+        quiccheck(sys.argv[2], float(sys.argv[3]))
     else:
         sys.exit(__doc__)

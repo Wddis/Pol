@@ -52,7 +52,10 @@ final class BypassProfile {
             new BypassProfile("disorder+fake ttl 5", "-d", "1", "-f", "-1", "-t", "5"),
             new BypassProfile("fake ttl 8 rand", "-f", "-1", "-t", "8", "-Q", "r"),
             new BypassProfile("tlsrec+oob", "-r", "1+s", "-s", "1", "-o", "1+s"),
-            new BypassProfile("tlsrec+disorder", "-s", "1", "-r", "1+s", "-r", "3+s", "-d", "3+s")));
+            new BypassProfile("tlsrec+disorder", "-s", "1", "-r", "1+s", "-r", "3+s", "-d", "3+s"),
+            // В журнале 0.8.7 OOB и disoob перестали пробивать, а tlsrec — пробивает: запас на смену ТСПУ
+            new BypassProfile("tlsrec+disoob", "-r", "1+s", "-s", "1", "-q", "1+s"),
+            new BypassProfile("tlsrec mid", "-r", "0+sm", "-s", "1", "-s", "0+sm")));
 
     /**
      * Таймаут для --auto: если данные не подтверждены 4 с (ТСПУ молча отбросил ClientHello) —
@@ -115,6 +118,20 @@ final class BypassProfile {
             "2001:67c:4e8::/48", "2001:b28:f23c::/48", "2001:b28:f23d::/48",
             "2001:b28:f23f::/48", "2a0a:f280::/32"));
 
+    /**
+     * Сети Meta (Instagram, Facebook, WhatsApp). Приложения Meta ходят в первую очередь по QUIC
+     * (UDP 443); ByeDPI QUIC не меняет, а ТСПУ его режет или «подвешивает». В цепочке UDP 443
+     * к этим сетям отбрасывается (--udp-drop, правка scripts/byedpi.patch), и приложения уходят
+     * на TCP, где их открывает стратегия. В 0.8.7 приложения Meta почти не открывали TCP-соединений
+     * (6 за 4 минуты) и висели.
+     */
+    static final List<String> META_NETS = Collections.unmodifiableList(Arrays.asList(
+            "31.13.24.0/21", "31.13.64.0/18", "57.144.0.0/14", "66.220.144.0/20",
+            "69.63.176.0/20", "69.171.224.0/19", "74.119.76.0/22", "102.132.96.0/20",
+            "129.134.0.0/16", "157.240.0.0/16", "163.70.128.0/17", "173.252.64.0/18",
+            "179.60.192.0/22", "185.60.216.0/22", "185.89.216.0/22", "204.15.20.0/22",
+            "2a03:2880::/32"));
+
     /** Аргументы процесса ByeDPI для стратегии и названия групп (по номеру группы, для журнала). */
     static final class Route {
         final List<String> args;
@@ -157,6 +174,7 @@ final class BypassProfile {
      * <p>
      * Цепочка «мягкая → сильная» ({@link #chain}):
      * <ol>
+     * <li>QUIC (UDP 443) к сетям Meta — отбрасывается, приложения уходят на TCP;</li>
      * <li>[запасной путь] сети Telegram → Psiphon (не готов — напрямую, триггер «c»);</li>
      * <li>заблокированные домены ({@link #BLOCKED_HOSTS}, порт 443) → сразу сильная;
      * [запасной путь] не прошла — Psiphon;</li>
@@ -183,6 +201,11 @@ final class BypassProfile {
             // Своя строка или мягкая без запасного пути: как есть
             return new Route(new ArrayList<>(Arrays.asList(p.args)),
                     Collections.singletonList(p.label), false);
+        }
+        if (parts != null) {
+            // Группа только для UDP (-K u): TCP её не видит
+            groups.add(new Group("n", Arrays.asList("-K", "u", "-V", "443",
+                    "-j", ":" + String.join(" ", META_NETS), "--udp-drop"), "QUIC Meta → отброшен"));
         }
         if (helper) {
             groups.add(new Group("n", join(Arrays.asList("-j", ":" + String.join(" ", TELEGRAM_NETS)), tunnel),

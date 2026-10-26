@@ -140,8 +140,45 @@ final class NetProbe {
                 + ", заблокированные " + s.blocked + "/" + s.blockedTotal + " · " + s.detail);
         DiagLog.add("Адреса заблокированных сайтов (DNS " + DNS_SERVER + ", если не ответил — системный): "
                 + addresses(BLOCKED));
+        classifyBlockedLater();
         Result r = s.foreign > 0 ? Result.OK : s.local > 0 ? Result.WHITELIST : Result.OFFLINE;
         return new Direct(r, s);
+    }
+
+    /**
+     * В фоне (выбор стратегии не ждёт): как закрыты заблокированные сайты — по адресу (обход DPI
+     * не поможет, нужен туннель) или по имени (DPI). Все сайты параллельно, одна строка в журнал.
+     */
+    private static void classifyBlockedLater() {
+        Thread t = new Thread(() -> {
+            ExecutorService pool = Executors.newFixedThreadPool(BLOCKED.length);
+            try {
+                List<Future<String>> res = new ArrayList<>();
+                for (Site site : BLOCKED) {
+                    res.add(pool.submit(() -> {
+                        InetAddress a = resolve(site.host);
+                        return a == null ? null : whyUnreachable(a.getHostAddress(), 443);
+                    }));
+                }
+                StringBuilder how = new StringBuilder();
+                for (int i = 0; i < BLOCKED.length; i++) {
+                    String w;
+                    try {
+                        w = res.get(i).get(30, TimeUnit.SECONDS);
+                    } catch (Exception e) {
+                        w = null;
+                    }
+                    if (w == null) continue;
+                    if (how.length() > 0) how.append("; ");
+                    how.append(BLOCKED[i].name).append(": ").append(w);
+                }
+                if (how.length() > 0) DiagLog.add("Заблокированные напрямую: " + how);
+            } finally {
+                pool.shutdownNow();
+            }
+        }, "oda-probe-blocked");
+        t.setDaemon(true);
+        t.start();
     }
 
     /** Результат стратегии, которая не заработала (процесс ByeDPI не запустился или упал). */
@@ -255,17 +292,19 @@ final class NetProbe {
             // DNS телефона идёт через тот же SOCKS (UDP): проверяем одновременно с сайтами
             Future<Boolean> dnsFuture = socksPort > 0
                     ? pool.submit(() -> socksDnsWorks(socksPort, LOCAL[0].host)) : null;
-            List<Future<Boolean>> futures = new ArrayList<>();
-            for (Site site : all) futures.add(pool.submit(() -> fetch(site, socksPort)));
+            List<Future<String>> futures = new ArrayList<>();
+            for (Site site : all) futures.add(pool.submit(() -> why(site, socksPort)));
             long deadline = System.nanoTime()
                     + TimeUnit.MILLISECONDS.toNanos(DNS_WAIT_MS + SITE_DEADLINE_MS + 2_000);
             boolean[] ok = new boolean[all.size()];
+            String[] fail = new String[all.size()];
             for (int i = 0; i < all.size(); i++) {
                 try {
                     long left = Math.max(1, deadline - System.nanoTime());
-                    ok[i] = futures.get(i).get(left, TimeUnit.NANOSECONDS);
+                    fail[i] = futures.get(i).get(left, TimeUnit.NANOSECONDS);
+                    ok[i] = fail[i] == null;
                 } catch (Exception ignored) {
-                    // не ответил вовремя — недоступен
+                    fail[i] = "долго";  // не ответил вовремя — недоступен
                 }
             }
             int blocked = count(ok, 0, BLOCKED.length);
@@ -276,6 +315,9 @@ final class NetProbe {
                 if (i == BLOCKED.length || i == BLOCKED.length + FOREIGN.length) detail.append(" |");
                 if (i > 0) detail.append(' ');
                 detail.append(all.get(i).name).append(ok[i] ? '+' : '-');
+                // Где не прошло — только у заблокированных: так видно, режет ТСПУ рукопожатие
+                // (TLS), сбрасывает или «замораживает» уже после ответа (N КБ)
+                if (!ok[i] && i < BLOCKED.length && fail[i] != null) detail.append('(').append(fail[i]).append(')');
             }
             if (dnsFuture != null && !futureTrue(dnsFuture, deadline)) {
                 // Сайты по IP открываются, но имена у телефона не определятся — интернета не будет
@@ -306,9 +348,12 @@ final class NetProbe {
         return c;
     }
 
-    private static boolean fetch(Site site, int socksPort) {
+    /** null — сайт открылся, иначе — где не прошло (см. {@link #fetchError}). */
+    @Nullable
+    private static String why(Site site, int socksPort) {
         InetAddress ip = resolve(site.host);
-        return ip != null && fetch(site.host, site.path, ip, 443, socksPort);
+        if (ip == null) return "DNS";
+        return fetchError(site.host, site.path, ip, 443, socksPort);
     }
 
     /**
@@ -316,23 +361,42 @@ final class NetProbe {
      * напрямую при socksPort 0), TLS с SNI и проверкой сертификата, GET, чтение ответа.
      */
     static boolean fetch(String host, String path, InetAddress ip, int port, int socksPort) {
+        return fetchError(host, path, ip, port, socksPort) == null;
+    }
+
+    /**
+     * То же, что {@link #fetch}, но с причиной: null — открылся; «TCP» — нет соединения;
+     * «TLS» — нет ответа на рукопожатие; «сброс» — соединение сброшено; «серт.» — чужой
+     * сертификат (подмена); «N КБ» — данные пошли и застыли (ТСПУ «замораживает» соединение);
+     * «HTTP» — ответ не HTTP.
+     */
+    @Nullable
+    static String fetchError(String host, String path, InetAddress ip, int port, int socksPort) {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SITE_DEADLINE_MS);
         Socket raw = new Socket();
         try {
             raw.setSoTimeout(READ_TIMEOUT_MS);
             raw.setTcpNoDelay(true);
-            if (socksPort > 0) {
-                raw.connect(new InetSocketAddress("127.0.0.1", socksPort), CONNECT_TIMEOUT_MS);
-                socks5Connect(raw, ip, port);
-            } else {
-                raw.connect(new InetSocketAddress(ip, port), CONNECT_TIMEOUT_MS);
+            try {
+                if (socksPort > 0) {
+                    raw.connect(new InetSocketAddress("127.0.0.1", socksPort), CONNECT_TIMEOUT_MS);
+                    socks5Connect(raw, ip, port);
+                } else {
+                    raw.connect(new InetSocketAddress(ip, port), CONNECT_TIMEOUT_MS);
+                }
+            } catch (IOException e) {
+                return "TCP";
             }
             SSLSocket ssl = (SSLSocket) tlsFactory.createSocket(raw, host, port, true);
             SSLParameters params = ssl.getSSLParameters();
             params.setServerNames(Collections.singletonList(new SNIHostName(host)));
             ssl.setSSLParameters(params);
-            ssl.startHandshake();
-            if (!hostnameVerifier.verify(host, ssl.getSession())) return false;
+            try {
+                ssl.startHandshake();
+            } catch (IOException e) {
+                return ioReason(e, "TLS");
+            }
+            if (!hostnameVerifier.verify(host, ssl.getSession())) return "серт.";
             OutputStream out = ssl.getOutputStream();
             out.write(("GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: " + UA
                     + "\r\nAccept: text/html,*/*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n")
@@ -343,19 +407,23 @@ final class NetProbe {
             byte[] head = new byte[5];
             int headLen = 0;
             int total = 0;
-            while (total < ENOUGH_BYTES) {
-                long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
-                if (left <= 0) return false;  // данные идут слишком медленно или застряли
-                ssl.setSoTimeout((int) Math.min(READ_TIMEOUT_MS, left));
-                int n = in.read(buf);
-                if (n < 0) break;  // весь ответ получен
-                for (int i = 0; i < n && headLen < head.length; i++) head[headLen++] = buf[i];
-                total += n;
+            try {
+                while (total < ENOUGH_BYTES) {
+                    long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+                    if (left <= 0) return total / 1024 + " КБ";  // данные идут слишком медленно или застряли
+                    ssl.setSoTimeout((int) Math.min(READ_TIMEOUT_MS, left));
+                    int n = in.read(buf);
+                    if (n < 0) break;  // весь ответ получен
+                    for (int i = 0; i < n && headLen < head.length; i++) head[headLen++] = buf[i];
+                    total += n;
+                }
+            } catch (IOException e) {
+                return ioReason(e, total / 1024 + " КБ");
             }
             return headLen == head.length
-                    && "HTTP/".equals(new String(head, StandardCharsets.US_ASCII));
+                    && "HTTP/".equals(new String(head, StandardCharsets.US_ASCII)) ? null : "HTTP";
         } catch (IOException | RuntimeException e) {
-            return false;
+            return "ошибка";
         } finally {
             try {
                 raw.close();
@@ -363,6 +431,12 @@ final class NetProbe {
                 // уже закрыт
             }
         }
+    }
+
+    /** Сброс соединения — «сброс», иначе (тайм-аут, обрыв) — where. */
+    private static String ioReason(IOException e, String where) {
+        String m = String.valueOf(e.getMessage()).toLowerCase(java.util.Locale.ROOT);
+        return m.contains("reset") ? "сброс" : where;
     }
 
     /** SOCKS5 CONNECT по IP — так же, как к ByeDPI подключается tun2socks. */
