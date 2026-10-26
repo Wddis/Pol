@@ -41,6 +41,11 @@ APP_UID=2000
 TUNNEL_UID=2001
 LOAD_SECONDS=40
 LOAD_PARALLEL=15
+# Запросов DNS в секунду всего — в разы больше, чем у телефона. Каждый запрос — своя SOCKS-UDP-
+# ассоциация (3 места пула ByeDPI): без закрытия после ответа при тайм-ауте hev 20 с их было бы
+# 100 × 20 × 3 = 6000 > -c 4096. Без ограничения поток упирается только в скорость машины
+# (до 0.8.9 его неявно ограничивала задержка hev 0,2 с на каждую ассоциацию)
+LOAD_RATE=100
 CDN_HOST=scontent-hel3-1.cdninstagram.com
 TG_IP=149.154.167.51
 META_IP=31.13.72.174
@@ -258,7 +263,7 @@ quic() { PHONE python3 "$LAB/lab.py" quiccheck "$1" "${2:-3}" 2>/dev/null || tru
 pool_full() { grep -c 'pool is full' "$TMP/byedpi.log" || true; }
 
 load_test() {  # поток DNS + сайт каждые 5 с; печатает «открылся N из M»
-    PHONE python3 "$LAB/lab.py" dnsload "$LOAD_SECONDS" "$LOAD_PARALLEL" "$dns" > "$TMP/load.txt" 2>&1 &
+    PHONE python3 "$LAB/lab.py" dnsload "$LOAD_SECONDS" "$LOAD_PARALLEL" "$dns" "$LOAD_RATE" > "$TMP/load.txt" 2>&1 &
     local load=$! good=0 total=0
     for _ in $(seq 1 $((LOAD_SECONDS / 5))); do
         sleep 5
@@ -366,6 +371,10 @@ for PROFILE in $PROFILES; do
     if APPLAB probe "$PORT" "$TMP/ca.pem" > "$TMP/probe.txt"; then probe_ok=1; else probe_ok=0; fi
     sed 's/^/  /' "$TMP/probe.txt"
     check "$probe_ok" "NetProbe: DNS через SOCKS-UDP, обычные сайты, сторож"
+    r=$(PHONE python3 "$LAB/lab.py" dnspair "$dns" 20 2>&1 || true)
+    echo "    DNS, два запроса с одного сокета (A и AAAA, как glibc), третий сразу и через 3 с: $r"
+    check "$([ "${r%% *}" = ok ] && echo 1 || echo 0)" \
+        "DNS-ассоциация не закрывается раньше времени (ByeDPI закрывает её через 2 с после ответов)"
     st=$(stats "$HELPER_PORT")
     echo "$st" | sed 's/^/    /'
     check "$(echo "$st" | grep -q 'QUIC (UDP 443):.*Meta' && echo "$st" | grep -q 'Telegram → Psiphon' && echo 1 || echo 0)" \
@@ -418,7 +427,7 @@ for PROFILE in $PROFILES; do
     fi
 
     if [ "$PROFILE" = oct2026 ]; then
-        echo "3) Нагрузка как у телефона (DNS $LOAD_PARALLEL потоков, ${LOAD_SECONDS} с):"
+        echo "3) Нагрузка как у телефона (DNS $LOAD_PARALLEL потоков, $LOAD_RATE запросов/с, ${LOAD_SECONDS} с):"
         load_test
         check "$([ "$LOAD_GOOD" = "$LOAD_TOTAL" ] && echo 1 || echo 0)" "сайт открывался всё время: $LOAD_GOOD из $LOAD_TOTAL"
         check "$([ "$(pool_full)" = 0 ] && echo 1 || echo 0)" "пул ByeDPI не переполнялся"

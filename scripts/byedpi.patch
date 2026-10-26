@@ -1,6 +1,6 @@
 diff -ru a/conev.h b/conev.h
---- a/conev.h	2026-10-26 22:50:25.199422665 +0000
-+++ b/conev.h	2026-10-26 22:50:25.242412020 +0000
+--- a/conev.h	2026-10-26 23:10:16.399797349 +0000
++++ b/conev.h	2026-10-26 23:10:16.412394197 +0000
 @@ -84,6 +84,7 @@
      ssize_t recv_count;
      ssize_t round_sent;
@@ -10,8 +10,8 @@ diff -ru a/conev.h b/conev.h
      struct desync_params *dp;
      uint64_t dp_mask;
 diff -ru a/extend.c b/extend.c
---- a/extend.c	2026-10-26 22:50:25.199260757 +0000
-+++ b/extend.c	2026-10-26 22:50:25.211309429 +0000
+--- a/extend.c	2026-10-26 23:10:16.399295794 +0000
++++ b/extend.c	2026-10-26 23:10:16.412551648 +0000
 @@ -247,6 +247,12 @@
      if (dst->sa.sa_family == AF_INET6) {
          len = sizeof(dst->in6.sin6_addr);
@@ -37,8 +37,8 @@ diff -ru a/extend.c b/extend.c
          return send(val->fd, buffer, n, 0);
      }
 diff -ru a/main.c b/main.c
---- a/main.c	2026-10-26 22:50:25.199289935 +0000
-+++ b/main.c	2026-10-26 22:50:25.211519042 +0000
+--- a/main.c	2026-10-26 23:10:16.399417044 +0000
++++ b/main.c	2026-10-26 23:10:16.412718865 +0000
 @@ -119,6 +119,7 @@
      "    -r, --tlsrec <pos_t>      Make TLS record at position\n"
      "    -m, --tlsminor <ver>      Change minor version of TLS\n"
@@ -67,8 +67,8 @@ diff -ru a/main.c b/main.c
          case 'Z':
              params.wait_send = 1;
 diff -ru a/params.h b/params.h
---- a/params.h	2026-10-26 22:50:25.199556665 +0000
-+++ b/params.h	2026-10-26 22:50:25.211651115 +0000
+--- a/params.h	2026-10-26 23:10:16.399921502 +0000
++++ b/params.h	2026-10-26 23:10:16.412894938 +0000
 @@ -96,6 +96,7 @@
      bool md5sig;
      struct packet fake_data;
@@ -78,28 +78,48 @@ diff -ru a/params.h b/params.h
      int fake_sni_count;
      const char **fake_sni_list;
 diff -ru a/proxy.c b/proxy.c
---- a/proxy.c	2026-10-26 22:50:25.199377929 +0000
-+++ b/proxy.c	2026-10-26 22:50:25.243318590 +0000
-@@ -808,6 +808,9 @@
+--- a/proxy.c	2026-10-26 23:10:16.399674756 +0000
++++ b/proxy.c	2026-10-26 23:10:16.450999370 +0000
+@@ -733,8 +733,14 @@
+ }
+ 
+ 
++#define DNS_CLOSE_MS 2000
++
+ int on_udp_tunnel(struct poolhd *pool, struct eval *val, int et)
+ {
++    if (et == POLLTIMEOUT) {
++        // DNS: все запросы отвечены, новых не было — закрыть ассоциацию
++        return val->dns_wait ? 0 : -1;
++    }
+     struct buffer *buff = buff_ppop(pool, params.bfsize);
+     if (!buff) {
+         return -1;
+@@ -808,6 +814,12 @@
                  pair->addr = addr;
              }
              ns = udp_hook(pair, data + offs, n - offs, &pair->addr);
 +            if (ns >= 0 && ntohs(pair->addr.in.sin_port) == 53) {
 +                pair->dns_wait++;
++                if (pair->tv_ms) {
++                    remove_timer(pool, pair);
++                }
 +            }
          }
          else {
              map_fix(&addr, 0);
-@@ -818,6 +821,13 @@
+@@ -818,6 +830,15 @@
                  return -1;
              }
              ns = send(pair->fd, data - offs, offs + n, 0);
-+            // Ответ DNS, и все запросы ассоциации отвечены: закрыть её целиком (UDP-сокеты
-+            // и управляющее соединение). Резолвер телефона берёт на каждый запрос новый сокет —
-+            // новую ассоциацию; иначе каждая держала 3 места пула до тайм-аута tun2socks (20 с)
++            // Ответ DNS, и все запросы ассоциации отвечены: через DNS_CLOSE_MS без новых запросов
++            // закрыть её целиком (UDP-сокеты и управляющее соединение). Резолвер телефона берёт
++            // на каждый запрос новый сокет — новую ассоциацию; иначе каждая держала 3 места пула
++            // до тайм-аута tun2socks (20 с). Сразу нельзя: A и AAAA идут с одного сокета, и второй
++            // запрос (или ответ, ещё не прочитанный tun2socks) терялся — повтор резолвера через 5 с
 +            if (ns >= 0 && ntohs(addr.in.sin_port) == 53
 +                    && val->dns_wait > 0 && --val->dns_wait == 0) {
-+                return -1;
++                set_timer(pool, val, DNS_CLOSE_MS);
 +            }
          }
          if (ns < 0) {

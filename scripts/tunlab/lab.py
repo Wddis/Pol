@@ -16,9 +16,9 @@ IPv6 у «оператора» нет (как в мобильной сети б�
 в VPN (routes 0). routes 1 — IPv6 в VPN без IPv6 у оператора: так было до 0.8.6, и сайты с AAAA
 не открывались (tun2socks принимает соединение раньше, чем ByeDPI узнаёт, что IPv6 нет).
 
-Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков> [dns]
+Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков> [dns [запросов/с]]
          | socks <порт> [мс задержки] [кбит/с] | tgcheck <сек> | quiccheck <ip> <сек> | notun
-         | dnscheck [dns] | dump
+         | dnscheck [dns] | dnspair <dns> <раз> | dump
 Нужен pyroute2 (pip install pyroute2) и root.
 """
 import socket
@@ -263,8 +263,10 @@ def serve(cert, key):
 
 # ---------- Нагрузка «как телефон» ----------
 
-def dnsload(seconds, parallel, server=DNS_IP):
-    """DNS-запросы через VPN, каждый с нового сокета (новый порт), как резолвер Android."""
+def dnsload(seconds, parallel, server=DNS_IP, rate=0):
+    """DNS-запросы через VPN, каждый с нового сокета (новый порт), как резолвер Android;
+    rate — всего запросов в секунду (0 — без пауз, сколько успеют потоки)."""
+    interval = parallel / rate if rate else 0
     stop = time.time() + seconds
     ok = fail = 0
     lock = threading.Lock()
@@ -274,6 +276,7 @@ def dnsload(seconds, parallel, server=DNS_IP):
         i = 0
         while time.time() < stop:
             i += 1
+            t0 = time.time()
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(3)
             q = ((k * 7919 + i) & 0xffff).to_bytes(2, "big") + b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" \
@@ -291,6 +294,8 @@ def dnsload(seconds, parallel, server=DNS_IP):
                     ok += 1
                 else:
                     fail += 1
+            if interval:
+                time.sleep(max(0.0, interval - (time.time() - t0)))
 
     threads = [threading.Thread(target=worker, args=(k,)) for k in range(parallel)]
     for t in threads:
@@ -298,6 +303,42 @@ def dnsload(seconds, parallel, server=DNS_IP):
     for t in threads:
         t.join()
     print(f"DNS-нагрузка: ответов {ok} из {ok + fail} за {seconds} с")
+
+
+def dnspair(server, rounds):
+    """Как glibc: A и AAAA с одного сокета подряд, затем ещё запрос на тот же сокет сразу после
+    ответов и ещё один через 3 с (ассоциация в ByeDPI к тому времени закрыта — нужна новая).
+    Все ответы — быстрее секунды, иначе резолвер ждёт повтора 5 с. Печатает «ok N/N, … с»."""
+    def q(tid, qtype):
+        return struct.pack(">H", tid) + b"\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00" \
+            + b"\x02ya\x02ru\x00" + struct.pack(">HH", qtype, 1)
+
+    def wait(s, tids):
+        while tids:
+            tids.discard(struct.unpack(">H", s.recv(512)[:2])[0])
+
+    good, worst = 0, 0.0
+    for r in range(rounds):
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(1)
+        t0 = time.time()
+        try:
+            s.sendto(q(4 * r, 1), (server, 53))
+            s.sendto(q(4 * r + 1, 28), (server, 53))
+            wait(s, {4 * r, 4 * r + 1})
+            s.sendto(q(4 * r + 2, 1), (server, 53))
+            wait(s, {4 * r + 2})
+            if r == 0:
+                time.sleep(3)
+                s.sendto(q(4 * r + 3, 1), (server, 53))
+                wait(s, {4 * r + 3})
+            good += 1
+        except OSError:
+            pass
+        worst = max(worst, time.time() - t0 - (3 if r == 0 else 0))
+        s.close()
+    print(f"{'ok' if good == rounds else 'fail'} {good}/{rounds}, дольше всего {worst:.2f} с")
+    sys.exit(0 if good == rounds else 1)
 
 
 # ---------- «Psiphon»: SOCKS5 (CONNECT) с выходом мимо оператора ----------
@@ -430,7 +471,9 @@ if __name__ == "__main__":
     elif cmd == "srv":
         serve(sys.argv[2], sys.argv[3])
     elif cmd == "dnsload":
-        dnsload(int(sys.argv[2]), int(sys.argv[3]), *sys.argv[4:5])
+        dnsload(int(sys.argv[2]), int(sys.argv[3]), *sys.argv[4:5], *(int(a) for a in sys.argv[5:6]))
+    elif cmd == "dnspair":
+        dnspair(sys.argv[2], int(sys.argv[3]))
     elif cmd == "socks":
         socks(*(int(a) for a in sys.argv[2:5]))
     elif cmd == "tgcheck":
