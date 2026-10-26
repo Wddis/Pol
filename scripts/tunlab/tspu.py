@@ -22,6 +22,7 @@ ClientHello, перестановки (disorder), TTL, флаг URG (OOB), от�
 
 Запуск (root, в netns isp): tspu.py <профиль> [журнал решений]
 """
+import array
 import fcntl
 import ipaddress
 import os
@@ -77,6 +78,42 @@ def setup():
             with open(f"/proc/sys/net/ipv4/conf/{k}/{opt}", "w") as f:
                 f.write(val)
     return a, b
+
+
+def csum(data):
+    if len(data) % 2:
+        data += b"\0"
+    a = array.array("H", data)
+    if sys.byteorder == "little":
+        a.byteswap()
+    s = sum(a)
+    while s >> 16:
+        s = (s & 0xffff) + (s >> 16)
+    return ~s & 0xffff
+
+
+def fix_l4(pkt):
+    """Пересчитать контрольную сумму TCP/UDP. На раннере CI ядро отдаёт пакет в TUN с недосчитанной
+    суммой (её досчитывает «сетевая карта» veth), а записанный в dpi1 пакет уже никто не досчитает —
+    телефон его отбрасывает (так ответы DNS не доходили)."""
+    if len(pkt) < 20 or pkt[0] >> 4 != 4 or struct.unpack(">H", pkt[6:8])[0] & 0x3fff:
+        return pkt  # не IPv4 или фрагмент
+    ihl = (pkt[0] & 15) * 4
+    proto = pkt[9]
+    if proto not in (6, 17):
+        return pkt
+    total = struct.unpack(">H", pkt[2:4])[0]
+    l4 = bytearray(pkt[ihl:total])
+    off = 16 if proto == 6 else 6
+    if len(l4) < off + 2:
+        return pkt
+    l4[off:off + 2] = b"\0\0"
+    pseudo = pkt[12:20] + struct.pack(">BBH", 0, proto, len(l4))
+    c = csum(pseudo + bytes(l4))
+    if proto == 17 and c == 0:
+        c = 0xffff
+    l4[off:off + 2] = struct.pack(">H", c)
+    return pkt[:ihl] + bytes(l4) + pkt[total:]
 
 
 def match(host, names):
@@ -214,7 +251,7 @@ def main():
                 del flows[k]
             last_gc = now
         if len(pkt) < 20 or pkt[0] >> 4 != 4:
-            os.write(fout, pkt)
+            os.write(fout, fix_l4(pkt))
             continue
         ihl = (pkt[0] & 15) * 4
         ttl, proto = pkt[8], pkt[9]
@@ -224,7 +261,7 @@ def main():
             if any(dst in n for n in ipb) and len(l4) > 8:
                 continue
         if proto != 6 or len(l4) < 20:
-            os.write(fout, pkt)
+            os.write(fout, fix_l4(pkt))
             continue
         sport, dport, seq = struct.unpack(">HHI", l4[:8])
         doff = (l4[12] >> 4) * 4
@@ -241,7 +278,7 @@ def main():
         if to_srv and flags & 0x02:  # SYN
             f = flows[key] = Flow(seq)
         if f is None:
-            os.write(fout, pkt)
+            os.write(fout, fix_l4(pkt))
             continue
         f.seen = now
         if f.state == "block":
@@ -266,7 +303,7 @@ def main():
             f.srv_bytes += len(payload)
             if f.srv_bytes > prof["freeze"][f.host]:
                 continue
-        os.write(fout, pkt)
+        os.write(fout, fix_l4(pkt))
 
 
 if __name__ == "__main__":
