@@ -281,11 +281,11 @@ try {
     assert.equal(rows[0][0].callback_data, "buy:month:1:0");
   });
 
-  await step("тарифы: выбор срока и устройств, цена «[ЦЕНА]», лимиты 1–5", async () => {
+  await step("тарифы: выбор срока и устройств, «бесплатно», лимиты 1–5", async () => {
     let s = await alice.tap("Купить ключ");
     assert.ok(s.text.includes("Срок: <b>1 месяц</b> (30 дней)"));
-    assert.ok(s.text.includes("[ЦЕНА]"));
-    assert.ok(s.text.includes("сейчас ключ выдаётся без оплаты"));
+    assert.ok(s.text.includes("Итого: <b>бесплатно</b>"));
+    assert.ok(s.text.includes("Сейчас ключ выдаётся без оплаты"));
     assert.ok(alice.button("● 1 месяц"));
     s = await alice.tap("3 месяца");
     assert.ok(s.text.includes("(90 дней)"));
@@ -433,7 +433,7 @@ try {
     await alice.say("/profile");
     let s = await alice.tap("Продлить");
     assert.ok(s.text.includes("<b>Продление</b>"));
-    assert.ok(s.text.includes("сейчас продление без оплаты"));
+    assert.ok(s.text.includes("Сейчас продление без оплаты"));
     s = await alice.tap("1 неделя");
     assert.equal(s.toast, "Продлено: +1 неделя");
     assert.ok(s.text.includes("<b>37 дней</b> осталось"));
@@ -779,7 +779,7 @@ try {
     assert.ok(s.text.startsWith("<b>Продление</b>"));
     s = await bob.say("/start buy");
     assert.ok(s.text.startsWith("<b>Тариф</b>"));
-    assert.ok(s.text.includes("Оплата: <b>СБП</b> или <b>Telegram Stars</b>"));
+    assert.ok(s.text.includes("Оплата: <b>СБП</b> (перевод с кодом) или <b>Telegram Stars</b>"));
     s = await bob.say("/start whatever");
     assert.ok(s.text.startsWith("<b>ODA</b>"));
   });
@@ -790,6 +790,169 @@ try {
     }
     const r = await app("/v1/activate", { key: aliceKey, device_id: "brute-phone-77" }, "203.0.113.250");
     assert.equal(r.status, 429);
+  });
+
+  // ---------- оплата ----------
+  const carol = new User(1004, "carol");
+  const setValue = async (label, value) => {
+    await boss.tap(label);
+    assert.ok(boss.screen.text.includes("Сейчас:"), boss.screen.text);
+    const s = await boss.say(value);
+    assert.ok(s.text.startsWith("<b>Цены и оплата</b>"), s.text);
+    return s;
+  };
+
+  await step("администратор: цены, реквизиты СБП и включение оплаты", async () => {
+    let s = await boss.say("/admin");
+    s = await boss.tap("Цены и оплата");
+    assert.ok(s.text.includes("<b>выдаются бесплатно</b>"));
+    await setValue("«1 месяц», ₽", "199");
+    s = await boss.say("/admin");
+    await boss.tap("Цены и оплата");
+    await boss.tap("«1 месяц», ₽");
+    s = await boss.say("сто");
+    assert.ok(s.text.includes("Нужно целое число"), "не число — просьба прислать ещё раз");
+    s = await boss.say("249");
+    assert.ok(s.text.includes("Цена «1 месяц», ₽: <b>249</b>"));
+    await setValue("«1 месяц», звёзды", "150");
+    await setValue("«1 неделя», звёзды", "50");
+    await setValue("СБП: номер телефона", "+7 900 123-45-67");
+    s = await setValue("СБП: банк", "Т-Банк");
+    assert.ok(s.text.includes("СБП: банк: <b>Т-Банк</b>"));
+    s = await boss.tap("Включить оплату");
+    assert.equal(s.toast, "Оплата включена");
+    assert.ok(s.text.includes("Оплата включена: СБП — да, звёзды — да"), s.text);
+  });
+
+  let order;
+  await step("СБП: тариф → «Оплатить» → реквизиты и код платежа", async () => {
+    let s = await carol.say("/buy");
+    assert.ok(s.text.includes("Итого: <b>249 ₽ или 150 ⭐</b>"), s.text);
+    s = await carol.tap("Оплатить");
+    assert.ok(s.text.startsWith("<b>Оплата</b>"));
+    assert.ok(s.text.includes("<b>СБП</b> — 249 ₽") && s.text.includes("<b>Telegram Stars</b> — 150 ⭐"));
+    s = await carol.tap("СБП — 249 ₽");
+    assert.ok(s.text.startsWith("<b>Оплата по СБП</b>"));
+    assert.ok(s.text.includes("<code>+7 900 123-45-67</code>") && s.text.includes("Банк: Т-Банк"));
+    order = s.text.match(/Код платежа: <code>(\d{6})<\/code>/)?.[1];
+    assert.ok(order, "код из 6 цифр");
+    assert.equal(carol.button("Копировать код").copy_text.text, order);
+  });
+
+  await step("«Я оплатил» → проверка у администратора → «Подтвердить» → ключ покупателю", async () => {
+    const n = calls.length;
+    const paidCb = carol.button("Я оплатил").callback_data;
+    let s = await carol.press(paidCb);
+    assert.ok(s.text.startsWith("<b>Проверяем платёж</b>"));
+    const msg = sentTo(n, 1999);
+    assert.equal(msg.length, 1, "администратору — одна заявка");
+    assert.ok(msg[0].params.text.includes(`<code>${order}</code>`) && msg[0].params.text.includes("249 ₽") && msg[0].params.text.includes("@carol"));
+    const ok = msg[0].params.reply_markup.inline_keyboard.flat().find((x) => x.text === "Подтвердить").callback_data;
+    s = await carol.press(ok, { expectEdit: false });
+    assert.equal(s.toast, "Нет доступа", "покупатель сам себе не подтвердит");
+    const n2 = calls.length;
+    s = await carol.press(paidCb);
+    assert.equal(s.toast, "Уже проверяем");
+    assert.equal(sentTo(n2, 1999).length, 0, "второе нажатие — администратору не дублируется");
+    // Список оплат в меню администратора
+    s = await boss.say("/admin");
+    assert.ok(s.text.includes("Ждут проверки оплаты: 1"));
+    s = await boss.tap("Оплаты (1)");
+    assert.ok(s.text.includes(`<code>${order}</code> — 249 ₽`));
+    s = await boss.tap(order);
+    assert.ok(s.text.startsWith("<b>Оплата по СБП — проверьте перевод</b>"));
+    const m = calls.length;
+    s = await boss.tap("Подтвердить");
+    assert.ok(s.text.startsWith("<b>Оплачено</b>"), s.text);
+    const toCarol = sentTo(m, 1004);
+    assert.equal(toCarol.length, 1);
+    assert.ok(toCarol[0].params.text.startsWith("<b>Ключ готов</b>"));
+    const key = toCarol[0].params.text.match(/<code>(ODA-[^<]+)<\/code>/)[1];
+    assert.ok(KEY_RE.test(key));
+    // Второе «Подтвердить» второго ключа не выдаст
+    const k = calls.length;
+    s = await boss.press(ok, { expectEdit: false });
+    assert.ok(s.toast.startsWith("Заказ уже закрыт"));
+    assert.equal(sentTo(k, 1004).length, 0);
+  });
+
+  await step("СБП: «Отклонить» → покупателю «Платёж не найден»; «Отменить» заказ", async () => {
+    await carol.say("/buy");
+    await carol.tap("Оплатить");
+    await carol.tap("СБП");
+    const n = calls.length;
+    await carol.tap("Я оплатил");
+    const no = sentTo(n, 1999)[0].params.reply_markup.inline_keyboard.flat().find((x) => x.text === "Отклонить").callback_data;
+    const m = calls.length;
+    const s = await boss.press(no);
+    assert.ok(s.text.startsWith("<b>Отклонено</b>"));
+    assert.ok(sentTo(m, 1004)[0].params.text.startsWith("<b>Платёж не найден</b>"));
+    await carol.say("/buy");
+    await carol.tap("Оплатить");
+    await carol.tap("СБП");
+    const paidCb = carol.button("Я оплатил").callback_data;
+    const c = await carol.tap("Отменить");
+    assert.ok(c.text.startsWith("<b>Заказ отменён</b>"));
+    const again = await carol.press(paidCb, { expectEdit: false });
+    assert.equal(again.toast, "Заказ уже закрыт", "отменённый заказ не оплатить");
+    assert.equal((await mallory.press(paidCb, { expectEdit: false })).toast, "Заказ не найден", "чужой заказ не виден");
+  });
+
+  await step("Telegram Stars: счёт XTR → pre_checkout → оплата → ключ; повтор не выдаёт второй", async () => {
+    await carol.say("/buy");
+    await carol.tap("Оплатить");
+    const n = calls.length;
+    const s = await carol.press(carol.button("Telegram Stars").callback_data, { expectEdit: false });
+    assert.ok(s.toast.includes("Счёт"));
+    const inv = calls.slice(n).find((c) => c.method === "sendInvoice").params;
+    assert.equal(inv.currency, "XTR");
+    assert.deepEqual(inv.prices, [{ label: "1 месяц", amount: 150 }]);
+    const pre = async (amount, from = carol) => {
+      const k = calls.length;
+      await update({ pre_checkout_query: { id: `pc${updateId}`, from: from.from(), currency: "XTR", total_amount: amount, invoice_payload: inv.payload } });
+      return calls.slice(k).find((c) => c.method === "answerPreCheckoutQuery").params;
+    };
+    assert.equal((await pre(1)).ok, false, "другая сумма — отказ");
+    assert.equal((await pre(150, mallory)).ok, false, "чужой заказ — отказ");
+    assert.equal((await pre(150)).ok, true);
+    const paid = { message_id: 7, date: 0, chat: { id: 1004, type: "private" }, from: carol.from(),
+      successful_payment: { currency: "XTR", total_amount: 150, invoice_payload: inv.payload, telegram_payment_charge_id: "stxTEST1" } };
+    let m = calls.length;
+    await update({ message: paid });
+    const got = sentTo(m, 1004);
+    assert.equal(got.length, 1);
+    assert.ok(got[0].params.text.startsWith("<b>Ключ готов</b>"));
+    m = calls.length;
+    await update({ message: paid });
+    assert.equal(sentTo(m, 1004).length, 0, "то же обновление ещё раз — без второго ключа");
+    assert.equal((await pre(150)).ok, false, "оплаченный заказ второй раз не оплатить");
+  });
+
+  await step("продление за звёзды: цена по числу устройств ключа, ключ тот же", async () => {
+    let s = await carol.say("/profile");
+    const key = s.text.match(/<code>(ODA-[^<]+)<\/code>/)[1];
+    s = await carol.tap("Продлить");
+    assert.ok(carol.button("1 месяц · 249 ₽"));
+    s = await carol.tap("1 неделя");
+    assert.ok(s.text.includes(`Продление ключа <code>${key}</code>`));
+    assert.ok(!s.text.includes("<b>СБП</b>"), "неделя без цены в ₽ — только звёзды");
+    const n = calls.length;
+    await carol.press(carol.button("Telegram Stars — 50 ⭐").callback_data, { expectEdit: false });
+    const inv = calls.slice(n).find((c) => c.method === "sendInvoice").params;
+    const m = calls.length;
+    await update({ message: { message_id: 8, date: 0, chat: { id: 1004, type: "private" }, from: carol.from(),
+      successful_payment: { currency: "XTR", total_amount: 50, invoice_payload: inv.payload, telegram_payment_charge_id: "stxTEST2" } } });
+    const got = sentTo(m, 1004)[0].params.text;
+    assert.ok(got.startsWith("<b>Ключ продлён: +1 неделя</b>") && got.includes(key), got);
+  });
+
+  await step("администратор возвращает бесплатный режим", async () => {
+    await boss.say("/admin");
+    await boss.tap("Цены и оплата");
+    const s = await boss.tap("Выдавать бесплатно");
+    assert.equal(s.toast, "Ключи выдаются бесплатно");
+    const t = await carol.say("/buy");
+    assert.ok(t.text.includes("Итого: <b>бесплатно</b>"));
   });
 
   await step("база: пользователи и ключи на месте (D1)", async () => {

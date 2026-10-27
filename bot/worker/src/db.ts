@@ -44,6 +44,25 @@ export interface User {
   trial_used: boolean;
 }
 
+export interface Order {
+  id: number;
+  code: string;
+  tg_id: number;
+  kind: "new" | "extend";
+  period: string;
+  devices: number;
+  key: string | null;
+  method: "sbp" | "stars";
+  amount: number;
+  status: "new" | "claimed" | "paid" | "rejected" | "cancelled";
+  charge_id: string | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/** Заказ СБП ждёт перевода не дольше суток. */
+export const ORDER_TTL = 86400;
+
 export interface Ban {
   grp: string;
   kind: string;
@@ -270,7 +289,8 @@ export class Db {
           "(SELECT COUNT(*) FROM keys WHERE activated_at IS NULL) AS fresh, " +
           "(SELECT COUNT(*) FROM devices) AS devices, " +
           "(SELECT COUNT(*) FROM devices WHERE vpn_on=1 AND last_seen > ?) AS online, " +
-          `(SELECT COUNT(DISTINCT grp) FROM bans WHERE ${ACTIVE_BAN}) AS bans`,
+          `(SELECT COUNT(DISTINCT grp) FROM bans WHERE ${ACTIVE_BAN}) AS bans, ` +
+          "(SELECT COUNT(*) FROM orders WHERE status='claimed') AS orders",
       )
       .bind(t, t - ONLINE_WINDOW, t)
       .first<Record<string, number>>();
@@ -459,6 +479,62 @@ export class Db {
 
   async addSupport(tgId: number, text: string, t = now()): Promise<void> {
     await this.d1.prepare("INSERT INTO support(tg_id, text, created_at) VALUES(?,?,?)").bind(tgId, text, t).run();
+  }
+
+  // ---------- настройки и оплата ----------
+
+  async setSetting(name: string, value: string): Promise<void> {
+    await this.d1
+      .prepare("INSERT INTO settings(name, value) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value")
+      .bind(name, value)
+      .run();
+  }
+
+  /** Новый заказ; код СБП — 6 цифр, не повторяется среди незакрытых заказов. */
+  async createOrder(o: Pick<Order, "tg_id" | "kind" | "period" | "devices" | "key" | "method" | "amount">, t = now()): Promise<Order> {
+    for (let i = 0; i < 20; i++) {
+      const n = crypto.getRandomValues(new Uint32Array(1))[0] % 900000 + 100000;
+      const code = String(n);
+      const busy = await this.d1
+        .prepare("SELECT 1 AS x FROM orders WHERE code=? AND status IN ('new','claimed') AND created_at > ?")
+        .bind(code, t - ORDER_TTL)
+        .first();
+      if (busy) continue;
+      const r = await this.d1
+        .prepare(
+          "INSERT INTO orders(code, tg_id, kind, period, devices, key, method, amount, status, created_at, updated_at) " +
+            "VALUES(?,?,?,?,?,?,?,?,'new',?,?)",
+        )
+        .bind(code, o.tg_id, o.kind, o.period, o.devices, o.key, o.method, o.amount, t, t)
+        .run();
+      return (await this.getOrder(Number(r.meta.last_row_id)))!;
+    }
+    throw new Error("нет свободного кода заказа");
+  }
+
+  async getOrder(id: number): Promise<Order | null> {
+    return (await this.d1.prepare("SELECT * FROM orders WHERE id=?").bind(id).first<Order>()) ?? null;
+  }
+
+  /** Смена статуса только из ожидаемого (два нажатия «Подтвердить» не выдадут два ключа). */
+  async moveOrder(id: number, from: Order["status"][], to: Order["status"], extra: { key?: string; charge_id?: string } = {}, t = now()): Promise<boolean> {
+    const r = await this.d1
+      .prepare(
+        `UPDATE orders SET status=?, updated_at=?, key=COALESCE(?, key), charge_id=COALESCE(?, charge_id) ` +
+          `WHERE id=? AND status IN (${from.map(() => "?").join(",")})`,
+      )
+      .bind(to, t, extra.key ?? null, extra.charge_id ?? null, id, ...from)
+      .run();
+    return r.meta.changes > 0;
+  }
+
+  /** Заказы, ждущие проверки администратором (нажали «Я оплатил»), — старые первыми. */
+  async claimedOrders(limit = 20): Promise<Order[]> {
+    return (await this.d1.prepare("SELECT * FROM orders WHERE status='claimed' ORDER BY updated_at LIMIT ?").bind(limit).all<Order>()).results;
+  }
+
+  async countClaimed(): Promise<number> {
+    return (await this.d1.prepare("SELECT COUNT(*) AS n FROM orders WHERE status='claimed'").first<number>("n")) ?? 0;
   }
 
   // ---------- защита от подбора ----------

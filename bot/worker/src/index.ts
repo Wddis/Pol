@@ -1,6 +1,6 @@
 // Точка входа Cloudflare Worker: webhook Telegram (/tg), сервер ключей (/v1/*, /health) и настройка (/setup).
 import { KeyApi, json } from "./api";
-import { type Env, settings } from "./config";
+import { type Env, loadSettings, settings } from "./config";
 import { Db } from "./db";
 import { ADMIN_COMMANDS, Bot, COMMANDS, DESCRIPTION, SHORT_DESCRIPTION } from "./handlers";
 import { Signer } from "./license";
@@ -40,7 +40,7 @@ export default {
         return new Response("ok");
       }
       try {
-        await new Bot(settings(env), db, tg).handle(update);
+        await new Bot(await loadSettings(env, env.DB), db, tg).handle(update);
       } catch (e) {
         // Ответ 200 и при ошибке: иначе Telegram будет присылать то же обновление снова и снова
         console.error("update:", e instanceof Error ? e.stack : e);
@@ -54,7 +54,7 @@ export default {
       const hook = await tg.call("setWebhook", {
         url: `${url.origin}/tg`,
         secret_token: env.WEBHOOK_SECRET,
-        allowed_updates: ["message", "callback_query"],
+        allowed_updates: ["message", "callback_query", "pre_checkout_query"],
         drop_pending_updates: true,
       });
       const commands = await tg.call("setMyCommands", { commands: COMMANDS });

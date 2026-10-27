@@ -2,10 +2,10 @@
 // ключи любого срока (минуты … бессрочно), список ключей и устройств, кто сейчас в VPN, удаление ключей,
 // блокировки (1 день, неделя, месяц, навсегда) с причиной, ответы на обращения в поддержку.
 // Данные кнопок: adm:<действие>:… (≤ 64 байт). Цель блокировки t: «k<ключ>» или «u<Telegram ID>».
-import type { Settings } from "./config";
-import { type Ban, Db, type Device, type DeviceRow, type Key, type User, isActive, isOnline, secondsLeft, tariffTitle } from "./db";
+import { EDITABLE, type Settings } from "./config";
+import { type Ban, Db, type Device, type DeviceRow, type Key, type Order, type User, isActive, isOnline, secondsLeft, tariffTitle } from "./db";
 import { FOREVER, MAX_DEVICES, UNITS, durationText, leftText, normalize, unitSeconds, unitText } from "./keys";
-import { type Button, type Screen, banUntil, escapeHtml, fmtDate, statusLine, supportAnswer } from "./views";
+import { type Button, type Screen, banUntil, escapeHtml, fmtDate, orderForAdmin, statusLine, supportAnswer } from "./views";
 
 const PAGE = 8;
 const MAX_COUNT = 10;
@@ -74,12 +74,15 @@ export function adminHome(s: Record<string, number>): Screen {
       `Пользователей: ${s.users}\n` +
       `Ключей: ${s.keys} (действуют ${s.active}, не активированы ${s.fresh})\n` +
       `Устройств: ${s.devices}, сейчас в VPN: <b>${s.online}</b>\n` +
-      `Блокировок: ${s.bans}\n\n` +
+      `Блокировок: ${s.bans}\n` +
+      (s.orders ? `<b>Ждут проверки оплаты: ${s.orders}</b>\n` : "") +
+      "\n" +
       "Найти: пришлите сюда ключ, @имя или Telegram ID.",
     markup: kb(
       [b("Создать ключ", "adm:new:d:7:1:1", "primary")],
       [b(`Сейчас в VPN (${s.online})`, "adm:on"), b("Устройства", "adm:dev:0")],
       [b("Ключи", "adm:keys:0"), b(`Блокировки (${s.bans})`, "adm:bans")],
+      [b(`Оплаты (${s.orders ?? 0})`, "adm:ord", s.orders ? "success" : undefined), b("Цены и оплата", "adm:set")],
       [b("‹ Меню", "nav:main")],
     ),
   };
@@ -273,6 +276,46 @@ export function bansList(bans: (Ban & { targets: string })[]): Screen {
   };
 }
 
+// ---------- оплата ----------
+
+export function ordersList(orders: Order[], now: number): Screen {
+  const lines = orders.map((o) => `• <code>${o.code}</code> — ${o.amount} ₽, ID <code>${o.tg_id}</code>, ${ago(o.updated_at, now)}`);
+  return {
+    text:
+      `<b>Оплаты по СБП: ждут проверки ${orders.length}</b>\n\n` +
+      (lines.join("\n") || "Нет — все переводы проверены.") +
+      "\n\nНажмите на код — карточка с «Подтвердить» и «Отклонить». Ищите в банке перевод с этим кодом в комментарии.",
+    markup: kb(...orders.map((o) => [b(`${o.code} · ${o.amount} ₽`, `adm:o:${o.id}`)]), home()),
+  };
+}
+
+const shown = (cfg: Settings, name: string) => {
+  const e = EDITABLE[name];
+  const v = cfg[e.field];
+  if (e.kind === "bool") return v ? "да" : "нет";
+  if (e.kind === "int") return String(v);
+  return v ? escapeHtml(String(v)) : "—";
+};
+
+export function settingsScreen(cfg: Settings): Screen {
+  const lines = Object.keys(EDITABLE).map((n) => `${EDITABLE[n].title}: <b>${shown(cfg, n)}</b>`);
+  const sbpReady = cfg.sbpPhone !== "" && (cfg.priceWeek > 0 || cfg.priceMonth > 0 || cfg.price3m > 0);
+  const starsReady = cfg.starsWeek > 0 || cfg.starsMonth > 0 || cfg.stars3m > 0;
+  const state = cfg.freeMode
+    ? "Сейчас ключи <b>выдаются бесплатно</b>. Задайте цены и реквизиты, затем выключите бесплатный режим."
+    : `Оплата включена: СБП — ${sbpReady ? "да" : "нет (нужны номер и цена в ₽)"}, звёзды — ${starsReady ? "да" : "нет (нужна цена в звёздах)"}.`;
+  const edit = Object.keys(EDITABLE).filter((n) => EDITABLE[n].kind !== "bool");
+  const rows: Button[][] = [[b(cfg.freeMode ? "Включить оплату" : "Выдавать бесплатно", "adm:free", cfg.freeMode ? "success" : "danger")]];
+  for (let i = 0; i < edit.length; i += 2) rows.push(edit.slice(i, i + 2).map((n) => b(EDITABLE[n].title.replace(/^Цена /, ""), `adm:set:${n}`)));
+  rows.push(home());
+  return {
+    text:
+      "<b>Цены и оплата</b>\n\n" + lines.join("\n") + "\n\n" + state +
+      "\n\nЦена 0 — способ выключен для этого срока. Каждое устройство сверх первого — + наценка к цене.",
+    markup: kb(...rows),
+  };
+}
+
 // ---------- действия ----------
 
 export interface Out {
@@ -377,6 +420,30 @@ export class Admin {
         const page = Math.max(0, parseInt(a, 10) || 0);
         return { screen: devicesList(await this.db.allDevices(page * PAGE, PAGE + 1), page, now) };
       }
+      case "ord":
+        return { screen: ordersList(await this.db.claimedOrders(), now) };
+      case "o": {
+        const o = await this.db.getOrder(Number(a));
+        if (!o) return { toast: "Заказ не найден", alert: true };
+        if (o.status !== "claimed" && o.status !== "new") return { toast: `Заказ уже закрыт (${o.status})`, alert: true };
+        const u = await this.db.getUser(o.tg_id);
+        const s = orderForAdmin(o, { id: o.tg_id, username: u?.username });
+        s.markup.inline_keyboard.push([b("‹ Оплаты", "adm:ord")]);
+        return { screen: s };
+      }
+      case "set": {
+        const e = EDITABLE[a];
+        if (!e || e.kind === "bool") return { screen: settingsScreen(this.cfg) };
+        await this.db.setState(adminId, "set", a);
+        const hint = e.kind === "int" ? "Пришлите число (0 — выключить)." : "Пришлите значение одним сообщением («-» — очистить).";
+        return { screen: askText(e.title, `Сейчас: <b>${shown(this.cfg, a)}</b>\n\n${hint}`, "adm:set") };
+      }
+      case "free": {
+        const v = !this.cfg.freeMode;
+        await this.db.setSetting("free_mode", v ? "1" : "0");
+        this.cfg.freeMode = v;
+        return { screen: settingsScreen(this.cfg), toast: v ? "Ключи выдаются бесплатно" : "Оплата включена" };
+      }
       case "rep": {
         await this.db.setState(adminId, "reply", a);
         return { screen: askText("Ответ пользователю", `ID <code>${escapeHtml(a)}</code>. Пришлите ответ одним сообщением.`, "adm:home") };
@@ -398,6 +465,22 @@ export class Admin {
   /** Текст от администратора: ожидаемый ввод (своя причина, ответ пользователю) или поиск. null — не админское. */
   async text(adminId: number, text: string): Promise<Screen | null> {
     const st = await this.db.getState(adminId);
+    if (st && st.state === "set" && EDITABLE[st.data]) {
+      const e = EDITABLE[st.data];
+      const t = text.trim();
+      let v: string;
+      if (e.kind === "int") {
+        if (!/^\d{1,7}$/.test(t)) return askText(e.title, "Нужно целое число, например 199. Пришлите ещё раз.", "adm:set");
+        v = String(parseInt(t, 10));
+        (this.cfg as unknown as Record<string, unknown>)[e.field] = Number(v);
+      } else {
+        v = t === "-" ? "" : t.slice(0, 100);
+        (this.cfg as unknown as Record<string, unknown>)[e.field] = v;
+      }
+      await this.db.clearState(adminId);
+      await this.db.setSetting(st.data, v);
+      return settingsScreen(this.cfg);
+    }
     if (st && (st.state === "ban" || st.state === "reply")) {
       await this.db.clearState(adminId);
       if (st.state === "ban") {

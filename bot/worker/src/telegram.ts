@@ -36,6 +36,14 @@ export interface TgMessage {
   chat: { id: number; type: string };
   from?: TgUser;
   text?: string;
+  successful_payment?: { currency: string; total_amount: number; invoice_payload: string; telegram_payment_charge_id: string };
+}
+export interface TgPreCheckout {
+  id: string;
+  from: TgUser;
+  currency: string;
+  total_amount: number;
+  invoice_payload: string;
 }
 export interface TgCallback {
   id: string;
@@ -47,4 +55,5 @@ export interface TgUpdate {
   update_id: number;
   message?: TgMessage;
   callback_query?: TgCallback;
+  pre_checkout_query?: TgPreCheckout;
 }

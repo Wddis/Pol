@@ -2,9 +2,9 @@
 // Кнопки меняют сообщение на месте.
 import { Admin, type Out } from "./admin";
 import type { Settings } from "./config";
-import { Db, isActive } from "./db";
+import { Db, type Key, ORDER_TTL, type Order, isActive } from "./db";
 import { MAX_DEVICES, TARIFFS, TRIAL, normalize } from "./keys";
-import type { Telegram, TgCallback, TgMessage, TgUpdate, TgUser } from "./telegram";
+import type { Telegram, TgCallback, TgMessage, TgPreCheckout, TgUpdate, TgUser } from "./telegram";
 import * as views from "./views";
 import type { Screen } from "./views";
 
@@ -36,6 +36,8 @@ export class Bot {
 
   async handle(u: TgUpdate): Promise<void> {
     if (u.callback_query) await this.onCallback(u.callback_query);
+    else if (u.pre_checkout_query) await this.onPreCheckout(u.pre_checkout_query);
+    else if (u.message?.successful_payment && u.message.from) await this.onPaid(u.message);
     else if (u.message?.from && u.message.chat.type === "private") await this.onMessage(u.message);
   }
 
@@ -194,6 +196,10 @@ export class Bot {
       const out: Out = await this.admin.callback(tgId, parts);
       return this.edit(q, out.screen, out.toast, out.alert);
     }
+    if (kind === "ord" && (parts[0] === "ok" || parts[0] === "no")) {
+      if (!isAdmin) return this.answer(q, "Нет доступа", true);
+      return this.onOrderAdmin(q, parts[0] === "ok", Number(parts[1]));
+    }
     if (kind === "sup") {
       if (parts[0] === "write") {
         await this.db.setState(tgId, "support");
@@ -207,6 +213,8 @@ export class Bot {
     if (ban) return this.edit(q, views.banned(ban));
     if (kind === "buy") return this.onBuy(q, tgId, parts);
     if (kind === "key") return this.onKey(q, tgId, parts);
+    if (kind === "pay") return this.onPay(q, tgId, parts);
+    if (kind === "ord") return this.onOrder(q, tgId, parts[0], Number(parts[1]));
     await this.edit(q, await this.navScreen(kind === "nav" ? parts[0] : "main", tgId, isAdmin));
   }
 
@@ -214,10 +222,7 @@ export class Bot {
     const period = p in TARIFFS ? p : "month";
     const devices = Math.max(1, Math.min(MAX_DEVICES, parseInt(d, 10) || 1));
     if (get !== "1") return this.edit(q, views.tariffs(this.cfg, period, devices));
-    if (!this.cfg.freeMode) {
-      // Оплата появится здесь: счёт (СБП или Stars) → после оплаты createKey
-      return this.answer(q, "Оплата скоро появится", true);
-    }
+    if (!this.cfg.freeMode) return this.edit(q, views.payChoose(this.cfg, period, devices));
     await this.edit(q, views.keyIssued(this.cfg, await this.db.createKey(tgId, period, devices)));
   }
 
@@ -225,7 +230,7 @@ export class Bot {
     const k = key ? await this.db.getKey(key) : null;
     if (!k || k.tg_id !== tgId) return this.answer(q, "Ключ не найден", true);
     if (action === "extend" && period in TARIFFS) {
-      if (!this.cfg.freeMode) return this.answer(q, "Оплата скоро появится", true);
+      if (!this.cfg.freeMode) return this.edit(q, views.payChoose(this.cfg, period, k.devices_max, k.key));
       await this.db.extend(k.key, TARIFFS[period].days);
       return this.edit(q, await this.profileScreen(tgId, k.key), `Продлено: +${TARIFFS[period].title}`);
     }
@@ -236,5 +241,126 @@ export class Bot {
       return this.edit(q, await this.profileScreen(tgId, k.key), `Отвязано устройств: ${n}`);
     }
     await this.edit(q, await this.profileScreen(tgId, k.key));
+  }
+
+  // ---------- оплата ----------
+
+  /** pay:<sbp|stars>:<срок>:<устройств>:<ключ для продления> — заказ и реквизиты (СБП) или счёт в звёздах. */
+  private async onPay(q: TgCallback, tgId: number, [method, p, d, key = ""]: string[]): Promise<void> {
+    if (this.cfg.freeMode) return this.answer(q, "Сейчас ключи выдаются без оплаты", true);
+    if (!(p in TARIFFS) || (method !== "sbp" && method !== "stars")) return this.answer(q, "Устаревшая кнопка", true);
+    let devices = Math.max(1, Math.min(MAX_DEVICES, parseInt(d, 10) || 1));
+    let k: Key | null = null;
+    if (key) {
+      k = await this.db.getKey(key);
+      if (!k || k.tg_id !== tgId) return this.answer(q, "Ключ не найден", true);
+      devices = k.devices_max; // продление — по числу устройств ключа
+    }
+    const { rub, stars } = views.amounts(this.cfg, p, devices);
+    const amount = method === "sbp" ? rub : stars;
+    if (amount <= 0 || (method === "sbp" && !this.cfg.sbpPhone)) return this.answer(q, "Этот способ оплаты сейчас выключен", true);
+    const o = await this.db.createOrder({ tg_id: tgId, kind: k ? "extend" : "new", period: p, devices, key: k?.key ?? null, method, amount });
+    if (method === "sbp") return this.edit(q, views.sbpOrder(this.cfg, o));
+    const r = await this.tg.call("sendInvoice", {
+      chat_id: q.message?.chat.id ?? tgId,
+      title: k ? `Продление ODA: ${TARIFFS[p].title}` : `Ключ ODA: ${TARIFFS[p].title}`,
+      description: k ? `Ключ ${k.key}: +${TARIFFS[p].title}. Ключ останется тем же.` : `Устройств: ${devices}. Срок пойдёт с ввода ключа в приложении.`,
+      payload: `order:${o.id}`,
+      currency: "XTR",
+      prices: [{ label: TARIFFS[p].title, amount }],
+    });
+    if (!r.ok) {
+      await this.db.moveOrder(o.id, ["new"], "cancelled");
+      return this.answer(q, "Не получилось выставить счёт. Попробуйте ещё раз или оплатите по СБП", true);
+    }
+    await this.answer(q, "Счёт — ниже: «Заплатить»");
+  }
+
+  /** Кнопки заказа у покупателя: ord:paid (перевёл по СБП), ord:cancel. */
+  private async onOrder(q: TgCallback, tgId: number, action: string, id: number): Promise<void> {
+    const o = id ? await this.db.getOrder(id) : null;
+    if (!o || o.tg_id !== tgId) return this.answer(q, "Заказ не найден", true);
+    if (action === "cancel") {
+      if (await this.db.moveOrder(o.id, ["new"], "cancelled")) return this.edit(q, views.orderCancelled());
+      return this.answer(q, o.status === "claimed" ? "Платёж уже проверяется — отменить нельзя" : "Заказ уже закрыт", true);
+    }
+    if (action !== "paid") return this.answer(q);
+    if (o.status === "claimed") return this.edit(q, views.orderClaimed(o), "Уже проверяем");
+    if (o.status !== "new") return this.answer(q, "Заказ уже закрыт", true);
+    if (now() - o.created_at > ORDER_TTL) {
+      await this.db.moveOrder(o.id, ["new"], "cancelled");
+      return this.edit(q, views.orderCancelled(), "Заказ устарел — создайте новый", true);
+    }
+    if (!(await this.db.moveOrder(o.id, ["new"], "claimed"))) return this.answer(q, "Заказ уже закрыт", true);
+    const forAdmin = views.orderForAdmin(o, q.from);
+    let delivered = false;
+    for (const a of this.cfg.adminIds) delivered = (await this.sendTo(a, forAdmin)) || delivered;
+    if (!delivered) console.warn(`order ${o.id}: администраторам не доставлено`);
+    await this.edit(q, views.orderClaimed(o));
+  }
+
+  /** Администратор: ord:ok — перевод найден, ключ уходит покупателю; ord:no — не найден. */
+  private async onOrderAdmin(q: TgCallback, ok: boolean, id: number): Promise<void> {
+    const o = id ? await this.db.getOrder(id) : null;
+    if (!o) return this.answer(q, "Заказ не найден", true);
+    const done = (title: string, line: string) => ({
+      text: `<b>${title}</b>
+
+Код <code>${o.code}</code>, ${o.amount} ₽, ID <code>${o.tg_id}</code>
+${line}`,
+      markup: { inline_keyboard: [[{ text: "‹ Оплаты", callback_data: "adm:ord" }]] },
+    });
+    if (!ok) {
+      if (!(await this.db.moveOrder(o.id, ["new", "claimed"], "rejected"))) return this.answer(q, `Заказ уже закрыт (${o.status})`, true);
+      await this.sendTo(o.tg_id, views.orderRejected(o));
+      return this.edit(q, done("Отклонено", "Покупателю отправлено: платёж не найден, написать в поддержку."));
+    }
+    if (!(await this.db.moveOrder(o.id, ["new", "claimed"], "paid"))) return this.answer(q, `Заказ уже закрыт (${o.status})`, true);
+    const k = await this.fulfill(o);
+    await this.edit(q, done("Оплачено", k ? `Ключ <code>${k.key}</code> отправлен покупателю.` : "Ключ для продления не найден — выдайте вручную."));
+  }
+
+  /** Перед оплатой звёздами Telegram спрашивает, действует ли заказ (ответ — за 10 с). */
+  private async onPreCheckout(p: TgPreCheckout): Promise<void> {
+    const id = Number(p.invoice_payload.replace(/^order:/, ""));
+    const o = id ? await this.db.getOrder(id) : null;
+    const ok = !!o && o.status === "new" && o.method === "stars" && o.tg_id === p.from.id && o.amount === p.total_amount && p.currency === "XTR";
+    await this.tg.call("answerPreCheckoutQuery", {
+      pre_checkout_query_id: p.id,
+      ok,
+      ...(ok ? {} : { error_message: "Заказ устарел. Откройте «Купить ключ» и оплатите заново." }),
+    });
+  }
+
+  /** Звёзды списаны: ключ или продление сразу. */
+  private async onPaid(m: TgMessage): Promise<void> {
+    const sp = m.successful_payment!;
+    const id = Number(sp.invoice_payload.replace(/^order:/, ""));
+    const o = id ? await this.db.getOrder(id) : null;
+    if (o?.status === "paid" && o.charge_id === sp.telegram_payment_charge_id) return; // повтор того же обновления
+    if (!o || !(await this.db.moveOrder(o.id, ["new", "cancelled"], "paid", { charge_id: sp.telegram_payment_charge_id }))) {
+      console.error(`stars: оплата без заказа ${sp.invoice_payload} (${sp.telegram_payment_charge_id})`);
+      for (const a of this.cfg.adminIds) {
+        await this.sendTo(a, { text: `<b>Оплата звёздами без заказа</b>
+
+ID <code>${m.from!.id}</code>, ${sp.total_amount} ⭐, ${views.escapeHtml(sp.invoice_payload)}
+Проверьте и выдайте ключ вручную.`, markup: { inline_keyboard: [] } });
+      }
+      return;
+    }
+    await this.fulfill(o);
+  }
+
+  /** Оплаченный заказ: новый ключ или продление, сообщение покупателю. */
+  private async fulfill(o: Order): Promise<Key | null> {
+    if (o.kind === "extend" && o.key) {
+      const k = await this.db.extend(o.key, TARIFFS[o.period].days);
+      if (k) await this.sendTo(o.tg_id, views.extended(k, TARIFFS[o.period].title));
+      return k;
+    }
+    const k = await this.db.createKey(o.tg_id, o.period, o.devices);
+    await this.db.moveOrder(o.id, ["paid"], "paid", { key: k.key });
+    await this.sendTo(o.tg_id, views.keyIssued(this.cfg, k));
+    return k;
   }
 }

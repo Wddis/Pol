@@ -12,7 +12,7 @@ database_id = "70736af0-8d70-42eb-9309-f91247e92ed1"  # deploy.sh вписыва
 migrations_dir = "migrations"
 
 [vars]
-PRICE_WEEK = "0"          # цены, ₽; 0 — в боте «[ЦЕНА]»
+PRICE_WEEK = "0"          # цены, ₽ (0 — СБП для срока выключена); меняются и в боте: /admin → «Цены и оплата»
 PRICE_MONTH = "0"
 PRICE_3M = "0"
 EXTRA_DEVICE_PCT = "50"   # наценка за каждое устройство сверх первого, %

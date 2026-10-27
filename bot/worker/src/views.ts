@@ -1,7 +1,7 @@
 // Экраны бота — как bot/oda_bot/views.py (макет «ODA VPN — бот и ключ»): текст (HTML) + кнопки.
 // Без сети: проверяются тестом. Данные кнопок — в том же виде, что у aiogram (nav:main, buy:month:1:0, key:show:ODA-…:).
-import type { Settings } from "./config";
-import { type Ban, type Device, type Key, isActive, secondsLeft, tariffTitle } from "./db";
+import { type Settings, basePrice } from "./config";
+import { type Ban, type Device, type Key, type Order, isActive, secondsLeft, tariffTitle } from "./db";
 import { FOREVER, MAX_DEVICES, MIN_DEVICES, TARIFFS, durationText, leftText, plural, price } from "./keys";
 
 export interface Button {
@@ -89,19 +89,19 @@ export function main(cfg: Settings, admin = false): Screen {
 
 export function tariffs(cfg: Settings, period: string, devices: number): Screen {
   devices = Math.max(MIN_DEVICES, Math.min(MAX_DEVICES, devices));
-  const base = ({ week: cfg.priceWeek, month: cfg.priceMonth, q: cfg.price3m } as Record<string, number>)[period];
-  const total = price(base, devices, cfg.extraDevicePct);
   const t = TARIFFS[period];
+  const { rub, stars } = amounts(cfg, period, devices);
+  const sum = [rub > 0 ? `${rub} ₽` : "", stars > 0 ? `${stars} ⭐` : ""].filter(Boolean).join(" или ");
   const lines = [
     "<b>Тариф</b>\n",
     `Срок: <b>${t.title}</b> (${days(t.days)})`,
     `Устройств на ключ: <b>${devices}</b> ` + "▰".repeat(devices) + "▱".repeat(MAX_DEVICES - devices),
-    `Итого: <b>${base > 0 ? `${total} ₽` : "[ЦЕНА]"}</b>\n`,
+    `Итого: <b>${cfg.freeMode ? "бесплатно" : sum || "[ЦЕНА]"}</b>\n`,
     "Срок начнётся, когда вы введёте ключ в приложении. " +
       `Каждое устройство сверх первого — +${cfg.extraDevicePct}% к цене.`,
   ];
-  lines.push("\nОплата: <b>СБП</b> или <b>Telegram Stars</b>.");
-  if (cfg.freeMode) lines.push("<i>Оплата подключается — сейчас ключ выдаётся без оплаты.</i>");
+  lines.push("\nОплата: <b>СБП</b> (перевод с кодом) или <b>Telegram Stars</b>.");
+  if (cfg.freeMode) lines.push("<i>Сейчас ключ выдаётся без оплаты.</i>");
   const periods = Object.keys(TARIFFS).map((p) =>
     btn((p === period ? "● " : "") + TARIFFS[p].title, { cb: buy(p, devices) }),
   );
@@ -114,8 +114,106 @@ export function tariffs(cfg: Settings, period: string, devices: number): Screen 
         btn(devicesText(devices), { cb: buy(period, devices) }),
         btn("+", { cb: buy(period, Math.min(MAX_DEVICES, devices + 1)) }),
       ],
-      [btn("Получить ключ", { cb: buy(period, devices, true), style: "primary" })],
+      [btn(cfg.freeMode ? "Получить ключ" : "Оплатить", { cb: buy(period, devices, true), style: "primary" })],
       menuRow(),
+    ),
+  };
+}
+
+/** Сумма за тариф с учётом устройств: рубли (СБП) и звёзды. 0 — способ выключен. */
+export function amounts(cfg: Settings, period: string, devices: number): { rub: number; stars: number } {
+  const b = basePrice(cfg, period);
+  return { rub: price(b.rub, devices, cfg.extraDevicePct), stars: price(b.stars, devices, cfg.extraDevicePct) };
+}
+
+// ---------- оплата ----------
+
+/** kind/key: new — новый ключ, extend — продление key. */
+export const payCb = (method: string, period: string, devices: number, key = "") => `pay:${method}:${period}:${devices}:${key}`;
+
+export function payChoose(cfg: Settings, period: string, devices: number, key?: string): Screen {
+  const { rub, stars } = amounts(cfg, period, devices);
+  const sbp = rub > 0 && cfg.sbpPhone !== "";
+  const lines = [
+    "<b>Оплата</b>\n",
+    key ? `Продление ключа <code>${key}</code>: <b>+${TARIFFS[period].title}</b>` : `Ключ: <b>${TARIFFS[period].title}</b>, устройств: ${devices}`,
+  ];
+  if (sbp) lines.push(`\n<b>СБП</b> — ${rub} ₽: перевод по номеру телефона из приложения банка с кодом в комментарии. Ключ — после проверки платежа.`);
+  if (stars > 0) lines.push(`\n<b>Telegram Stars</b> — ${stars} ⭐: оплата в Telegram, ключ сразу.`);
+  if (!sbp && stars <= 0) lines.push("\nОплата пока не настроена — напишите в поддержку.");
+  return {
+    text: lines.join("\n"),
+    markup: kb(
+      sbp ? [btn(`СБП — ${rub} ₽`, { cb: payCb("sbp", period, devices, key), style: "primary" })] : [],
+      stars > 0 ? [btn(`Telegram Stars — ${stars} ⭐`, { cb: payCb("stars", period, devices, key), style: "primary" })] : [],
+      [btn("Поддержка", { cb: nav("support") })],
+      [key ? btn("Профиль", { cb: keyAct("show", key), back: true }) : btn("Тарифы", { cb: buy(period, devices), back: true })],
+    ),
+  };
+}
+
+const orderWhat = (o: Order) =>
+  o.kind === "extend" && o.key ? `продление <code>${o.key}</code> на ${TARIFFS[o.period]?.title ?? o.period}`
+    : `ключ на ${TARIFFS[o.period]?.title ?? o.period}, устройств: ${o.devices}`;
+
+/** Перевод по СБП: реквизиты, сумма и код для комментария. */
+export function sbpOrder(cfg: Settings, o: Order): Screen {
+  return {
+    text:
+      "<b>Оплата по СБП</b>\n\n" +
+      `За что: ${orderWhat(o)}\n` +
+      `Сумма: <b>${o.amount} ₽</b>\n\n` +
+      `Номер: <code>${escapeHtml(cfg.sbpPhone)}</code>\n` +
+      (cfg.sbpBank ? `Банк: ${escapeHtml(cfg.sbpBank)}\n` : "") +
+      (cfg.sbpName ? `Получатель: ${escapeHtml(cfg.sbpName)}\n` : "") +
+      `\n<b>Код платежа: <code>${o.code}</code></b> — обязательно укажите его в комментарии (сообщении получателю).\n\n` +
+      "1. Приложение банка → Платежи → «По номеру телефона» (СБП).\n" +
+      `2. Номер, банк получателя, сумма ${o.amount} ₽, в комментарий — код ${o.code}.\n` +
+      "3. После перевода нажмите «Я оплатил» — ключ придёт сюда после проверки.\n\n" +
+      "<i>Заказ действует сутки.</i>",
+    markup: kb(
+      [btn("Копировать номер", { copy: cfg.sbpPhone }), btn("Копировать код", { copy: o.code })],
+      [btn("Я оплатил", { cb: `ord:paid:${o.id}`, style: "success" })],
+      [btn("Отменить", { cb: `ord:cancel:${o.id}`, back: true })],
+    ),
+  };
+}
+
+export function orderClaimed(o: Order): Screen {
+  return {
+    text:
+      "<b>Проверяем платёж</b>\n\n" +
+      `Код: <code>${o.code}</code>, сумма ${o.amount} ₽.\n` +
+      "Как только платёж найдётся, ключ придёт в этот чат. Обычно это занимает несколько минут.",
+    markup: kb([btn("Поддержка", { cb: nav("support") })], menuRow()),
+  };
+}
+
+export function orderRejected(o: Order): Screen {
+  return {
+    text:
+      "<b>Платёж не найден</b>\n\n" +
+      `Перевод с кодом <code>${o.code}</code> на ${o.amount} ₽ не нашёлся. Если вы переводили — напишите в поддержку, ` +
+      "приложите чек из приложения банка.",
+    markup: kb([btn("Написать в поддержку", { cb: "sup:write", style: "primary" })], menuRow()),
+  };
+}
+
+export function orderCancelled(): Screen {
+  return { text: "<b>Заказ отменён</b>\n\nМожно выбрать тариф заново.", markup: kb([btn("Тарифы", { cb: buy("month", 1), style: "primary" })], menuRow()) };
+}
+
+/** Администратору: «Я оплатил» по СБП — проверить перевод с кодом в банке. */
+export function orderForAdmin(o: Order, from: { id: number; username?: string | null }): Screen {
+  const who = from.username ? `@${escapeHtml(from.username)}` : "без имени";
+  return {
+    text:
+      "<b>Оплата по СБП — проверьте перевод</b>\n\n" +
+      `Код: <b><code>${o.code}</code></b>\nСумма: <b>${o.amount} ₽</b>\n` +
+      `От: ${who} (ID <code>${o.tg_id}</code>)\nЗа что: ${orderWhat(o)}\n\n` +
+      "Найдите в банке перевод с этим кодом в комментарии и подтвердите — ключ уйдёт покупателю сам.",
+    markup: kb(
+      [btn("Подтвердить", { cb: `ord:ok:${o.id}`, style: "success" }), btn("Отклонить", { cb: `ord:no:${o.id}`, style: "danger" })],
     ),
   };
 }
@@ -211,13 +309,29 @@ export function extendChoose(cfg: Settings, k: Key): Screen {
     `<b>Продление</b>\n\n<code>${k.key}</code>\n\n` +
     "Срок добавится к оставшемуся (или начнётся сейчас, если закончился). Ключ останется тем же — " +
     "в приложении вводить заново не нужно.";
-  if (cfg.freeMode) text += "\n\n<i>Оплата подключается — сейчас продление без оплаты.</i>";
+  if (cfg.freeMode) text += "\n\n<i>Сейчас продление без оплаты.</i>";
+  const label = (p: string) => {
+    if (cfg.freeMode) return TARIFFS[p].title;
+    const { rub, stars } = amounts(cfg, p, k.devices_max);
+    return `${TARIFFS[p].title} · ${rub > 0 ? `${rub} ₽` : `${stars} ⭐`}`;
+  };
   return {
     text,
     markup: kb(
-      Object.keys(TARIFFS).map((p) => btn(TARIFFS[p].title, { cb: keyAct("extend", k.key, p) })),
+      ...(cfg.freeMode
+        ? [Object.keys(TARIFFS).map((p) => btn(label(p), { cb: keyAct("extend", k.key, p) }))]
+        : Object.keys(TARIFFS).map((p) => [btn(label(p), { cb: keyAct("extend", k.key, p) })])),
       [btn("Профиль", { cb: keyAct("show", k.key), back: true })],
     ),
+  };
+}
+
+/** Продление оплачено. */
+export function extended(k: Key, title: string): Screen {
+  const until = k.expires_at && k.activated_at !== null ? ` — до ${fmtDate(k.expires_at)}` : " — срок пойдёт с ввода ключа в приложении";
+  return {
+    text: `<b>Ключ продлён: +${title}</b>\n\n<code>${k.key}</code>${until}\n\nВ приложении ничего вводить не нужно — срок обновится сам.`,
+    markup: kb([btn("Мой профиль", { cb: keyAct("show", k.key), style: "primary" })], menuRow()),
   };
 }
 
@@ -360,14 +474,15 @@ export function payInfo(cfg: Settings): Screen {
   let text =
     "<b>Как купить</b>\n\n" +
     "1. «Купить ключ» → выберите срок (1 неделя, 1 месяц, 3 месяца) и число устройств.\n" +
-    "2. Оплатите удобным способом:\n" +
-    "• <b>СБП</b> — из приложения вашего банка по QR-коду или ссылке\n" +
-    "• <b>Telegram Stars</b> — прямо в Telegram\n" +
-    "3. Ключ сразу придёт в этот чат — нажмите на него, чтобы скопировать.\n" +
+    "2. «Оплатить» → удобный способ:\n" +
+    "• <b>СБП</b> — перевод по номеру телефона из приложения банка; в комментарий — <b>код платежа</b> из бота, " +
+    "затем «Я оплатил». Ключ придёт после проверки перевода (обычно несколько минут)\n" +
+    "• <b>Telegram Stars</b> — прямо в Telegram, ключ сразу\n" +
+    "3. Ключ придёт в этот чат — нажмите на него, чтобы скопировать.\n" +
     "4. Откройте ODA и введите ключ. Срок пойдёт с этой минуты.\n\n" +
     "Продлить — «Профиль» → «Продлить»: ключ останется тем же, вводить заново не нужно.\n" +
     "Не уверены — начните с пробного дня.";
-  if (cfg.freeMode) text += "\n\n<i>Оплата подключается — сейчас ключи выдаются без оплаты.</i>";
+  if (cfg.freeMode) text += "\n\n<i>Сейчас ключи выдаются без оплаты.</i>";
   return {
     text,
     markup: kb(
