@@ -32,7 +32,7 @@ export class Bot {
   private admin: Admin;
 
   constructor(private cfg: Settings, private db: Db, private tg: Telegram) {
-    this.admin = new Admin(cfg, db, (chatId, s) => this.sendTo(chatId, s));
+    this.admin = new Admin(cfg, db, (chatId, s) => this.sendTo(chatId, s), (method, params) => this.tg.call(method, params));
   }
 
   async handle(u: TgUpdate): Promise<void> {

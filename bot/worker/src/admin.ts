@@ -4,6 +4,7 @@
 // Данные кнопок: adm:<действие>:… (≤ 64 байт). Цель блокировки t: «k<ключ>» или «u<Telegram ID>».
 import { EDITABLE, type Settings } from "./config";
 import { type CpBalance, CryptoPay } from "./cryptopay";
+import type { TgResult } from "./telegram";
 import { type Ban, Db, type Device, type DeviceRow, type Key, type User, isActive, isOnline, secondsLeft, tariffTitle } from "./db";
 import { FOREVER, MAX_DEVICES, UNITS, durationText, leftText, normalize, unitSeconds, unitText } from "./keys";
 import { type Button, type Screen, banUntil, escapeHtml, fmtDate, statusLine, supportAnswer } from "./views";
@@ -83,7 +84,8 @@ export function adminHome(s: Record<string, number>): Screen {
       [b("Создать ключ", "adm:new:d:7:1:1", "primary")],
       [b(`Сейчас в VPN (${s.online})`, "adm:on"), b("Устройства", "adm:dev:0")],
       [b("Ключи", "adm:keys:0"), b(`Блокировки (${s.bans})`, "adm:bans")],
-      [b("Баланс и вывод", "adm:bal"), b("Цены и оплата", "adm:set")],
+      [b("Баланс и вывод", "adm:bal"), b("Звёзды", "adm:st")],
+      [b("Цены и оплата", "adm:set"), b("Вывод на Т-Банк", "adm:tb")],
       [b("‹ Меню", "nav:main")],
     ),
   };
@@ -326,7 +328,54 @@ export function balanceScreen(cfg: Settings, bal: CpBalance[] | null, err?: stri
       (err ? `Не получилось: ${escapeHtml(err)}` : lines.join("\n") || "Пока пусто.") +
       "\n\nВывод — перевод на ваш аккаунт в @CryptoBot (откройте его хотя бы раз). Дальше — продать за рубли " +
       "(P2P), перевести на кошелёк или биржу. Покупатели вас не видят, вы — их.",
-    markup: kb(...rows, [b("Обновить", "adm:bal")], home()),
+    markup: kb(...rows, [b("Обновить", "adm:bal"), b("Как вывести на Т-Банк", "adm:tb")], home()),
+  };
+}
+
+/** Telegram Premium себе за звёзды бота (giftPremiumSubscription: только эти сроки и цены). */
+export const PREMIUM: Record<string, number> = { "3": 1000, "6": 1500, "12": 2500 };
+
+export function starsScreen(balance: number | null): Screen {
+  const rows: Button[][] = Object.keys(PREMIUM)
+    .filter((m) => balance !== null && balance >= PREMIUM[m])
+    .map((m) => [b(`Себе Telegram Premium на ${m} мес — ${PREMIUM[m]} ⭐`, `adm:pr:${m}`)]);
+  return {
+    text:
+      "<b>Звёзды бота</b>\n\n" +
+      `Баланс: <b>${balance === null ? "не удалось узнать" : `${balance} ⭐`}</b>\n\n` +
+      "<b>Вывести в деньги</b> — только в самом Telegram (не из бота): профиль бота → «Изменить» → «Баланс» → " +
+      "«Вывести» → Fragment, выплата в TON. Звёзды доступны к выводу примерно через 21 день после оплаты, " +
+      "от 1000 ⭐; нужен облачный пароль Telegram. Дальше TON → рубли на Т-Банк — «Вывод на Т-Банк».\n\n" +
+      "<b>Взять себе</b> — Telegram Premium на ваш аккаунт за звёзды бота: 3 мес — 1000 ⭐, 6 — 1500, 12 — 2500 " +
+      "(кнопки появляются, когда звёзд хватает). Перевести звёзды на свой аккаунт Telegram не даёт.",
+    markup: kb(...rows, [b("Обновить", "adm:st"), b("Вывод на Т-Банк", "adm:tb")], home()),
+  };
+}
+
+export function premiumConfirm(m: string): Screen {
+  return {
+    text: `<b>Telegram Premium на ${m} мес</b>\n\nСпишется ${PREMIUM[m]} ⭐ с баланса бота, Premium придёт на ваш аккаунт.`,
+    markup: kb([b(`Да, ${PREMIUM[m]} ⭐`, `adm:prok:${m}`, "success")], [b("‹ Звёзды", "adm:st")]),
+  };
+}
+
+export function tbankScreen(): Screen {
+  return {
+    text:
+      "<b>Вывод на Т-Банк</b>\n\n" +
+      "<b>Оплаты криптовалютой</b> (CryptoBot):\n" +
+      "1. Здесь: «Баланс и вывод» → «Вывести» — монеты придут на ваш аккаунт в @CryptoBot.\n" +
+      "2. @CryptoBot → P2P → «Продать» → USDT за RUB → способ оплаты «Т-Банк» (или СБП) → сумма и курс.\n" +
+      "3. Покупатель переводит рубли на вашу карту Т-Банка; увидели деньги в приложении банка — подтвердите в " +
+      "@CryptoBot, монеты уйдут ему. Монеты держатся в сделке, пока вы не подтвердите.\n\n" +
+      "<b>Звёзды</b>: Fragment выплачивает в TON на кошелёк (например, Tonkeeper) → отправьте TON на адрес " +
+      "пополнения в @CryptoBot (Кошелёк → TON → Пополнить) → продайте через P2P, как выше.\n\n" +
+      "<b>Осторожно</b>: много переводов от незнакомых людей на карту банк может счесть подозрительными (115-ФЗ) и " +
+      "ограничить карту. Лучше продавать крупнее и реже, проверенным покупателям с хорошим рейтингом, " +
+      "держать для этого отдельную карту. Доход от продажи ключей облагается налогом — проще всего статус " +
+      "самозанятого (4–6%).\n\n" +
+      "Покупатели ключей вашей карты не видят: её видит только покупатель криптовалюты в P2P.",
+    markup: kb([b("Баланс и вывод", "adm:bal"), b("Звёзды", "adm:st")], home()),
   };
 }
 
@@ -343,6 +392,7 @@ export class Admin {
     private cfg: Settings,
     private db: Db,
     private sendTo: (chatId: number, s: Screen) => Promise<boolean>,
+    private tgCall: (method: string, params: Record<string, unknown>) => Promise<TgResult>,
   ) {}
 
   isAdmin(tgId: number): boolean {
@@ -472,6 +522,19 @@ export class Admin {
           return { toast: `Не выведено: ${m}${hint}`.slice(0, 190), alert: true };
         }
       }
+      case "tb":
+        return { screen: tbankScreen() };
+      case "st":
+        return { screen: starsScreen(await this.starBalance()) };
+      case "pr":
+        return PREMIUM[a] ? { screen: premiumConfirm(a) } : { screen: starsScreen(await this.starBalance()) };
+      case "prok": {
+        if (!PREMIUM[a]) return { toast: "?", alert: true };
+        const r = await this.tgCall("giftPremiumSubscription", { user_id: adminId, month_count: Number(a), star_count: PREMIUM[a] });
+        const s = starsScreen(await this.starBalance());
+        return r.ok ? { screen: s, toast: `Premium на ${a} мес — на вашем аккаунте`, alert: true }
+          : { screen: s, toast: `Не получилось: ${r.description ?? "ошибка Telegram"}`.slice(0, 190), alert: true };
+      }
       case "free": {
         const v = !this.cfg.freeMode;
         await this.db.setSetting("free_mode", v ? "1" : "0");
@@ -497,6 +560,12 @@ export class Admin {
   }
 
   /** Текст от администратора: ожидаемый ввод (своя причина, ответ пользователю) или поиск. null — не админское. */
+  private async starBalance(): Promise<number | null> {
+    const r = await this.tgCall("getMyStarBalance", {});
+    const v = r.ok ? (r.result as { amount?: number } | undefined)?.amount : undefined;
+    return typeof v === "number" ? v : null;
+  }
+
   private cp(): CryptoPay {
     return new CryptoPay(this.cfg.cpToken, CryptoPay.endpoint(this.cfg.cpTestnet, this.cfg.cpApi || undefined));
   }

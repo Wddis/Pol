@@ -65,6 +65,7 @@ const tgServer = createServer((req, res) => {
     let result = true;
     if (m?.[2] === "sendMessage") result = { message_id: ++msgId, chat: { id: params.chat_id } };
     if (m?.[2] === "getMe") result = { id: 42, is_bot: true, username: "oda_test_bot" };
+    if (m?.[2] === "getMyStarBalance") result = { amount: 1200 };
     res.setHeader("content-type", "application/json");
     // Как настоящий Telegram: правка тем же текстом и кнопками — ошибка «not modified»
     if (m?.[2] === "editMessageText") {
@@ -992,6 +993,24 @@ try {
       successful_payment: { currency: "XTR", total_amount: 50, invoice_payload: inv.payload, telegram_payment_charge_id: "stxTEST2" } } });
     const got = sentTo(m, 1004)[0].params.text;
     assert.ok(got.startsWith("<b>Ключ продлён: +1 неделя</b>") && got.includes(key), got);
+  });
+
+  await step("администратор: звёзды бота — баланс, Premium себе (с подтверждением), вывод на Т-Банк", async () => {
+    await boss.say("/admin");
+    let s = await boss.tap("Звёзды");
+    assert.ok(s.text.includes("Баланс: <b>1200 ⭐</b>"), s.text);
+    assert.ok(s.text.includes("Fragment"));
+    assert.ok(boss.button("Себе Telegram Premium на 3 мес — 1000 ⭐"));
+    assert.ok(!boss.screen.markup.inline_keyboard.flat().some((x) => x.text.includes("12 мес")), "на 12 мес звёзд не хватает");
+    s = await boss.tap("Себе Telegram Premium на 3 мес");
+    assert.ok(s.text.includes("Спишется 1000 ⭐"));
+    const n = calls.length;
+    s = await boss.tap("Да, 1000 ⭐");
+    const g = calls.slice(n).find((c) => c.method === "giftPremiumSubscription").params;
+    assert.deepEqual([g.user_id, g.month_count, g.star_count], [1999, 3, 1000]);
+    assert.equal(s.toast, "Premium на 3 мес — на вашем аккаунте");
+    s = await boss.tap("Вывод на Т-Банк");
+    assert.ok(s.text.startsWith("<b>Вывод на Т-Банк</b>") && s.text.includes("P2P") && s.text.includes("115-ФЗ"));
   });
 
   await step("администратор возвращает бесплатный режим", async () => {
