@@ -180,7 +180,8 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         };
         pages[TAB_HOME].addOnLayoutChangeListener(fit);
         homeContent.addOnLayoutChangeListener(fit);
-        Motion.animateLayout(findViewById(R.id.homeContent));
+        // Без LayoutTransition на главной: анимация двигала карточки, не перекладывая их содержимое, и при смене
+        // способа (подгонка кнопки под высоту) нижние карточки оставались пустыми
         showRows();
 
         modeRow.setOnClickListener(v -> openBridges());
@@ -586,7 +587,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
             return;
         }
         speedRunning = true;
-        speedLinkText.setText(R.string.link_speed_running);
+        speedLinkText.setText(R.string.speed_test_running);
         speedLink.setEnabled(false);
         speedPing.setText("…");
         speedLoad.setText(R.string.speed_running);
@@ -656,6 +657,12 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         bindRow(modeRow, R.drawable.ic_bolt, true, getString(mode.title),
                 getString(mode == BridgeMode.AUTO ? R.string.mode_row_sub_auto : R.string.mode_row_sub), null);
         bindRow(appsRow, R.drawable.ic_globe, false, getString(R.string.apps_row), appsText(), null);
+        // На главной подписи в одну строку: высота строк не меняется при смене способа
+        for (View row : new View[]{modeRow, appsRow}) {
+            TextView sub = row.findViewById(R.id.subtitle);
+            sub.setMaxLines(1);
+            sub.setEllipsize(TextUtils.TruncateAt.END);
+        }
         if (engineValue != null) engineValue.setText(engineTitle());
     }
 

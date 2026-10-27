@@ -266,6 +266,16 @@ speed_run() {  # загрузка /big «браузером телефона» �
     SPEED_OK=$ok
 }
 
+# Мелкие записи подряд (как HTTP/2 и TLS) через VPN: ответ без задержки 40 мс (алгоритм Нейгла в tun2socks)
+small() {
+    local ip r
+    ip=$(python3 -B -c "import sys; sys.path.insert(0, '$LAB'); import lab; print(lab.SITES['www.cloudflare.com'])")
+    r=$(PHONE python3 "$LAB/lab.py" smallwrites "$ip" 2>&1 || echo fail)
+    echo "    мелкие записи подряд через $1 (3 × 100 байт, ответ): медиана и максимум, мс — $r"
+    check "$(awk -v m="${r%% *}" 'BEGIN { exit !(m + 0 > 0 && m + 0 < 25) }' && echo 1 || echo 0)" \
+        "мелкие записи через $1 — ответ быстрее 25 мс (без ожидания подтверждений, TCP_NODELAY)"
+}
+
 fast() { awk -v t="$1" -v lim="$2" 'BEGIN { exit !(t + 0 < lim + 0) }'; }  # $1 < $2 (секунды)
 tg() { PHONE python3 "$LAB/lab.py" tgcheck "${1:-10}" 2>/dev/null || true; }
 quic() { PHONE python3 "$LAB/lab.py" quiccheck "$1" "${2:-3}" 2>/dev/null || true; }
@@ -407,6 +417,7 @@ for PROFILE in $PROFILES; do
         if APPLAB speedtest "$PORT" "$TMP/ca.pem" > "$TMP/speedtest.txt" 2>&1; then st_ok=1; else st_ok=0; fi
         echo "    кнопка «ТЕСТ СКОРОСТИ» (SpeedTest через SOCKS ByeDPI): $(grep -v JAVA_TOOL "$TMP/speedtest.txt")"
         check "$st_ok" "тест скорости приложения измеряет пинг и загрузку"
+        small "обход DPI"
         echo "   то же через «Psiphon» (подключение через Psiphon, как в журнале 0.8.8):"
         stop_phone
         # Фиктивный DNS (mapdns у hev, Tun2SocksConfig.FAKE_DNS): имена резолвит «Psiphon»
@@ -426,6 +437,7 @@ for PROFILE in $PROFILES; do
         ok=1
         for t in "${FIRST[@]}"; do fast "$t" $(awk -v d="$PSIPHON_DELAY_MS" 'BEGIN { print d / 1000 + 0.1 }') || ok=0; done
         check "$ok" "первый байт через «Psiphon» — его задержка ${PSIPHON_DELAY_MS} мс и не больше 0,1 с сверху: ${FIRST[*]}"
+        small "«Psiphon»"
         check "$SPEED_OK" "через «Psiphon» все загрузки дошли"
         ok=1
         for i in "${!BYPASS_SPEEDS[@]}"; do

@@ -130,7 +130,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
                     android:layout_weight="1"
-                    android:minHeight="@dimen/space_2" />
+                    android:minHeight="@dimen/space_3" />
 
                 <com.example.vpnapp.PowerButtonView
                     android:id="@+id/powerButton"
@@ -275,6 +275,7 @@
                         android:layout_marginBottom="@dimen/space_2"
                         android:background="@drawable/bg_divider" />
 
+                    <!-- Тест скорости: значок и короткая подпись под ним (не обрезается на узких экранах) -->
                     <LinearLayout
                         android:id="@+id/speedLink"
                         android:layout_width="0dp"
@@ -282,37 +283,31 @@
                         android:layout_weight="1"
                         android:background="@drawable/bg_cell_right"
                         android:clickable="true"
+                        android:contentDescription="@string/speed_test"
                         android:focusable="true"
-                        android:gravity="center_vertical"
-                        android:orientation="horizontal"
-                        android:paddingStart="@dimen/space_2"
-                        android:paddingEnd="@dimen/space_2">
+                        android:gravity="center"
+                        android:orientation="vertical"
+                        android:paddingStart="@dimen/space_1"
+                        android:paddingEnd="@dimen/space_1">
 
                         <ImageView
-                            android:layout_width="22dp"
-                            android:layout_height="22dp"
+                            android:id="@+id/speedLinkIcon"
+                            android:layout_width="26dp"
+                            android:layout_height="26dp"
                             android:importantForAccessibility="no"
                             android:src="@drawable/ic_chart"
-                            android:tint="@color/text" />
+                            android:tint="@color/accent" />
 
                         <TextView
                             android:id="@+id/speedLinkText"
-                            style="@style/Text.Oda.CardTitle"
-                            android:layout_width="0dp"
+                            style="@style/Text.Oda.CardSub"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_marginStart="12dp"
-                            android:layout_weight="1"
-                            android:ellipsize="end"
+                            android:layout_marginTop="6dp"
                             android:maxLines="1"
                             android:text="@string/speed_test"
-                            android:textSize="14sp" />
-
-                        <ImageView
-                            android:layout_width="18dp"
-                            android:layout_height="18dp"
-                            android:importantForAccessibility="no"
-                            android:src="@drawable/ic_chevron_right"
-                            android:tint="@color/text_secondary" />
+                            android:textColor="@color/text"
+                            android:textSize="12sp" />
                     </LinearLayout>
                 </LinearLayout>
 

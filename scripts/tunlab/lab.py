@@ -17,7 +17,7 @@ IPv6 у «оператора» нет (как в мобильной сети б�
 не открывались (tun2socks принимает соединение раньше, чем ByeDPI узнаёт, что IPv6 нет).
 
 Команды: up <ipv6 0|1> | down | routes <ipv6 0|1> | srv <cert> <key> | dnsload <сек> <потоков> [dns [запросов/с]]
-         | socks <порт> [мс задержки] [кбит/с] | tgcheck <сек> | quiccheck <ip> <сек> | notun
+         | socks <порт> [мс задержки] [кбит/с] | tgcheck <сек> | quiccheck <ip> <сек> | smallwrites <ip> | notun
          | dnscheck [dns] | dnspair <dns> <раз> | dump
 Нужен pyroute2 (pip install pyroute2) и root.
 """
@@ -257,6 +257,36 @@ def serve(cert, key):
             d, a = s.recvfrom(2048)
             s.sendto(d, a)
 
+    def chat():
+        """Порт 8080: «переписка мелкими порциями» — ответ (1 байт) после каждых 300 байт. Как HTTP/2 и TLS:
+        клиент шлёт несколько маленьких записей подряд и ждёт ответа (замер smallwrites)."""
+        s = socket.socket()
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        s.bind(("0.0.0.0", 8080))
+        s.listen(64)
+
+        def one(c):
+            c.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            got = 0
+            try:
+                while True:
+                    d = c.recv(4096)
+                    if not d:
+                        return
+                    got += len(d)
+                    while got >= 300:
+                        got -= 300
+                        c.sendall(b"k")
+            except OSError:
+                pass
+            finally:
+                c.close()
+
+        while True:
+            c, _ = s.accept()
+            threading.Thread(target=one, args=(c,), daemon=True).start()
+
+    threading.Thread(target=chat, daemon=True).start()
     for a in sorted(set(SITES.values())):
         threading.Thread(target=quic_echo, args=(a,), daemon=True).start()
     for a in DNS_IPS:
@@ -399,6 +429,9 @@ def socks(port, delay_ms=0, kbit=0):
                 time.sleep(delay_ms / 1000)
             # Имена (mapdns у hev при подключении через Psiphon) — по адресам «интернета»
             r = socket.create_connection((SITES.get(host, host), port_), timeout=10)
+            # Как у настоящего Psiphon (Go): без алгоритма Нейгла, иначе +40 мс на ответ (отложенный ACK)
+            for x in (c, r):
+                x.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
             r.settimeout(None)
             c.settimeout(None)
             c.sendall(b"\x05\x00\x00\x01" + socket.inet_aton("0.0.0.0") + b"\x00\x00")
@@ -449,6 +482,28 @@ def tgcheck(seconds):
         ok = False
     print(("ok" if ok else "fail") + " %.1f" % (time.time() - t0))
     sys.exit(0 if ok else 1)
+
+
+def smallwrites(ip, rounds=15):
+    """Как браузер с HTTP/2: три записи по 100 байт подряд (через 2 мс), затем ждём ответа — 15 раз на одном
+    соединении через VPN. Если tun2socks (hev) держит данные по алгоритму Нейгла, каждая порция ждёт
+    подтверждения предыдущей — до 40 мс на ответ. Печатает «медиана макс» в мс."""
+    s = socket.create_connection((ip, 8080), timeout=10)
+    s.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+    s.settimeout(10)
+    times = []
+    for _ in range(rounds):
+        t0 = time.time()
+        for _ in range(3):
+            s.sendall(b"x" * 100)
+            time.sleep(0.002)
+        if s.recv(1) != b"k":
+            print("fail")
+            sys.exit(1)
+        times.append((time.time() - t0) * 1000)
+    s.close()
+    times.sort()
+    print("%.1f %.1f" % (times[len(times) // 2], times[-1]))
 
 
 def quiccheck(ip, seconds):
@@ -520,6 +575,8 @@ if __name__ == "__main__":
                 if not ip.link_lookup(ifname="tun0"):
                     break
                 time.sleep(0.1)
+    elif cmd == "smallwrites":
+        smallwrites(sys.argv[2])
     elif cmd == "quiccheck":
         quiccheck(sys.argv[2], float(sys.argv[3]))
     else:

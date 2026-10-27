@@ -90,7 +90,7 @@ jobs:
           for abi in arm64-v8a armeabi-v7a; do
             unzip -p "$APK" "lib/$abi/libhev-socks5-tunnel.so" > "$RUNNER_TEMP/hev.so"
             grep -qa 'com/example/vpnapp/Tun2Socks' "$RUNNER_TEMP/hev.so"
-            grep -qa 'oda-hev: MSG_MORE=0' "$RUNNER_TEMP/hev.so"
+            grep -qa 'oda-hev: MSG_MORE=0 NODELAY=1' "$RUNNER_TEMP/hev.so"
             echo "$abi: JNI-класс и oda-hev.h на месте"
           done
 
