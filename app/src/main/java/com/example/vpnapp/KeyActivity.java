@@ -92,7 +92,7 @@ public class KeyActivity extends AppCompatActivity {
             return false;
         });
         getKey.setOnClickListener(v -> OdaSheet.openBot(this, "buy"));
-        findViewById(R.id.howBuy).setOnClickListener(v -> OdaSheet.show(getSupportFragmentManager(), OdaSheet.BUY));
+        findViewById(R.id.howBuy).setOnClickListener(v -> OdaSheet.showPage(getSupportFragmentManager(), OdaSheet.BUY));
         findViewById(R.id.support).setOnClickListener(v -> OdaSheet.openBot(this, "support"));
         findViewById(R.id.logLink).setOnClickListener(v -> {
             if (getSupportFragmentManager().findFragmentByTag(LogSheet.TAG) == null) {

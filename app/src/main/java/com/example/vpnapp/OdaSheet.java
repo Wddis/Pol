@@ -58,7 +58,7 @@ public class OdaSheet extends BottomSheetDialogFragment {
     private TextView body;
     private TextView title;
 
-    static void show(FragmentManager fm, String page) {
+    static void showPage(FragmentManager fm, String page) {
         if (fm.findFragmentByTag(TAG + page) != null) return;
         OdaSheet s = new OdaSheet();
         Bundle b = new Bundle();
@@ -269,7 +269,7 @@ public class OdaSheet extends BottomSheetDialogFragment {
     private void open(String page) {
         FragmentManager fm = getParentFragmentManager();
         dismiss();
-        show(fm, page);
+        showPage(fm, page);
     }
 
     private void bot(String start) {

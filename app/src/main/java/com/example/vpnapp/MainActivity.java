@@ -115,9 +115,9 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         countryNameView = findViewById(R.id.countryName);
         keyChip = findViewById(R.id.keyChip);
         keyBanner = findViewById(R.id.keyBanner);
-        keyChip.setOnClickListener(v -> OdaSheet.show(getSupportFragmentManager(), OdaSheet.KEY));
+        keyChip.setOnClickListener(v -> OdaSheet.showPage(getSupportFragmentManager(), OdaSheet.KEY));
         keyBanner.setOnClickListener(v -> OdaSheet.openBot(this, "renew"));
-        findViewById(R.id.menuButton).setOnClickListener(v -> OdaSheet.show(getSupportFragmentManager(), OdaSheet.MENU));
+        findViewById(R.id.menuButton).setOnClickListener(v -> OdaSheet.showPage(getSupportFragmentManager(), OdaSheet.MENU));
 
         applyInsets(root);
         // Появление/исчезновение секундомера, теста скорости и строки страны — плавно
