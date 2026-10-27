@@ -134,11 +134,17 @@ jobs:
 
   # Интерфейс в эмуляторе Android (на раннерах GitHub есть KVM): APK из job «build», тестовый ключ из запуска
   # вручную; scripts/ui-test.py проходит экраны как человек, скриншоты — в журнале (@@SHOT) и артефакте
+  # Два современных эмулятора параллельно: Android 15 (API 35) и Android 16 (API 36), Pixel 8.
+  # Тестовый ключ — на 2 устройства (каждый эмулятор — своё устройство)
   ui:
     needs: build
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_key != '' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        api: [35, 36]
 
     steps:
       - name: Checkout
@@ -157,15 +163,15 @@ jobs:
           sudo udevadm trigger --name-match=kvm
           python3 -m pip install --quiet --break-system-packages pillow || python3 -m pip install --quiet pillow
 
-      - name: UI test in Android emulator
+      - name: UI test in Android ${{ matrix.api }} emulator
         uses: reactivecircus/android-emulator-runner@v2
         env:
           TEST_KEY: ${{ inputs.test_key }}
         with:
-          api-level: 34
+          api-level: ${{ matrix.api }}
           target: google_apis
           arch: x86_64
-          profile: pixel_6
+          profile: pixel_8
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           script: python3 scripts/ui-test.py apk/app-emulator.apk "$TEST_KEY" ui-shots
@@ -174,6 +180,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v7
         with:
-          name: ui-shots
+          name: ui-shots-android-${{ matrix.api }}
           path: ui-shots
           if-no-files-found: ignore
