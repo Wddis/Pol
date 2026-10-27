@@ -178,6 +178,27 @@ def overlaps():
     return bad
 
 
+def bounds(n):
+    return tuple(map(int, re.findall(r"\d+", n.get("bounds"))))
+
+
+def cards_ok(where):
+    """Нижние карточки (тест скорости, способ) видны целиком, с содержимым и не уходят под навигацию
+    (баг 0.11.x: после смены способа или подключения через Psiphon карточки пустели или уезжали вниз)."""
+    root = dump()
+    nav, speed, tools = (find(rid=r, root=root) for r in ("nav", "speedCard", "toolsCard"))
+    ok(speed is not None and tools is not None and nav is not None, f"{where}: карточки и навигация на экране")
+    if speed is None or tools is None or nav is None:
+        return
+    nav_top = bounds(nav)[1]
+    for name, n in (("тест скорости", speed), ("способ и Kill Switch", tools)):
+        x1, y1, x2, y2 = bounds(n)
+        ok(y2 - y1 > 60 and y2 <= nav_top + 2, f"{where}: карточка «{name}» целиком над навигацией ({y1}–{y2}, навигация с {nav_top})")
+    all_text = " ".join(n.get("text") or "" for n in nodes(root))
+    for t in ("Пинг", "Загрузка", "Тест скорости", "Kill Switch"):
+        ok(t in all_text, f"{where}: в карточках есть «{t}»")
+
+
 def crashed():
     """Падения процессов ODA (Java — «Process: <пакет>», нативные — «>>> … <<<» и Cmdline с путём APK).
     Падения служебных процессов эмулятора (UiAutomation самого теста и т. п.) не считаются."""
@@ -262,6 +283,7 @@ def main():
     for rid in ("speedCard", "toolsCard", "engineValue", "speedLinkText"):
         ok(find(rid=rid) is not None, f"после смены способа виден {rid} (баг 0.11.1: нижние карточки пропадали)")
     ok(not overlaps(), "после смены способа ничего не налезает")
+    cards_ok("после смены способа на Psiphon")
     tap(rid="modeRow")
     time.sleep(1.5)
     tap(text="Авто")
@@ -323,6 +345,23 @@ def main():
         time.sleep(3)
         shot("подключено-смена-способа")
         ok(find(rid="toolsCard") is not None and not overlaps(), "смена способа при подключении: всё на месте")
+        cards_ok("подключено через обход DPI")
+        # Как на телефоне владельца: подключение через Psiphon с секундомером — карточки не пустеют
+        tap(rid="modeRow")
+        time.sleep(1.5)
+        tap(text="Psiphon")
+        time.sleep(1.5)
+        close_sheet()
+        psi = wait(120, text="Psiphon", contains=True, rid="details") is not None and wait(30, text="Подключено", rid="status") is not None
+        time.sleep(3)
+        shot("подключено-psiphon")
+        print(f"    подключение через Psiphon: {'есть' if psi else 'нет'}")
+        cards_ok("подключено через Psiphon" if psi else "подключение через Psiphon")
+        ok(not overlaps(), "Psiphon: тексты не налезают друг на друга")
+        tap(rid="speedLink")
+        time.sleep(15)
+        shot("psiphon-тест-скорости")
+        cards_ok("тест скорости через Psiphon")
     c = crashed()
     ok(not c, "подключение: приложение не упало")
     if c:
