@@ -41,6 +41,22 @@ public final class Country {
         return isAny(code) ? "★" : code;
     }
 
+    /** Флаг страны (эмодзи из двух букв кода), «» — не двухбуквенный код. */
+    public static String flag(String code) {
+        if (code == null || code.length() != 2) return "";
+        String c = code.toUpperCase(java.util.Locale.ROOT);
+        if (c.charAt(0) < 'A' || c.charAt(0) > 'Z' || c.charAt(1) < 'A' || c.charAt(1) > 'Z') return "";
+        return new String(Character.toChars(0x1F1E6 + c.charAt(0) - 'A'))
+                + new String(Character.toChars(0x1F1E6 + c.charAt(1) - 'A'));
+    }
+
+    /** «Швеция 🇸🇪» — название с флагом (для строки под статусом). */
+    public static String label(Context context, String code) {
+        String f = flag(code);
+        String name = nameOf(context, code);
+        return f.isEmpty() ? name : name + " " + f;
+    }
+
     /** Название страны по коду; для стран вне списка — сам код. */
     public static String nameOf(Context context, String code) {
         for (Country c : all(context)) {

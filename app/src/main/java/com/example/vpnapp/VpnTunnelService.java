@@ -152,6 +152,7 @@ public class VpnTunnelService extends VpnService
         super.onCreate();
         prefs = new Prefs(this);
         DiagLog.init(this);
+        History.init(this);
         thread = new HandlerThread("oda-vpn");
         thread.start();
         worker = new Handler(thread.getLooper());
@@ -1122,7 +1123,7 @@ public class VpnTunnelService extends VpnService
         if (ip != null) {
             String code = cc != null && !cc.isEmpty() && !"??".equals(cc)
                     ? cc.toUpperCase(Locale.ROOT) : prefs.getCountry();
-            detail = getString(R.string.detail_ip, ip, Country.nameOf(this, code));
+            detail = getString(R.string.detail_ip, ip, Country.label(this, code));
         } else {
             detail = getString(R.string.detail_ip_unknown);
         }
@@ -1157,7 +1158,7 @@ public class VpnTunnelService extends VpnService
         } else if (code == null || code.isEmpty()) {
             sb.append(getString(R.string.detail_ip_only, ip));
         } else {
-            sb.append(getString(R.string.detail_ip, ip, Country.nameOf(this, code)));
+            sb.append(getString(R.string.detail_ip, ip, Country.label(this, code)));
         }
         if (psiphon.isRegionFallback()) sb.append('\n').append(getString(R.string.detail_region_fallback));
         return sb.toString();
@@ -1173,7 +1174,7 @@ public class VpnTunnelService extends VpnService
         } else if (cc == null || cc.isEmpty()) {
             sb.append(getString(R.string.detail_ip_only, ip));
         } else {
-            sb.append(getString(R.string.detail_ip, ip, Country.nameOf(this, cc.toUpperCase(Locale.ROOT))));
+            sb.append(getString(R.string.detail_ip, ip, Country.label(this, cc.toUpperCase(Locale.ROOT))));
         }
         if (helperPort > 0) {
             sb.append('\n').append(getString(helperPsiphonPort > 0
@@ -1441,7 +1442,13 @@ public class VpnTunnelService extends VpnService
     private void publish(ConnectionState state, String detail, String error) {
         boolean on = state == ConnectionState.ON;
         StatusBus.post(state, detail, error, on ? socksPort : 0, on && engine != null ? engine : "");
-        if (on && active && engine != null) keyWatch.connected(engine, socksPort);
+        if (on && active && engine != null) {
+            keyWatch.connected(engine, socksPort);
+            // Kill switch для экрана: включены ли в системе «Постоянная VPN» и блокировка без VPN
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                prefs.setKillSwitch(isLockdownEnabled() ? 2 : isAlwaysOn() ? 1 : 0);
+            }
+        }
         if (active) {
             String title = getString(on ? R.string.status_on : R.string.status_connecting);
             VpnNotification.update(this, title + " · " + getString(prefs.getMode().title), detail,

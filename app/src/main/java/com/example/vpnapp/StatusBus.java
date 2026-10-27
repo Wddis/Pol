@@ -27,15 +27,21 @@ public final class StatusBus {
          * секундомер считает время с первого подключения до отключения.
          */
         public final long connectedAt;
+        /**
+         * Когда началось подключение с нуля ({@link SystemClock#elapsedRealtime}), 0 — не подключаемся.
+         * По нему экран показывает красный индикатор, если подключение идёт дольше минуты.
+         */
+        public final long connectingSince;
 
         public Status(ConnectionState state, String detail, String error, int socksPort, String engine,
-                      long connectedAt) {
+                      long connectedAt, long connectingSince) {
             this.state = state;
             this.detail = detail != null ? detail : "";
             this.error = error != null ? error : "";
             this.socksPort = socksPort;
             this.engine = engine != null ? engine : "";
             this.connectedAt = connectedAt;
+            this.connectingSince = connectingSince;
         }
     }
 
@@ -49,7 +55,7 @@ public final class StatusBus {
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final List<Listener> LISTENERS = new CopyOnWriteArrayList<>();
-    private static volatile Status current = new Status(ConnectionState.OFF, "", "", 0, "", 0);
+    private static volatile Status current = new Status(ConnectionState.OFF, "", "", 0, "", 0, 0);
 
     private StatusBus() {
     }
@@ -67,8 +73,17 @@ public final class StatusBus {
         } else if (state != ConnectionState.CONNECTING) {
             since = 0;
         }
-        Status status = new Status(state, detail, error, socksPort, engine, since);
+        long connecting = current.connectingSince;
+        if (state == ConnectionState.CONNECTING) {
+            if (current.state != ConnectionState.CONNECTING && current.state != ConnectionState.ON) {
+                connecting = SystemClock.elapsedRealtime();
+            }
+        } else {
+            connecting = 0;
+        }
+        Status status = new Status(state, detail, error, socksPort, engine, since, connecting);
         current = status;
+        History.onStatus(status);
         MAIN.post(() -> {
             for (Listener l : LISTENERS) l.onStatus(status);
         });

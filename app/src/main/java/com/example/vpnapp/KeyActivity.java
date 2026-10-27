@@ -13,6 +13,8 @@ import android.text.TextWatcher;
 import android.view.View;
 import android.view.inputmethod.EditorInfo;
 import android.widget.EditText;
+import android.widget.ImageView;
+import android.content.res.ColorStateList;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -20,6 +22,7 @@ import androidx.activity.EdgeToEdge;
 import androidx.activity.OnBackPressedCallback;
 import androidx.activity.SystemBarStyle;
 import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
@@ -92,7 +95,7 @@ public class KeyActivity extends AppCompatActivity {
             return false;
         });
         getKey.setOnClickListener(v -> OdaSheet.openBot(this, "buy"));
-        findViewById(R.id.howBuy).setOnClickListener(v -> OdaSheet.showPage(getSupportFragmentManager(), OdaSheet.BUY));
+        findViewById(R.id.howBuy).setOnClickListener(v -> OdaSheet.open(this, OdaSheet.BUY));
         findViewById(R.id.support).setOnClickListener(v -> OdaSheet.openBot(this, "support"));
         findViewById(R.id.logLink).setOnClickListener(v -> {
             if (getSupportFragmentManager().findFragmentByTag(LogSheet.TAG) == null) {
@@ -135,6 +138,11 @@ public class KeyActivity extends AppCompatActivity {
         trialHint.setVisibility(enter ? View.VISIBLE : View.GONE);
         getKey.setVisibility(enter || shown == KeyManager.Gate.EXPIRED ? View.VISIBLE : View.GONE);
         secondary.setVisibility(View.VISIBLE);
+        boolean banned = shown == KeyManager.Gate.BANNED;
+        ImageView icon = findViewById(R.id.keyIcon);
+        icon.setImageResource(banned ? R.drawable.ic_lock : shown == KeyManager.Gate.EXPIRED ? R.drawable.ic_hourglass : R.drawable.ic_key);
+        icon.setImageTintList(ColorStateList.valueOf(ContextCompat.getColor(this, banned ? R.color.danger : R.color.accent)));
+        findViewById(R.id.keyIconBg).setBackgroundResource(banned ? R.drawable.bg_circle_danger : R.drawable.bg_circle_accent);
         switch (shown) {
             case EXPIRED:
                 headline.setText(R.string.key_title_expired);
@@ -188,6 +196,7 @@ public class KeyActivity extends AppCompatActivity {
     private void activate() {
         if (busy) return;
         String text = input.getText().toString();
+        message.setTextColor(ContextCompat.getColor(this, R.color.danger));
         if (KeyManager.normalize(text) == null) {
             message.setText(R.string.key_error_format);
             return;
@@ -210,6 +219,7 @@ public class KeyActivity extends AppCompatActivity {
         CharSequence label = primary.getText();
         primary.setEnabled(false);
         secondary.setEnabled(false);
+        primary.setAlpha(0.6f);
         primary.setText(R.string.key_checking);
         message.setText("");
         new Thread(() -> {
@@ -219,6 +229,7 @@ public class KeyActivity extends AppCompatActivity {
                 if (isFinishing() || isDestroyed()) return;
                 primary.setEnabled(true);
                 secondary.setEnabled(true);
+                primary.setAlpha(1f);
                 primary.setText(label);
                 KeyManager.Gate g = keys.gate();
                 if (r.ok && g == KeyManager.Gate.OK) {
@@ -229,6 +240,7 @@ public class KeyActivity extends AppCompatActivity {
                 // Блокировку видно всегда — и при вводе другого ключа
                 if (g == KeyManager.Gate.BANNED) forceEnter = false;
                 render(g);
+                message.setTextColor(ContextCompat.getColor(this, R.color.danger));
                 message.setText(r.message);
             });
         }, "oda-key").start();
@@ -250,6 +262,7 @@ public class KeyActivity extends AppCompatActivity {
         if (key == null) return;
         input.setText(key);
         input.setSelection(input.length());
+        message.setTextColor(ContextCompat.getColor(this, R.color.text_secondary));
         message.setText(R.string.key_paste_found);
     }
 

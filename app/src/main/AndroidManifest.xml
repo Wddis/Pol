@@ -41,6 +41,11 @@
             android:launchMode="singleTop"
             android:windowSoftInputMode="adjustResize" />
 
+        <!-- Страницы: «Ключ доступа», справка -->
+        <activity
+            android:name=".PageActivity"
+            android:exported="false" />
+
         <!-- VPN: весь трафик телефона через Tor -->
         <service
             android:name=".VpnTunnelService"

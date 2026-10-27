@@ -1,11 +1,14 @@
 package com.example.vpnapp;
 
 import android.Manifest;
+import android.animation.ObjectAnimator;
+import android.animation.ValueAnimator;
 import android.app.StatusBarManager;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.content.res.ColorStateList;
 import android.graphics.Color;
 import android.graphics.drawable.Icon;
 import android.net.VpnService;
@@ -20,23 +23,40 @@ import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
 
 import androidx.activity.EdgeToEdge;
+import androidx.activity.OnBackPressedCallback;
 import androidx.activity.SystemBarStyle;
 import androidx.activity.result.ActivityResultLauncher;
 import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.annotation.DrawableRes;
 import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.core.content.ContextCompat;
 import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.google.android.material.materialswitch.MaterialSwitch;
+
+import java.text.SimpleDateFormat;
+import java.util.Date;
+import java.util.List;
 import java.util.Locale;
 
-/** Единственный экран: выбор страны, кнопка, статус. Состояние приходит из StatusBus. */
+/**
+ * Главный экран (0.11, макет владельца): вкладки «Главная» (способ, страна, приложения, кнопка, статус с
+ * индикатором, секундомер, тест скорости, способ и kill switch), «История» (подключения и ошибки, журнал) и
+ * «Настройки» (подключение, ключ, помощь). Состояние приходит из StatusBus.
+ *
+ * <p>Индикатор под статусом: серый — не подключено (кнопку не нажимали), зелёный — подключено (мигает, пока
+ * идёт подключение), красный — ошибка, в том числе подключение дольше минуты, с причиной.
+ */
 public class MainActivity extends AppCompatActivity implements StatusBus.Listener {
 
     /** Открыть экран и сразу подключиться (плитка в шторке, когда сама подключить не может). */
@@ -44,32 +64,53 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
 
     private static final long SCREEN_FADE_MS = 500;
     private static final long TEXT_FADE_MS = 150;
+    /** Подключение дольше этого — красный индикатор с причиной. */
+    private static final long SLOW_MS = 60_000;
+
+    private static final int TAB_HOME = 0;
+    private static final int TAB_HISTORY = 1;
+    private static final int TAB_SETTINGS = 2;
 
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable ticker = this::tick;
+    private final Runnable slowCheck = () -> renderIndicator(true);
 
     private Prefs prefs;
+    private KeyManager keys;
     private ConnectionState state = ConnectionState.OFF;
+    private String detail = "";
+    private String error = "";
+    private String engine = "";
     private long connectedAt;
+    private long connectingSince;
     private boolean firstStatus = true;
     private boolean started;
     private boolean speedRunning;
+    private boolean keyChecking;
+    private int tab;
 
     private PowerButtonView powerButton;
     private TextView statusView;
     private TextView detailsView;
     private TextView errorView;
     private TextView timerView;
-    private TextView speedLink;
-    private TextView speedResult;
-    private TextView bridgesLink;
-    private TextView appsValue;
-    private TextView countryCodeView;
-    private TextView countryNameView;
-    private TextView keyChip;
-    private TextView keyBanner;
-    private KeyManager keys;
-    private boolean keyChecking;
+    private View indicator;
+    private ObjectAnimator pulse;
+    private View speedLink;
+    private TextView speedLinkText;
+    private TextView speedPing;
+    private TextView speedLoad;
+    private TextView engineValue;
+    private TextView killValue;
+    private MaterialSwitch killToggle;
+    private View modeRow;
+    private View countryRow;
+    private View appsRow;
+    private View keyBanner;
+    private View[] pages;
+    private View[] navItems;
+    private LinearLayout historyList;
+    private LinearLayout settingsList;
 
     // Системный диалог «Разрешить VPN»
     private final ActivityResultLauncher<Intent> vpnPermission = registerForActivityResult(
@@ -92,6 +133,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         super.onCreate(savedInstanceState);
         keys = KeyManager.get(this);
         DiagLog.init(this);
+        History.init(this);
         // Без действующего ключа — сразу экран ключа (главный экран даже не строится)
         if (keys.gate() != KeyManager.Gate.OK) {
             startActivity(KeyActivity.intent(this));
@@ -107,37 +149,61 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         detailsView = findViewById(R.id.details);
         errorView = findViewById(R.id.error);
         timerView = findViewById(R.id.timer);
+        indicator = findViewById(R.id.indicator);
         speedLink = findViewById(R.id.speedLink);
-        speedResult = findViewById(R.id.speedResult);
-        bridgesLink = findViewById(R.id.bridgesLink);
-        appsValue = findViewById(R.id.appsValue);
-        countryCodeView = findViewById(R.id.countryCode);
-        countryNameView = findViewById(R.id.countryName);
-        keyChip = findViewById(R.id.keyChip);
+        speedLinkText = findViewById(R.id.speedLinkText);
+        speedPing = findViewById(R.id.speedPing);
+        speedLoad = findViewById(R.id.speedLoad);
+        engineValue = findViewById(R.id.engineValue);
+        killValue = findViewById(R.id.killValue);
+        killToggle = findViewById(R.id.killSwitchToggle);
+        modeRow = findViewById(R.id.modeRow);
+        countryRow = findViewById(R.id.countryRow);
+        appsRow = findViewById(R.id.appsRow);
         keyBanner = findViewById(R.id.keyBanner);
-        keyChip.setOnClickListener(v -> OdaSheet.showPage(getSupportFragmentManager(), OdaSheet.KEY));
+        historyList = findViewById(R.id.historyList);
+        settingsList = findViewById(R.id.settingsList);
+        pages = new View[]{findViewById(R.id.pageHome), findViewById(R.id.pageHistory), findViewById(R.id.pageSettings)};
+        navItems = new View[]{findViewById(R.id.navHome), findViewById(R.id.navHistory), findViewById(R.id.navSettings)};
+
+        applyInsets(root, findViewById(R.id.nav));
+        Motion.animateLayout(findViewById(R.id.homeContent));
+        showRows();
+
+        modeRow.setOnClickListener(v -> openBridges());
+        countryRow.setOnClickListener(v -> openPicker());
+        appsRow.setOnClickListener(v -> openApps());
         keyBanner.setOnClickListener(v -> OdaSheet.openBot(this, "renew"));
-        findViewById(R.id.menuButton).setOnClickListener(v -> OdaSheet.showPage(getSupportFragmentManager(), OdaSheet.MENU));
-
-        applyInsets(root);
-        // Появление/исчезновение секундомера, теста скорости и строки страны — плавно
-        Motion.animateLayout(root);
-        Motion.animateLayout(findViewById(R.id.links));
-        showCountry();
-        showBridgeMode();
-        showApps();
-
-        findViewById(R.id.countryRow).setOnClickListener(v -> openPicker());
-        findViewById(R.id.appsRow).setOnClickListener(v -> openApps());
+        findViewById(R.id.menuButton).setOnClickListener(v -> OdaSheet.open(this, OdaSheet.MENU));
         powerButton.setOnClickListener(v -> {
             haptic(v);
             onPowerClick();
         });
-        // Журнал доступен всегда: и до, и после подключения
-        findViewById(R.id.logLink).setOnClickListener(v -> openLog());
         speedLink.setOnClickListener(v -> runSpeedTest());
+        findViewById(R.id.engineCell).setOnClickListener(v -> openBridges());
         findViewById(R.id.killSwitch).setOnClickListener(v -> openKillSwitchSettings());
-        bridgesLink.setOnClickListener(v -> openBridges());
+        findViewById(R.id.historyLog).setOnClickListener(v -> openLog());
+        findViewById(R.id.historyClear).setOnClickListener(v -> {
+            History.clear();
+            Toast.makeText(this, R.string.history_cleared, Toast.LENGTH_SHORT).show();
+            buildHistory();
+        });
+        for (int i = 0; i < navItems.length; i++) {
+            final int t = i;
+            navItems[i].setOnClickListener(v -> showTab(t, true));
+        }
+        // Назад с «Истории» и «Настроек» — на главную
+        getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
+            @Override
+            public void handleOnBackPressed() {
+                if (tab != TAB_HOME) {
+                    showTab(TAB_HOME, true);
+                } else {
+                    setEnabled(false);
+                    getOnBackPressedDispatcher().onBackPressed();
+                }
+            }
+        });
 
         getSupportFragmentManager().setFragmentResultListener(
                 CountryPickerSheet.REQUEST_KEY, this, (key, result) -> {
@@ -146,7 +212,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
                 });
         getSupportFragmentManager().setFragmentResultListener(
                 BridgesSheet.REQUEST_KEY, this, (key, result) -> {
-                    showBridgeMode();
+                    showRows();
                     // Новый режим мостов при включённом VPN — переподключение
                     boolean changed = result.getBoolean(BridgesSheet.RESULT_CHANGED);
                     if (changed && (state == ConnectionState.ON || state == ConnectionState.CONNECTING)) {
@@ -155,13 +221,14 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
                 });
         getSupportFragmentManager().setFragmentResultListener(
                 AppsSheet.REQUEST_KEY, this, (key, result) -> {
-                    showApps();
+                    showRows();
                     // При включённом VPN список применяется сразу: пересоздаётся только интерфейс
                     if (state == ConnectionState.ON || state == ConnectionState.CONNECTING) {
                         sendToService(VpnTunnelService.ACTION_APPS);
                     }
                 });
 
+        showTab(savedInstanceState == null ? TAB_HOME : prefs.getTab(), false);
         if (savedInstanceState == null) {
             // Плавное появление экрана
             root.setAlpha(0f);
@@ -194,13 +261,30 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         StatusBus.addListener(this);
         if (!keyAllowsMain()) return;
         renderKey();
+        showRows();
+        if (tab == TAB_SETTINGS) buildSettings();
+        if (tab == TAB_HISTORY) buildHistory();
         keys.maybeWarn();
         if (keys.checkDue()) checkKeyInBackground();
     }
 
+    @Override
+    protected void onStop() {
+        started = false;
+        main.removeCallbacks(ticker);
+        main.removeCallbacks(slowCheck);
+        stopPulse();
+        StatusBus.removeListener(this);
+        super.onStop();
+    }
+
+    // ---------- ключ ----------
+
     /** Ключ изменился (проверка, смена ключа): нет доступа — экран ключа, иначе обновить срок. */
     void onKeyChanged() {
-        if (keyAllowsMain()) renderKey();
+        if (!keyAllowsMain()) return;
+        renderKey();
+        if (tab == TAB_SETTINGS) buildSettings();
     }
 
     /** Без действующего ключа главного экрана нет: открывается экран ключа. */
@@ -214,12 +298,13 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         return false;
     }
 
-    /** Срок ключа вверху и полоса «заканчивается» за 2 дня. */
+    /** Карточка «Ключ заканчивается» за 2 дня до конца. */
     private void renderKey() {
-        String left = keys.leftText();
-        keyChip.setText(getString(R.string.key_chip, left.toUpperCase(Locale.getDefault())));
         boolean soon = !keys.forever() && keys.secondsLeft() <= 2 * 86400L;
-        keyBanner.setText(getString(R.string.key_banner, left));
+        if (soon) {
+            bindRow(keyBanner, R.drawable.ic_key, true, getString(R.string.banner_title, keys.leftText()),
+                    getString(R.string.banner_sub), null);
+        }
         keyBanner.setVisibility(soon ? View.VISIBLE : View.GONE);
     }
 
@@ -237,13 +322,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         }, "oda-key-check").start();
     }
 
-    @Override
-    protected void onStop() {
-        started = false;
-        main.removeCallbacks(ticker);
-        StatusBus.removeListener(this);
-        super.onStop();
-    }
+    // ---------- состояние ----------
 
     @Override
     public void onStatus(@NonNull StatusBus.Status status) {
@@ -251,7 +330,13 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         boolean animate = !firstStatus;
         firstStatus = false;
         connectedAt = status.connectedAt;
+        connectingSince = status.connectingSince;
+        engine = status.engine;
         render(status.state, status.detail, status.error, animate);
+        if (tab == TAB_HISTORY && (status.state == ConnectionState.ON || status.state == ConnectionState.OFF
+                || status.state == ConnectionState.ERROR)) {
+            buildHistory();
+        }
     }
 
     private void onPowerClick() {
@@ -264,6 +349,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
             case ON:
                 sendToService(VpnTunnelService.ACTION_STOP);
                 connectedAt = 0;
+                connectingSince = 0;
                 render(ConnectionState.OFF, "", "", true);
                 break;
         }
@@ -272,7 +358,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private void onCountryPicked(String code) {
         if (code.equals(prefs.getCountry())) return;
         prefs.setCountry(code);
-        showCountry();
+        showRows();
         // При включённом режиме смена страны = переподключение
         if (state == ConnectionState.ON || state == ConnectionState.CONNECTING) {
             sendToService(VpnTunnelService.ACTION_COUNTRY);
@@ -300,6 +386,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     }
 
     private void startVpn() {
+        connectingSince = SystemClock.elapsedRealtime();
         render(ConnectionState.CONNECTING, getString(R.string.detail_starting), "", true);
         sendToService(VpnTunnelService.ACTION_START);
         askNotificationPermission();
@@ -340,9 +427,11 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         }
     }
 
-    private void render(ConnectionState newState, String detail, String error, boolean animate) {
+    private void render(ConnectionState newState, String newDetail, String newError, boolean animate) {
         boolean becameOn = newState == ConnectionState.ON && state != ConnectionState.ON;
         state = newState;
+        detail = newDetail != null ? newDetail : "";
+        error = newError != null ? newError : "";
         powerButton.setState(newState, animate);
 
         int status;
@@ -353,21 +442,109 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
             case ON:
                 status = R.string.status_on;
                 break;
+            case ERROR:
+                status = R.string.status_error;
+                break;
             default:
                 status = R.string.status_off;
         }
         setText(statusView, getString(status), animate);
-        setText(detailsView, detail, animate);
-        setText(errorView, newState == ConnectionState.ERROR ? error : "", animate);
+        renderIndicator(animate);
 
         boolean on = newState == ConnectionState.ON;
-        speedLink.setVisibility(on ? View.VISIBLE : View.GONE);
-        if (!on) speedResult.setVisibility(View.GONE);
+        speedLink.setAlpha(on ? 1f : 0.45f);
+        if (!on && !speedRunning) {
+            speedPing.setText(R.string.speed_none);
+            speedLoad.setText("");
+        }
+        engineValue.setText(engineTitle());
+        renderKillSwitch();
         // Секундомер — и в коротком «Подключение…» после подключения (переход способа), с прежнего времени
         timerView.setVisibility(connectedAt > 0 ? View.VISIBLE : View.GONE);
         main.removeCallbacks(ticker);
         if (connectedAt > 0 && started) tick();
         if (becameOn && animate) offerTile();
+    }
+
+    /**
+     * Индикатор и строки под статусом: серый — не подключено, зелёный — подключено (мигает при подключении),
+     * красный — ошибка или подключение дольше минуты (с причиной).
+     */
+    private void renderIndicator(boolean animate) {
+        main.removeCallbacks(slowCheck);
+        String[] lines = detail.split("\n", 2);
+        String first = lines[0];
+        String rest = lines.length > 1 ? lines[1] : "";
+        long connectingFor = connectingSince > 0 ? SystemClock.elapsedRealtime() - connectingSince : 0;
+        boolean slow = state == ConnectionState.CONNECTING && connectedAt == 0 && connectingSince > 0 && connectingFor >= SLOW_MS;
+        int color;
+        String line;
+        String note;
+        boolean noteDanger = false;
+        switch (state) {
+            case ON:
+                color = R.color.accent;
+                line = first;
+                note = rest;
+                break;
+            case CONNECTING:
+                color = slow ? R.color.danger : R.color.accent;
+                line = slow ? getString(R.string.ind_slow) + (first.isEmpty() ? "" : " · " + first) : first;
+                note = slow ? getString(R.string.ind_slow_hint, first.isEmpty() ? getString(R.string.status_connecting) : first) : rest;
+                noteDanger = slow;
+                if (!slow && connectingSince > 0 && connectedAt == 0 && started) {
+                    main.postDelayed(slowCheck, SLOW_MS - connectingFor + 50);
+                }
+                break;
+            case ERROR:
+                color = R.color.danger;
+                line = getString(R.string.history_error);
+                note = error;
+                noteDanger = true;
+                break;
+            default:
+                color = R.color.idle;
+                line = getString(R.string.ind_off);
+                note = "";
+        }
+        powerButton.setAlarm(slow);
+        indicator.setBackgroundTintList(ColorStateList.valueOf(ContextCompat.getColor(this, color)));
+        setText(detailsView, line, animate);
+        errorView.setTextColor(ContextCompat.getColor(this, noteDanger ? R.color.danger : R.color.text_secondary));
+        errorView.setVisibility(note.isEmpty() ? View.GONE : View.VISIBLE);
+        setText(errorView, note, animate);
+        if (state == ConnectionState.CONNECTING && !slow) startPulse();
+        else stopPulse();
+    }
+
+    private void startPulse() {
+        if (pulse != null && pulse.isRunning()) return;
+        pulse = ObjectAnimator.ofFloat(indicator, View.ALPHA, 1f, 0.25f);
+        pulse.setDuration(700);
+        pulse.setRepeatMode(ValueAnimator.REVERSE);
+        pulse.setRepeatCount(ValueAnimator.INFINITE);
+        pulse.start();
+    }
+
+    private void stopPulse() {
+        if (pulse != null) pulse.cancel();
+        if (indicator != null) indicator.setAlpha(1f);
+    }
+
+    /** Чем подключены сейчас, иначе — выбранный способ. */
+    private String engineTitle() {
+        if (state == ConnectionState.ON || state == ConnectionState.CONNECTING) {
+            if (StatusBus.ENGINE_BYPASS.equals(engine)) return getString(R.string.engine_bypass);
+            if (StatusBus.ENGINE_PSIPHON.equals(engine)) return getString(R.string.engine_psiphon);
+            if (StatusBus.ENGINE_TOR.equals(engine)) return getString(R.string.engine_tor);
+        }
+        return getString(prefs.getMode().title);
+    }
+
+    private void renderKillSwitch() {
+        int k = prefs.getKillSwitch();
+        killToggle.setChecked(k >= 1);
+        killValue.setText(k == 2 ? R.string.kill_on : k == 1 ? R.string.kill_partial : R.string.kill_off);
     }
 
     /** Секундомер: обновление ровно на смене секунды. */
@@ -389,31 +566,40 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
 
     /**
      * Тест скорости через тот способ, которым подключены (его SOCKS) — см. {@link SpeedTest}.
-     * Итог — под кнопкой и в журнале.
+     * Итог — в карточке «Пинг» и в журнале.
      */
     private void runSpeedTest() {
         StatusBus.Status s = StatusBus.current();
-        if (speedRunning || s.state != ConnectionState.ON || s.socksPort <= 0) return;
+        if (speedRunning) return;
+        if (s.state != ConnectionState.ON || s.socksPort <= 0) {
+            Toast.makeText(this, R.string.speed_need_on, Toast.LENGTH_SHORT).show();
+            return;
+        }
         speedRunning = true;
-        speedLink.setText(R.string.link_speed_running);
+        speedLinkText.setText(R.string.link_speed_running);
         speedLink.setEnabled(false);
-        speedResult.setVisibility(View.VISIBLE);
-        setText(speedResult, getString(R.string.speed_running), true);
-        String engine = s.engine;
+        speedPing.setText("…");
+        speedLoad.setText(R.string.speed_running);
+        String eng = s.engine;
         int port = s.socksPort;
         new Thread(() -> {
             SpeedTest.Result r = SpeedTest.run(port);
-            DiagLog.add("Тест скорости (" + engine + "): " + r.summary() + ", принято "
+            DiagLog.add("Тест скорости (" + eng + "): " + r.summary() + ", принято "
                     + r.bytes / 1024 + " КБ" + (r.error != null ? " · не прошло: " + r.error : ""));
             main.post(() -> {
                 speedRunning = false;
                 if (isDestroyed()) return;
-                speedLink.setText(R.string.link_speed);
+                speedLinkText.setText(R.string.speed_test);
                 speedLink.setEnabled(true);
                 if (state != ConnectionState.ON) return;
-                String text = r.pingMs < 0 && r.mbps < 0
-                        ? getString(R.string.speed_failed) : r.summary();
-                setText(speedResult, text, true);
+                if (r.pingMs < 0 && r.mbps < 0) {
+                    speedPing.setText(R.string.speed_none);
+                    speedLoad.setText(R.string.speed_failed);
+                    return;
+                }
+                speedPing.setText(r.pingMs > 0 ? r.pingMs + " мс" : r.pingMs == 0 ? "<1 мс" : "—");
+                speedLoad.setText(getString(R.string.speed_load, r.mbps >= 0
+                        ? String.format(Locale.forLanguageTag("ru"), "%.1f Мбит/с", r.mbps) : "—"));
             });
         }, "oda-speed").start();
     }
@@ -433,25 +619,169 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         }
     }
 
-    private void showCountry() {
+    // ---------- строки главной ----------
+
+    private void showRows() {
+        BridgeMode mode = prefs.getMode();
+        bindRow(modeRow, R.drawable.ic_bolt, true, getString(mode.title),
+                getString(mode == BridgeMode.AUTO ? R.string.mode_row_sub_auto : R.string.mode_row_sub), null);
         Country country = Country.find(this, prefs.getCountry());
-        countryCodeView.setText(country.shortLabel());
-        countryNameView.setText(country.name);
-    }
-
-    private void showBridgeMode() {
-        String mode = getString(prefs.getMode().title).toUpperCase(Locale.ROOT);
-        bridgesLink.setText(getString(R.string.link_bridges, mode));
+        bindRow(countryRow, R.drawable.ic_place, false, country.name, getString(R.string.country_row_sub),
+                Country.isAny(country.code) ? null : Country.flag(country.code));
         // Обход DPI идёт напрямую, своей страны выхода нет — прячем выбор страны
-        boolean hasCountry = prefs.getMode() != BridgeMode.BYPASS;
-        findViewById(R.id.countryRow).setVisibility(hasCountry ? View.VISIBLE : View.GONE);
+        countryRow.setVisibility(mode != BridgeMode.BYPASS ? View.VISIBLE : View.GONE);
+        bindRow(appsRow, R.drawable.ic_globe, false, getString(R.string.apps_row), appsText(), null);
+        if (engineValue != null) engineValue.setText(engineTitle());
     }
 
-    private void showApps() {
+    private String appsText() {
         int n = prefs.getExcludedApps().size();
-        appsValue.setText(n == 0 ? getString(R.string.apps_value_all)
-                : getResources().getQuantityString(R.plurals.apps_value_except, n, n));
+        return n == 0 ? getString(R.string.apps_row_sub_all)
+                : getResources().getQuantityString(R.plurals.apps_value_except, n, n);
     }
+
+    /** Заполнить строку-карточку (item_row). accent — зелёная иконка на зелёной подложке. */
+    private void bindRow(View row, @DrawableRes int icon, boolean accent, String title, @Nullable String sub,
+                         @Nullable String value) {
+        ImageView iv = row.findViewById(R.id.icon);
+        iv.setImageResource(icon);
+        iv.setImageTintList(ColorStateList.valueOf(ContextCompat.getColor(this, accent ? R.color.accent : R.color.text)));
+        row.findViewById(R.id.iconBg).setBackgroundResource(accent ? R.drawable.bg_circle_accent : R.drawable.bg_circle);
+        ((TextView) row.findViewById(R.id.title)).setText(title);
+        TextView s = row.findViewById(R.id.subtitle);
+        s.setText(sub);
+        s.setVisibility(sub == null || sub.isEmpty() ? View.GONE : View.VISIBLE);
+        TextView v = row.findViewById(R.id.value);
+        v.setText(value);
+        v.setVisibility(value == null || value.isEmpty() ? View.GONE : View.VISIBLE);
+    }
+
+    // ---------- вкладки ----------
+
+    private void showTab(int t, boolean animate) {
+        tab = t;
+        prefs.setTab(t);
+        for (int i = 0; i < pages.length; i++) {
+            View p = pages[i];
+            boolean show = i == t;
+            if (show && p.getVisibility() != View.VISIBLE) {
+                p.setVisibility(View.VISIBLE);
+                if (animate) {
+                    p.setAlpha(0f);
+                    p.setTranslationY(16f);
+                    p.animate().alpha(1f).translationY(0f).setDuration(220).setInterpolator(new DecelerateInterpolator()).start();
+                }
+            } else if (!show) {
+                p.setVisibility(View.GONE);
+            }
+            navItems[i].setSelected(show);
+            View ind = navItems[i].findViewWithTag("indicator");
+            if (ind != null) ind.setVisibility(show ? View.VISIBLE : View.INVISIBLE);
+        }
+        if (t == TAB_HISTORY) buildHistory();
+        if (t == TAB_SETTINGS) buildSettings();
+    }
+
+    private void buildHistory() {
+        historyList.removeAllViews();
+        List<History.Entry> list = History.list();
+        if (list.isEmpty()) {
+            TextView empty = new TextView(this, null, 0, R.style.Text_Oda_CardSub);
+            empty.setText(R.string.history_empty);
+            empty.setPadding(0, dp(16), 0, 0);
+            historyList.addView(empty);
+            return;
+        }
+        SimpleDateFormat fmt = new SimpleDateFormat("dd.MM, HH:mm", Locale.ROOT);
+        boolean first = true;
+        for (History.Entry e : list) {
+            View row = getLayoutInflater().inflate(R.layout.item_row, historyList, false);
+            row.setClickable(false);
+            row.setFocusable(false);
+            row.findViewById(R.id.chevron).setVisibility(View.GONE);
+            String when = fmt.format(new Date(e.start));
+            if (e.error) {
+                bindRow(row, R.drawable.ic_close, false, getString(R.string.history_error), when + "\n" + e.detail, null);
+                ((ImageView) row.findViewById(R.id.icon)).setImageTintList(ColorStateList.valueOf(ContextCompat.getColor(this, R.color.danger)));
+                row.findViewById(R.id.iconBg).setBackgroundResource(R.drawable.bg_circle_danger);
+            } else {
+                String dur = e.end > 0 ? duration((e.end - e.start) / 1000)
+                        : getString(first && History.isOpen() ? R.string.history_now : R.string.history_interrupted);
+                bindRow(row, R.drawable.ic_done, true, engineName(e.engine), when + " · " + dur + "\n" + e.detail, null);
+            }
+            first = false;
+            historyList.addView(row);
+        }
+    }
+
+    private String engineName(String eng) {
+        if (StatusBus.ENGINE_BYPASS.equals(eng)) return getString(R.string.engine_bypass);
+        if (StatusBus.ENGINE_PSIPHON.equals(eng)) return getString(R.string.engine_psiphon);
+        if (StatusBus.ENGINE_TOR.equals(eng)) return getString(R.string.engine_tor);
+        return getString(R.string.status_on);
+    }
+
+    private static String duration(long s) {
+        if (s < 60) return "меньше минуты";
+        long h = s / 3600, m = s / 60 % 60;
+        return h > 0 ? h + " ч " + m + " мин" : m + " мин";
+    }
+
+    private void buildSettings() {
+        settingsList.removeAllViews();
+        BridgeMode mode = prefs.getMode();
+        section(R.string.section_connection);
+        row(R.drawable.ic_bolt, true, getString(R.string.set_mode), getString(mode.hint), getString(mode.title), v -> openBridges());
+        if (mode != BridgeMode.BYPASS) {
+            Country c = Country.find(this, prefs.getCountry());
+            row(R.drawable.ic_place, false, getString(R.string.set_country), null, c.name, v -> openPicker());
+        }
+        row(R.drawable.ic_globe, false, getString(R.string.set_apps), appsText(), null, v -> openApps());
+        int k = prefs.getKillSwitch();
+        row(R.drawable.ic_shield, false, getString(R.string.set_kill), getString(R.string.set_kill_sub),
+                getString(k == 2 ? R.string.kill_on : k == 1 ? R.string.kill_partial : R.string.kill_off),
+                v -> openKillSwitchSettings());
+
+        section(R.string.section_key);
+        String key = keys.key();
+        row(R.drawable.ic_key, true, getString(R.string.keyinfo_title), key == null ? null : key + " · " + keys.leftText(), null,
+                v -> OdaSheet.open(this, OdaSheet.KEY));
+        row(R.drawable.ic_send, false, getString(R.string.set_renew), getString(R.string.set_renew_sub), null,
+                v -> OdaSheet.openBot(this, "renew"));
+
+        section(R.string.section_help);
+        row(R.drawable.ic_cart, false, getString(R.string.menu_buy), getString(R.string.menu_buy_sub), null, v -> OdaSheet.open(this, OdaSheet.BUY));
+        row(R.drawable.ic_doc, false, getString(R.string.menu_howto), getString(R.string.menu_howto_sub), null, v -> OdaSheet.open(this, OdaSheet.HOWTO));
+        row(R.drawable.ic_help, false, getString(R.string.menu_faq), null, null, v -> OdaSheet.open(this, OdaSheet.FAQ));
+        row(R.drawable.ic_chat, false, getString(R.string.menu_support), getString(R.string.menu_support_sub), null, v -> OdaSheet.openBot(this, "support"));
+        row(R.drawable.ic_send, false, getString(R.string.menu_bot), getString(R.string.menu_bot_sub), null, v -> OdaSheet.openBot(this, ""));
+
+        section(R.string.section_about);
+        row(R.drawable.ic_list, false, getString(R.string.set_log), getString(R.string.set_log_sub), null, v -> openLog());
+        row(R.drawable.ic_lock, false, getString(R.string.menu_privacy), null, null, v -> OdaSheet.open(this, OdaSheet.PRIVACY));
+        row(R.drawable.ic_info, false, getString(R.string.menu_about), null, "ODA " + OdaSheet.appVersion(this), v -> OdaSheet.open(this, OdaSheet.ABOUT));
+    }
+
+    private void section(int title) {
+        TextView t = new TextView(this, null, 0, R.style.Text_Oda_Caption);
+        t.setText(title);
+        t.setPadding(dp(4), dp(24), 0, dp(4));
+        settingsList.addView(t);
+    }
+
+    private void row(@DrawableRes int icon, boolean accent, String title, @Nullable String sub, @Nullable String value,
+                     View.OnClickListener click) {
+        View r = getLayoutInflater().inflate(R.layout.item_row, settingsList, false);
+        bindRow(r, icon, accent, title, sub, value);
+        r.setOnClickListener(click);
+        settingsList.addView(r);
+    }
+
+    private int dp(int v) {
+        return Math.round(v * getResources().getDisplayMetrics().density);
+    }
+
+    // ---------- листы ----------
 
     private void openLog() {
         if (getSupportFragmentManager().findFragmentByTag(LogSheet.TAG) != null) return;
@@ -491,15 +821,14 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         }).start();
     }
 
-    private void applyInsets(View root) {
-        final int left = root.getPaddingLeft();
-        final int top = root.getPaddingTop();
-        final int right = root.getPaddingRight();
-        final int bottom = root.getPaddingBottom();
+    /** Сверху — отступ под строку состояния, снизу у навигации — под системную панель. */
+    private void applyInsets(View root, View nav) {
+        final int navBottom = nav.getPaddingBottom();
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
             Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()
                     | WindowInsetsCompat.Type.displayCutout());
-            v.setPadding(left + bars.left, top + bars.top, right + bars.right, bottom + bars.bottom);
+            v.setPadding(bars.left, bars.top, bars.right, 0);
+            nav.setPadding(nav.getPaddingLeft(), nav.getPaddingTop(), nav.getPaddingRight(), navBottom + bars.bottom);
             return WindowInsetsCompat.CONSUMED;
         });
     }

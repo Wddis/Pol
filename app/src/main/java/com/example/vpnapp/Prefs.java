@@ -31,6 +31,8 @@ public final class Prefs {
     private static final String KEY_OBFS4_FAILED = "obfs4_failed";
     private static final String KEY_EXCLUDED_APPS = "excluded_apps";
     private static final String KEY_TILE_OFFERED = "tile_offered";
+    private static final String KEY_KILL_SWITCH = "kill_switch";
+    private static final String KEY_TAB = "tab";
     private static final String DEFAULT_COUNTRY = Country.ANY;
 
     private final SharedPreferences sp;
@@ -182,5 +184,23 @@ public final class Prefs {
         JSONArray arr = new JSONArray();
         for (BridgeSet s : sets) arr.put(s.serialize());
         sp.edit().putString(KEY_MOAT, arr.toString()).apply();
+    }
+
+    /** Kill switch по данным системы при последнем подключении: -1 — неизвестно, 0 — нет, 1 — «Постоянная VPN», 2 — ещё и блокировка без VPN. */
+    int getKillSwitch() {
+        return sp.getInt(KEY_KILL_SWITCH, -1);
+    }
+
+    void setKillSwitch(int state) {
+        sp.edit().putInt(KEY_KILL_SWITCH, state).apply();
+    }
+
+    /** Открытая вкладка главного экрана. */
+    int getTab() {
+        return sp.getInt(KEY_TAB, 0);
+    }
+
+    void setTab(int tab) {
+        sp.edit().putInt(KEY_TAB, tab).apply();
     }
 }

@@ -127,12 +127,12 @@
                 android:layout_marginStart="@dimen/space_3"
                 android:layout_marginTop="@dimen/space_2"
                 android:layout_marginEnd="@dimen/space_3"
-                android:backgroundTint="@color/text"
+                android:backgroundTint="@color/accent"
                 android:fontFamily="sans-serif-medium"
                 android:letterSpacing="0.1"
                 android:text="@string/bridges_save"
-                android:textColor="@color/bg"
-                app:cornerRadius="@dimen/corner" />
+                android:textColor="@color/on_accent"
+                app:cornerRadius="@dimen/corner_pill" />
         </LinearLayout>
     </androidx.core.widget.NestedScrollView>
 

@@ -3,17 +3,17 @@
 
     <!-- Единственная тема: тёмная, чёрно-белая -->
     <style name="Theme.Oda" parent="Theme.Material3.Dark.NoActionBar">
-        <item name="colorPrimary">@color/text</item>
-        <item name="colorOnPrimary">@color/bg</item>
+        <item name="colorPrimary">@color/accent</item>
+        <item name="colorOnPrimary">@color/on_accent</item>
         <item name="colorSecondary">@color/text_secondary</item>
         <item name="colorOnSecondary">@color/bg</item>
-        <item name="colorSurface">@color/bg</item>
+        <item name="colorSurface">@color/bg_top</item>
         <item name="colorOnSurface">@color/text</item>
         <item name="colorOnSurfaceVariant">@color/text_secondary</item>
         <item name="colorOutline">@color/line</item>
         <item name="colorControlHighlight">#1AFFFFFF</item>
         <item name="android:colorBackground">@color/bg</item>
-        <item name="android:windowBackground">@color/bg</item>
+        <item name="android:windowBackground">@drawable/bg_screen</item>
         <item name="android:statusBarColor">@color/bg</item>
         <item name="android:navigationBarColor">@color/bg</item>
         <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
@@ -53,8 +53,8 @@
     </style>
 
     <style name="Text.Oda.Status">
-        <item name="android:fontFamily">sans-serif-light</item>
-        <item name="android:textSize">24sp</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">30sp</item>
     </style>
 
     <style name="Text.Oda.Code">
@@ -64,7 +64,7 @@
     </style>
 
     <style name="Text.Oda.Body">
-        <item name="android:fontFamily">sans-serif-light</item>
+        <item name="android:fontFamily">sans-serif</item>
         <item name="android:textSize">16sp</item>
     </style>
 
@@ -80,6 +80,69 @@
         <item name="android:background">?android:attr/selectableItemBackground</item>
     </style>
 
+    <!-- 0.11: надпись ODA, подписи капслоком, карточки -->
+    <style name="Text.Oda.Logo">
+        <item name="android:fontFamily">sans-serif-light</item>
+        <item name="android:textSize">34sp</item>
+        <item name="android:letterSpacing">0.22</item>
+    </style>
+
+    <style name="Text.Oda.Caption">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">10sp</item>
+        <item name="android:letterSpacing">0.2</item>
+        <item name="android:textAllCaps">true</item>
+        <item name="android:textColor">@color/text_label</item>
+    </style>
+
+    <style name="Text.Oda.Heading">
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">15sp</item>
+        <item name="android:letterSpacing">0.3</item>
+        <item name="android:textAllCaps">true</item>
+    </style>
+
+    <style name="Text.Oda.CardTitle">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">16sp</item>
+    </style>
+
+    <style name="Text.Oda.CardSub">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:textColor">@color/text_secondary</item>
+        <item name="android:lineSpacingExtra">2dp</item>
+    </style>
+
+    <style name="Text.Oda.Value">
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">17sp</item>
+        <item name="android:letterSpacing">0.02</item>
+    </style>
+
+    <!-- Кнопки-«таблетки»: зелёная и с обводкой -->
+    <style name="Widget.Oda.Button" parent="Widget.Material3.Button">
+        <item name="backgroundTint">@null</item>
+        <item name="android:background">@drawable/bg_btn_accent</item>
+        <item name="android:textColor">@color/on_accent</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+        <item name="android:textSize">13sp</item>
+        <item name="android:letterSpacing">0.2</item>
+        <item name="android:minHeight">@dimen/button_height</item>
+        <item name="android:insetTop">0dp</item>
+        <item name="android:insetBottom">0dp</item>
+        <item name="iconTint">@color/on_accent</item>
+        <item name="iconGravity">textStart</item>
+        <item name="iconPadding">14dp</item>
+        <item name="iconSize">20dp</item>
+    </style>
+
+    <style name="Widget.Oda.Button.Outline">
+        <item name="android:background">@drawable/bg_btn_outline</item>
+        <item name="android:textColor">@color/text</item>
+        <item name="iconTint">@color/text</item>
+    </style>
+
     <!-- Секундомер подключения: цифры одной ширины, чтобы не «прыгали» -->
     <style name="Text.Oda.Timer">
         <item name="android:fontFamily">sans-serif-light</item>
@@ -89,8 +152,8 @@
     </style>
 
     <style name="Text.Oda.Small">
-        <item name="android:fontFamily">sans-serif-light</item>
-        <item name="android:textSize">12sp</item>
+        <item name="android:fontFamily">sans-serif</item>
+        <item name="android:textSize">13sp</item>
         <item name="android:textColor">@color/text_secondary</item>
     </style>
 

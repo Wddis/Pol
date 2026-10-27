@@ -1,0 +1,66 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Главный экран 0.11: вкладки, индикатор, карточки -->
+<resources>
+    <string name="tagline">Безопасный доступ к интернету</string>
+    <string name="nav_home">Главная</string>
+    <string name="nav_history">История</string>
+    <string name="nav_settings">Настройки</string>
+
+    <string name="mode_row_sub_auto">Быстрое подключение: способ выбирается сам</string>
+    <string name="mode_row_sub">Способ подключения</string>
+    <string name="country_row_sub">Страна выхода</string>
+    <string name="apps_row_sub_all">Все приложения идут через VPN</string>
+
+    <string name="ind_off">Нажмите кнопку, чтобы подключиться</string>
+    <string name="ind_slow">Подключение дольше минуты</string>
+    <string name="ind_slow_hint">Не подключается дольше минуты: %1$s. Попробуйте другую сеть (Wi-Fi или мобильную) или способ «Авто». Подробности — в истории, «Журнал подключения»</string>
+
+    <string name="speed_ping">Пинг</string>
+    <string name="speed_none">—</string>
+    <string name="speed_test">Тест скорости</string>
+    <string name="speed_load">Загрузка %1$s</string>
+    <string name="speed_need_on">Тест скорости — после подключения</string>
+    <string name="engine_label">Способ</string>
+    <string name="engine_bypass">Обход DPI</string>
+    <string name="engine_psiphon">Psiphon</string>
+    <string name="engine_tor">Tor</string>
+    <string name="kill_switch_label">Kill Switch</string>
+    <string name="kill_on">Включён</string>
+    <string name="kill_partial">Постоянная VPN</string>
+    <string name="kill_off">Выключен</string>
+
+    <string name="banner_title">Ключ заканчивается через %1$s</string>
+    <string name="banner_sub">Продлите в Telegram — ключ останется тем же</string>
+
+    <string name="history_title">История</string>
+    <string name="history_sub">Подключения на этом телефоне</string>
+    <string name="history_log">ЖУРНАЛ ПОДКЛЮЧЕНИЯ</string>
+    <string name="history_clear">ОЧИСТИТЬ ИСТОРИЮ</string>
+    <string name="history_empty">Подключений пока не было. Нажмите кнопку на главной — подключение появится здесь</string>
+    <string name="history_now">идёт сейчас</string>
+    <string name="history_interrupted">прервано</string>
+    <string name="history_error">Ошибка подключения</string>
+    <string name="history_cleared">История очищена</string>
+
+    <string name="settings_title">Настройки</string>
+    <string name="settings_sub">Подключение, ключ и помощь</string>
+    <string name="section_connection">Подключение</string>
+    <string name="section_key">Ключ доступа</string>
+    <string name="section_help">Помощь</string>
+    <string name="section_about">О приложении</string>
+    <string name="set_mode">Способ подключения</string>
+    <string name="set_country">Страна выхода</string>
+    <string name="set_apps">Приложения через VPN</string>
+    <string name="set_kill">Kill Switch</string>
+    <string name="set_kill_sub">«Постоянная VPN» и «Блокировать соединения без VPN» в настройках Android</string>
+    <string name="set_renew">Продлить в Telegram</string>
+    <string name="set_renew_sub">Профиль → «Продлить», ключ тот же</string>
+    <string name="set_log">Журнал подключения</string>
+    <string name="set_log_sub">Скопируйте и пришлите в поддержку, если не подключается</string>
+
+    <string name="page_key_sub">Информация о вашем ключе</string>
+    <string name="page_info_sub">Справка ODA</string>
+    <string name="keyinfo_checked_never">ещё не проверялся</string>
+    <string name="cd_back">Назад</string>
+    <string name="cd_copy">Копировать</string>
+</resources>

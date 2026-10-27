@@ -38,12 +38,12 @@
             android:layout_width="0dp"
             android:layout_height="@dimen/row_height"
             android:layout_weight="1"
-            android:backgroundTint="@color/text"
+            android:backgroundTint="@color/accent"
             android:fontFamily="sans-serif-medium"
             android:letterSpacing="0.1"
             android:text="@string/log_copy"
-            android:textColor="@color/bg"
-            app:cornerRadius="@dimen/corner" />
+            android:textColor="@color/on_accent"
+            app:cornerRadius="@dimen/corner_pill" />
 
         <com.google.android.material.button.MaterialButton
             android:id="@+id/clear"
@@ -56,7 +56,7 @@
             android:letterSpacing="0.1"
             android:text="@string/log_clear"
             android:textColor="@color/text"
-            app:cornerRadius="@dimen/corner"
+            app:cornerRadius="@dimen/corner_pill"
             app:strokeColor="@color/line" />
     </LinearLayout>
 

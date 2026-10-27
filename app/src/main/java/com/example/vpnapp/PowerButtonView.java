@@ -10,12 +10,13 @@ import android.content.Context;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.graphics.RadialGradient;
 import android.graphics.RectF;
+import android.graphics.Shader;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.DecelerateInterpolator;
 import android.view.animation.LinearInterpolator;
 import android.view.animation.OvershootInterpolator;
@@ -25,9 +26,10 @@ import androidx.annotation.Nullable;
 import androidx.core.content.ContextCompat;
 
 /**
- * Круглая кнопка включения, рисуется на Canvas.
- * Выкл: красный круг. Подключение: вокруг вращается дуга 90°.
- * Вкл: зелёный круг с мягким «дыханием» масштаба.
+ * Кнопка включения (0.11, макет владельца): тёмный диск с кольцом и белая иконка питания.
+ * Кольцо: серое — не подключено; зелёное со свечением и мягким «дыханием» — подключено;
+ * подключение — по серому кольцу бежит зелёная дуга (красная, если подключение идёт дольше минуты);
+ * ошибка — красное кольцо.
  */
 public class PowerButtonView extends View {
 
@@ -35,37 +37,41 @@ public class PowerButtonView extends View {
     private static final long PRESS_MS = 120;
     private static final long RELEASE_MS = 300;
     private static final long SPIN_MS = 1200;
-    private static final long BREATH_MS = 1800;
-    private static final float BREATH_SCALE = 1.04f;
-    private static final float PRESS_SCALE = 0.92f;
-    private static final float ARC_DP = 2f;
-    private static final float ARC_GAP_DP = 6f;
-    private static final float ICON_DP = 48f;
-    private static final float ARC_SWEEP = 90f;
-    private static final float ICON_ALPHA_CONNECTING = 0.5f;
+    private static final long BREATH_MS = 2200;
+    private static final float PRESS_SCALE = 0.94f;
+    private static final float RING_DP = 3f;
+    private static final float GLOW_DP = 26f;
+    private static final float ICON_DP = 64f;
+    private static final float ARC_SWEEP = 100f;
 
-    private final Paint fillPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
-    private final Paint trackPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint discPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint ringPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final Paint arcPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
+    private final Paint glowPaint = new Paint(Paint.ANTI_ALIAS_FLAG);
     private final RectF arcRect = new RectF();
     private final ArgbEvaluator argb = new ArgbEvaluator();
     private final Drawable icon;
-    private final int colorOff;
+    private final int colorIdle;
     private final int colorOn;
-    private final int colorTrack;
-    private final float arcWidth;
-    private final float arcGap;
+    private final int colorDanger;
+    private final float ringWidth;
+    private final float glowWidth;
     private final float iconSize;
 
     private ConnectionState state = ConnectionState.OFF;
+    private boolean alarm;
 
-    // Текущие значения, которые плавно анимируются
-    private float fill;          // 0 — красный, 1 — зелёный
-    private float iconAlpha = 1f;
-    private float arcAlpha;      // видимость вращающейся дуги
+    // Плавно меняющиеся значения
+    private int ringColor;
+    private float glow;          // 0..1 — свечение вокруг кольца (подключено)
+    private float arcAlpha;      // видимость бегущей дуги (подключение)
     private float arcAngle;
-    private float breath = 1f;   // масштаб «дыхания»
-    private float press = 1f;    // масштаб нажатия
+    private float breath;        // 0..1 — «дыхание» свечения
+    private float press = 1f;
+    private float iconAlpha = 0.85f;
+
+    private int glowShaderColor;
+    private float glowShaderR;
 
     private ValueAnimator transition;
     private ValueAnimator spin;
@@ -79,23 +85,23 @@ public class PowerButtonView extends View {
     public PowerButtonView(Context context, @Nullable AttributeSet attrs) {
         super(context, attrs);
         float density = getResources().getDisplayMetrics().density;
-        arcWidth = ARC_DP * density;
-        arcGap = ARC_GAP_DP * density;
+        ringWidth = RING_DP * density;
+        glowWidth = GLOW_DP * density;
         iconSize = ICON_DP * density;
-        colorOff = ContextCompat.getColor(context, R.color.power_off);
+        colorIdle = ContextCompat.getColor(context, R.color.power_off);
         colorOn = ContextCompat.getColor(context, R.color.power_on);
-        colorTrack = ContextCompat.getColor(context, R.color.line);
+        colorDanger = ContextCompat.getColor(context, R.color.danger);
+        ringColor = colorIdle;
 
-        fillPaint.setStyle(Paint.Style.FILL);
-        trackPaint.setStyle(Paint.Style.STROKE);
-        trackPaint.setStrokeWidth(arcWidth);
-        trackPaint.setColor(colorTrack);
+        discPaint.setStyle(Paint.Style.FILL);
+        discPaint.setColor(ContextCompat.getColor(context, R.color.power_disc));
+        ringPaint.setStyle(Paint.Style.STROKE);
+        ringPaint.setStrokeWidth(ringWidth);
         arcPaint.setStyle(Paint.Style.STROKE);
-        arcPaint.setStrokeWidth(arcWidth);
+        arcPaint.setStrokeWidth(ringWidth);
         arcPaint.setStrokeCap(Paint.Cap.ROUND);
-        arcPaint.setColor(Color.WHITE);
+        glowPaint.setStyle(Paint.Style.FILL);
 
-        // Иконка белая во всех состояниях, без перекраски
         Drawable d = ContextCompat.getDrawable(context, R.drawable.ic_power);
         icon = d != null ? d.mutate() : null;
 
@@ -108,6 +114,13 @@ public class PowerButtonView extends View {
         return state;
     }
 
+    /** Подключение идёт дольше минуты — дуга красная (индикатор ошибки). */
+    public void setAlarm(boolean value) {
+        if (alarm == value) return;
+        alarm = value;
+        invalidate();
+    }
+
     /** Смена состояния; animate = false — без анимации (например, после поворота). */
     public void setState(@NonNull ConnectionState newState, boolean animate) {
         if (newState == state && animate) return;
@@ -116,38 +129,39 @@ public class PowerButtonView extends View {
 
         boolean on = newState == ConnectionState.ON;
         boolean connecting = newState == ConnectionState.CONNECTING;
-        float toFill = on ? 1f : 0f;
-        float toIcon = connecting ? ICON_ALPHA_CONNECTING : 1f;
+        int toRing = on ? colorOn : newState == ConnectionState.ERROR ? colorDanger : colorIdle;
+        float toGlow = on ? 1f : 0f;
         float toArc = connecting ? 1f : 0f;
+        float toIcon = on ? 1f : 0.85f;
 
         cancel(transition);
         if (!on) cancel(breathing);
         if (connecting) startSpin();
 
         if (!animate) {
-            fill = toFill;
-            iconAlpha = toIcon;
+            ringColor = toRing;
+            glow = toGlow;
             arcAlpha = toArc;
-            breath = 1f;
+            iconAlpha = toIcon;
             if (!connecting) cancel(spin);
             if (on) startBreathing();
             invalidate();
             return;
         }
 
-        final float fromFill = fill;
-        final float fromIcon = iconAlpha;
+        final int fromRing = ringColor;
+        final float fromGlow = glow;
         final float fromArc = arcAlpha;
-        final float fromBreath = breath;
+        final float fromIcon = iconAlpha;
         transition = ValueAnimator.ofFloat(0f, 1f);
         transition.setDuration(TRANSITION_MS);
         transition.setInterpolator(new DecelerateInterpolator());
         transition.addUpdateListener(a -> {
             float t = (float) a.getAnimatedValue();
-            fill = lerp(fromFill, toFill, t);
-            iconAlpha = lerp(fromIcon, toIcon, t);
+            ringColor = (int) argb.evaluate(t, fromRing, toRing);
+            glow = lerp(fromGlow, toGlow, t);
             arcAlpha = lerp(fromArc, toArc, t);
-            if (!on) breath = lerp(fromBreath, 1f, t);
+            iconAlpha = lerp(fromIcon, toIcon, t);
             invalidate();
         });
         transition.addListener(new AnimatorListenerAdapter() {
@@ -161,7 +175,6 @@ public class PowerButtonView extends View {
             @Override
             public void onAnimationEnd(Animator animation) {
                 if (canceled) return;
-                // Дуга крутится, пока не исчезнет полностью
                 if (state != ConnectionState.CONNECTING) cancel(spin);
                 if (state == ConnectionState.ON) startBreathing();
             }
@@ -191,31 +204,42 @@ public class PowerButtonView extends View {
         super.onDraw(canvas);
         float cx = getWidth() / 2f;
         float cy = getHeight() / 2f;
-        // Запас под «дыхание» и кольцо дуги, чтобы ничего не обрезалось
-        float outer = Math.min(getWidth(), getHeight()) / 2f - arcWidth;
-        float baseR = outer / BREATH_SCALE - arcGap;
-        float r = baseR * breath * press;
+        // Снаружи — место под свечение
+        float ringR = (Math.min(getWidth(), getHeight()) / 2f - glowWidth) * press;
 
-        // Заливка: от красного к зелёному
-        fillPaint.setColor((int) argb.evaluate(fill, colorOff, colorOn));
-        canvas.drawCircle(cx, cy, r, fillPaint);
+        // Свечение вокруг кольца (подключено), дышит
+        float g = glow * (0.75f + 0.25f * breath);
+        if (g > 0.01f) {
+            float outer = ringR + glowWidth;
+            if (glowShaderColor != colorOn || glowShaderR != outer) {
+                glowShaderColor = colorOn;
+                glowShaderR = outer;
+                int c0 = (colorOn & 0x00FFFFFF) | 0x66000000;
+                glowPaint.setShader(new RadialGradient(cx, cy, outer,
+                        new int[]{Color.TRANSPARENT, c0, Color.TRANSPARENT},
+                        new float[]{Math.max(0f, (ringR - glowWidth * 0.4f) / outer), ringR / outer, 1f},
+                        Shader.TileMode.CLAMP));
+            }
+            glowPaint.setAlpha(Math.round(255 * g));
+            canvas.drawCircle(cx, cy, outer, glowPaint);
+        }
 
-        // Кольцо и вращающаяся дуга вокруг круга
+        // Тёмный диск и кольцо
+        canvas.drawCircle(cx, cy, ringR, discPaint);
+        ringPaint.setColor(ringColor);
+        canvas.drawCircle(cx, cy, ringR, ringPaint);
+
+        // Подключение: бегущая дуга
         if (arcAlpha > 0f) {
-            float ar = r + arcGap;
-            arcRect.set(cx - ar, cy - ar, cx + ar, cy + ar);
-            int a = Math.round(255 * arcAlpha);
-            trackPaint.setAlpha(a);
-            canvas.drawCircle(cx, cy, ar, trackPaint);
-            arcPaint.setAlpha(a);
+            arcRect.set(cx - ringR, cy - ringR, cx + ringR, cy + ringR);
+            arcPaint.setColor(alarm ? colorDanger : colorOn);
+            arcPaint.setAlpha(Math.round(255 * arcAlpha));
             canvas.drawArc(arcRect, arcAngle - 90f, ARC_SWEEP, false, arcPaint);
         }
 
-        // Белая иконка питания
         if (icon != null) {
-            float half = iconSize * breath * press / 2f;
-            icon.setBounds(Math.round(cx - half), Math.round(cy - half),
-                    Math.round(cx + half), Math.round(cy + half));
+            float half = iconSize * press / 2f;
+            icon.setBounds(Math.round(cx - half), Math.round(cy - half), Math.round(cx + half), Math.round(cy + half));
             icon.setAlpha(Math.round(255 * iconAlpha));
             icon.draw(canvas);
         }
@@ -264,11 +288,11 @@ public class PowerButtonView extends View {
 
     private void startBreathing() {
         if (breathing != null && breathing.isRunning()) return;
-        breathing = ValueAnimator.ofFloat(1f, BREATH_SCALE);
+        breathing = ValueAnimator.ofFloat(0f, 1f);
         breathing.setDuration(BREATH_MS);
-        breathing.setRepeatCount(ValueAnimator.INFINITE);
         breathing.setRepeatMode(ValueAnimator.REVERSE);
-        breathing.setInterpolator(new AccelerateDecelerateInterpolator());
+        breathing.setRepeatCount(ValueAnimator.INFINITE);
+        breathing.setInterpolator(new DecelerateInterpolator());
         breathing.addUpdateListener(a -> {
             breath = (float) a.getAnimatedValue();
             invalidate();
@@ -276,26 +300,17 @@ public class PowerButtonView extends View {
         breathing.start();
     }
 
+    private static void cancel(@Nullable ValueAnimator a) {
+        if (a != null) a.cancel();
+    }
+
+    private static float lerp(float a, float b, float t) {
+        return a + (b - a) * t;
+    }
+
     private void updateDescription() {
-        int res;
-        switch (state) {
-            case ON:
-                res = R.string.cd_power_on;
-                break;
-            case CONNECTING:
-                res = R.string.cd_power_connecting;
-                break;
-            default:
-                res = R.string.cd_power_off;
-        }
+        int res = state == ConnectionState.ON ? R.string.cd_power_on
+                : state == ConnectionState.CONNECTING ? R.string.cd_power_connecting : R.string.cd_power_off;
         setContentDescription(getContext().getString(res));
-    }
-
-    private static void cancel(@Nullable ValueAnimator animator) {
-        if (animator != null) animator.cancel();
-    }
-
-    private static float lerp(float from, float to, float t) {
-        return from + (to - from) * t;
     }
 }
