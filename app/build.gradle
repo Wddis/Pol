@@ -15,8 +15,8 @@ android {
         applicationId = 'com.example.vpnapp'
         minSdk = 24
         targetSdk = 36
-        versionCode = 23
-        versionName = '0.11.2'
+        versionCode = 24
+        versionName = '0.12.0'
 
         // Только ARM: реальные телефоны (x86 нужен лишь эмуляторам, экономим ~15 МБ)
         ndk {
@@ -48,6 +48,8 @@ android {
 dependencies {
     implementation 'androidx.appcompat:appcompat:1.8.0'
     implementation 'com.google.android.material:material:1.14.0'
+    // Главный экран: раскладка по пропорциям, без прокрутки на любом телефоне
+    implementation 'androidx.constraintlayout:constraintlayout:2.2.1'
     implementation 'info.guardianproject:tor-android:0.4.9.14'
     implementation 'info.guardianproject:jtorctl:0.4.5.7'
     // Мосты: snowflake, obfs4, webtunnel, meek (обход блокировки Tor)

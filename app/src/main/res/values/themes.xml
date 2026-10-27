@@ -120,6 +120,16 @@
         <item name="android:letterSpacing">0.02</item>
     </style>
 
+    <!-- Нижняя навигация: подсветка выбранной вкладки — мягкая «капсула» -->
+    <style name="Widget.Oda.NavIndicator" parent="Widget.Material3.BottomNavigationView.ActiveIndicator">
+        <item name="android:color">@color/accent_bg</item>
+    </style>
+
+    <style name="Text.Oda.NavLabel" parent="TextAppearance.Material3.LabelSmall">
+        <item name="android:textSize">11sp</item>
+        <item name="android:fontFamily">sans-serif-medium</item>
+    </style>
+
     <!-- Кнопки-«таблетки»: зелёная и с обводкой -->
     <style name="Widget.Oda.Button" parent="Widget.Material3.Button">
         <item name="backgroundTint">@null</item>

@@ -17,6 +17,10 @@
 
     <string name="speed_ping">Пинг</string>
     <string name="speed_none">—</string>
+    <string name="speed_ping_none">Пинг —</string>
+    <string name="speed_ping_value">Пинг %1$s</string>
+    <string name="speed_load_none">Загрузка —</string>
+    <string name="speed_failed_short">Тест не прошёл</string>
     <string name="speed_test">Тест скорости</string>
     <string name="speed_test_running">Измеряю…</string>
     <string name="speed_load">Загрузка %1$s</string>

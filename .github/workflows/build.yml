@@ -4,6 +4,11 @@ on:
   push:
     branches: [ main, 'claude/**' ]
   workflow_dispatch:
+    inputs:
+      test_key:
+        description: "Тестовый ключ ODA (на несколько минут) — проверка интерфейса в эмуляторе Android (job «ui»)"
+        required: false
+        default: ""
 
 jobs:
   build:
@@ -100,3 +105,49 @@ jobs:
           name: vpn-app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+  # Интерфейс в эмуляторе Android (на раннерах GitHub есть KVM): APK из job «build», тестовый ключ из запуска
+  # вручную; scripts/ui-test.py проходит экраны как человек, скриншоты — в журнале (@@SHOT) и артефакте
+  ui:
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_key != '' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Download APK
+        uses: actions/download-artifact@v7
+        with:
+          name: vpn-app-debug
+          path: apk
+
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          python3 -m pip install --quiet --break-system-packages pillow || python3 -m pip install --quiet pillow
+
+      - name: UI test in Android emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        env:
+          TEST_KEY: ${{ inputs.test_key }}
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          script: python3 scripts/ui-test.py apk/app-debug.apk "$TEST_KEY" ui-shots
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ui-shots
+          path: ui-shots
+          if-no-files-found: ignore

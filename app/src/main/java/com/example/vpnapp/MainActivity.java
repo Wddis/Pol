@@ -43,6 +43,7 @@ import androidx.core.graphics.Insets;
 import androidx.core.view.ViewCompat;
 import androidx.core.view.WindowInsetsCompat;
 
+import com.google.android.material.bottomnavigation.BottomNavigationView;
 import com.google.android.material.materialswitch.MaterialSwitch;
 
 import java.text.SimpleDateFormat;
@@ -114,9 +115,9 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private View appsRow;
     private View keyBanner;
     private View[] pages;
-    private View[] navItems;
+    private BottomNavigationView nav;
+    private boolean navSync;
     private LinearLayout historyList;
-    private LinearLayout homeContent;
     private LinearLayout settingsList;
 
     // Системный диалог «Разрешить VPN»
@@ -170,18 +171,14 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         historyList = findViewById(R.id.historyList);
         settingsList = findViewById(R.id.settingsList);
         pages = new View[]{findViewById(R.id.pageHome), findViewById(R.id.pageHistory), findViewById(R.id.pageSettings)};
-        navItems = new View[]{findViewById(R.id.navHome), findViewById(R.id.navHistory), findViewById(R.id.navSettings)};
+        nav = findViewById(R.id.nav);
 
-        applyInsets(root, findViewById(R.id.nav));
-        // Главная помещается в один экран на любом телефоне: кнопка питания подстраивается под высоту
-        homeContent = findViewById(R.id.homeContent);
-        View.OnLayoutChangeListener fit = (v, l, t, r, b, ol, ot, or, ob) -> {
-            if (b - t != ob - ot || r - l != or - ol) main.post(this::fitHome);
-        };
-        pages[TAB_HOME].addOnLayoutChangeListener(fit);
-        homeContent.addOnLayoutChangeListener(fit);
-        // Без LayoutTransition на главной: анимация двигала карточки, не перекладывая их содержимое, и при смене
-        // способа (подгонка кнопки под высоту) нижние карточки оставались пустыми
+        applyInsets(root);
+        // Главная раскладывается ConstraintLayout по пропорциям (activity_main.xml): кнопка занимает свободную
+        // высоту, всё помещается без прокрутки и без подгонки из кода; анимаций раскладки на главной нет —
+        // они сдвигали карточки, не перекладывая содержимое (0.11.1)
+        modeRow.setBackgroundResource(R.drawable.bg_cell_top);
+        appsRow.setBackgroundResource(R.drawable.bg_cell_bottom);
         showRows();
 
         modeRow.setOnClickListener(v -> openBridges());
@@ -201,10 +198,12 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
             Toast.makeText(this, R.string.history_cleared, Toast.LENGTH_SHORT).show();
             buildHistory();
         });
-        for (int i = 0; i < navItems.length; i++) {
-            final int t = i;
-            navItems[i].setOnClickListener(v -> showTab(t, true));
-        }
+        nav.setOnItemSelectedListener(item -> {
+            int id = item.getItemId();
+            if (!navSync) showTab(id == R.id.navHistory ? TAB_HISTORY : id == R.id.navSettings ? TAB_SETTINGS : TAB_HOME, true);
+            return true;
+        });
+        nav.setOnItemReselectedListener(item -> { });
         // Назад с «Истории» и «Настроек» — на главную
         getOnBackPressedDispatcher().addCallback(this, new OnBackPressedCallback(true) {
             @Override
@@ -464,8 +463,8 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         boolean on = newState == ConnectionState.ON;
         speedLink.setAlpha(on ? 1f : 0.45f);
         if (!on && !speedRunning) {
-            speedPing.setText(R.string.speed_none);
-            speedLoad.setText("");
+            speedPing.setText(R.string.speed_ping_none);
+            speedLoad.setText(R.string.speed_load_none);
         }
         engineValue.setText(engineTitle());
         renderKillSwitch();
@@ -589,8 +588,8 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         speedRunning = true;
         speedLinkText.setText(R.string.speed_test_running);
         speedLink.setEnabled(false);
-        speedPing.setText("…");
-        speedLoad.setText(R.string.speed_running);
+        speedPing.setText(getString(R.string.speed_ping_value, "…"));
+        speedLoad.setText(R.string.speed_test_running);
         String eng = s.engine;
         int port = s.socksPort;
         new Thread(() -> {
@@ -604,11 +603,12 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
                 speedLink.setEnabled(true);
                 if (state != ConnectionState.ON) return;
                 if (r.pingMs < 0 && r.mbps < 0) {
-                    speedPing.setText(R.string.speed_none);
-                    speedLoad.setText(R.string.speed_failed);
+                    speedPing.setText(R.string.speed_ping_none);
+                    speedLoad.setText(R.string.speed_failed_short);
                     return;
                 }
-                speedPing.setText(r.pingMs > 0 ? r.pingMs + " мс" : r.pingMs == 0 ? "<1 мс" : "—");
+                speedPing.setText(getString(R.string.speed_ping_value,
+                        r.pingMs > 0 ? r.pingMs + " мс" : r.pingMs == 0 ? "<1 мс" : "—"));
                 speedLoad.setText(getString(R.string.speed_load, r.mbps >= 0
                         ? String.format(Locale.forLanguageTag("ru"), "%.1f Мбит/с", r.mbps) : "—"));
             });
@@ -627,26 +627,6 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
                     getMainExecutor(), result -> { });
         } catch (RuntimeException ignored) {
             // оболочка производителя не поддерживает — плитку можно добавить вручную
-        }
-    }
-
-    /**
-     * Подгонка главной под высоту экрана: всё (шапка, строки, кнопка, статус, секундомер, карточки) должно
-     * помещаться без прокрутки — размер кнопки питания = сколько остаётся (от 100 до 220 dp).
-     */
-    private void fitHome() {
-        View scroll = pages[TAB_HOME];
-        int avail = scroll.getHeight() - scroll.getPaddingTop() - scroll.getPaddingBottom();
-        if (avail <= 0 || homeContent.getWidth() <= 0) return;
-        homeContent.measure(View.MeasureSpec.makeMeasureSpec(homeContent.getWidth(), View.MeasureSpec.EXACTLY),
-                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
-        ViewGroup.LayoutParams lp = powerButton.getLayoutParams();
-        int target = lp.height + (avail - homeContent.getMeasuredHeight());
-        target = Math.max(dp(100), Math.min(dp(220), target));
-        if (Math.abs(target - lp.height) > dp(2)) {
-            lp.width = target;
-            lp.height = target;
-            powerButton.setLayoutParams(lp);
         }
     }
 
@@ -690,25 +670,36 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
 
     // ---------- вкладки ----------
 
+    /** Вкладка: плавная смена (затухание и лёгкий подъём); прежние анимации отменяются, чтобы ничего не «застревало». */
     private void showTab(int t, boolean animate) {
         tab = t;
         prefs.setTab(t);
         for (int i = 0; i < pages.length; i++) {
             View p = pages[i];
-            boolean show = i == t;
-            if (show && p.getVisibility() != View.VISIBLE) {
+            p.animate().cancel();
+            if (i == t) {
+                boolean wasHidden = p.getVisibility() != View.VISIBLE;
                 p.setVisibility(View.VISIBLE);
-                if (animate) {
+                if (animate && wasHidden) {
                     p.setAlpha(0f);
-                    p.setTranslationY(16f);
-                    p.animate().alpha(1f).translationY(0f).setDuration(220).setInterpolator(new DecelerateInterpolator()).start();
+                    p.setTranslationY(dp(12));
+                    p.animate().alpha(1f).translationY(0f).setDuration(220)
+                            .setInterpolator(new DecelerateInterpolator()).start();
+                } else {
+                    p.setAlpha(1f);
+                    p.setTranslationY(0f);
                 }
-            } else if (!show) {
+            } else {
                 p.setVisibility(View.GONE);
+                p.setAlpha(1f);
+                p.setTranslationY(0f);
             }
-            navItems[i].setSelected(show);
-            View ind = navItems[i].findViewWithTag("indicator");
-            if (ind != null) ind.setVisibility(show ? View.VISIBLE : View.INVISIBLE);
+        }
+        int id = t == TAB_HISTORY ? R.id.navHistory : t == TAB_SETTINGS ? R.id.navSettings : R.id.navHome;
+        if (nav.getSelectedItemId() != id) {
+            navSync = true;
+            nav.setSelectedItemId(id);
+            navSync = false;
         }
         if (t == TAB_HISTORY) buildHistory();
         if (t == TAB_SETTINGS) buildSettings();
@@ -896,15 +887,13 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         }).start();
     }
 
-    /** Сверху — отступ под строку состояния, снизу у навигации — под системную панель. */
-    private void applyInsets(View root, View nav) {
-        final int navBottom = nav.getPaddingBottom();
+    /** Сверху — отступ под строку состояния; снизу отступ под системную панель ставит сама нижняя навигация. */
+    private void applyInsets(View root) {
         ViewCompat.setOnApplyWindowInsetsListener(root, (v, insets) -> {
             Insets bars = insets.getInsets(WindowInsetsCompat.Type.systemBars()
                     | WindowInsetsCompat.Type.displayCutout());
             v.setPadding(bars.left, bars.top, bars.right, 0);
-            nav.setPadding(nav.getPaddingLeft(), nav.getPaddingTop(), nav.getPaddingRight(), navBottom + bars.bottom);
-            return WindowInsetsCompat.CONSUMED;
+            return insets;
         });
     }
 
