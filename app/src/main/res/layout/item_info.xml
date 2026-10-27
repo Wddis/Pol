@@ -67,7 +67,7 @@
         android:id="@+id/action"
         android:layout_width="@dimen/space_6"
         android:layout_height="@dimen/space_6"
-        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:background="@drawable/bg_icon_ripple"
         android:padding="12dp"
         android:tint="@color/text_secondary"
         android:visibility="gone" />

@@ -18,7 +18,7 @@
             android:layout_height="@dimen/space_6"
             android:layout_gravity="start|center_vertical"
             android:layout_marginStart="@dimen/space_1"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:background="@drawable/bg_icon_ripple"
             android:contentDescription="@string/cd_back"
             android:padding="10dp"
             android:src="@drawable/ic_back"

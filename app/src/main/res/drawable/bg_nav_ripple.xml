@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Пункт нижней навигации: круг вокруг иконки, не на всю панель -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1FFFFFFF"
+    android:radius="26dp" />

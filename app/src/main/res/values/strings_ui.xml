@@ -29,8 +29,8 @@
     <string name="kill_partial">Постоянная VPN</string>
     <string name="kill_off">Выключен</string>
 
-    <string name="banner_title">Ключ заканчивается через %1$s</string>
-    <string name="banner_sub">Продлите в Telegram — ключ останется тем же</string>
+    <string name="banner_text">Ключ: осталось %1$s</string>
+    <string name="banner_action">ПРОДЛИТЬ</string>
 
     <string name="history_title">История</string>
     <string name="history_sub">Подключения на этом телефоне</string>
@@ -45,16 +45,24 @@
     <string name="settings_title">Настройки</string>
     <string name="settings_sub">Подключение, ключ и помощь</string>
     <string name="section_connection">Подключение</string>
-    <string name="section_key">Ключ доступа</string>
-    <string name="section_help">Помощь</string>
-    <string name="section_about">О приложении</string>
+    <string name="section_protection">Защита</string>
+    <string name="section_phone">Телефон</string>
+    <string name="section_data">Данные</string>
     <string name="set_mode">Способ подключения</string>
     <string name="set_country">Страна выхода</string>
     <string name="set_apps">Приложения через VPN</string>
     <string name="set_kill">Kill Switch</string>
     <string name="set_kill_sub">«Постоянная VPN» и «Блокировать соединения без VPN» в настройках Android</string>
-    <string name="set_renew">Продлить в Telegram</string>
-    <string name="set_renew_sub">Профиль → «Продлить», ключ тот же</string>
+    <string name="set_country_sub">Через какую страну выходить в интернет (Psiphon и Tor)</string>
+    <string name="set_tile">Плитка в шторке</string>
+    <string name="set_tile_sub">Включать ODA одним касанием, не открывая приложение</string>
+    <string name="set_tile_hint">Шторка → карандаш «Изменить» → перетащите плитку ODA наверх</string>
+    <string name="set_battery">Батарея без ограничений</string>
+    <string name="set_battery_sub">Чтобы Android не отключал VPN для экономии заряда: найдите ODA → «Не экономить»</string>
+    <string name="set_notifications">Уведомления</string>
+    <string name="set_notifications_sub">Статус подключения и напоминания о сроке ключа</string>
+    <string name="set_history">История подключений</string>
+    <string name="set_history_sub">Когда, каким способом и сколько были подключены</string>
     <string name="set_log">Журнал подключения</string>
     <string name="set_log_sub">Скопируйте и пришлите в поддержку, если не подключается</string>
 

@@ -64,26 +64,20 @@
                         android:id="@+id/menuButton"
                         android:layout_width="@dimen/space_6"
                         android:layout_height="@dimen/space_6"
-                        android:background="?android:attr/selectableItemBackgroundBorderless"
+                        android:background="@drawable/bg_icon_ripple"
                         android:contentDescription="@string/cd_menu"
                         android:padding="10dp"
                         android:src="@drawable/ic_menu"
                         android:tint="@color/text_secondary" />
                 </LinearLayout>
 
-                <!-- Способ, страна, приложения -->
+                <!-- Способ и приложения (страна выхода — во вкладке «Настройки») -->
                 <include
                     android:id="@+id/modeRow"
                     layout="@layout/item_row"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/space_3" />
-
-                <include
-                    android:id="@+id/countryRow"
-                    layout="@layout/item_row"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content" />
+                    android:layout_marginTop="20dp" />
 
                 <include
                     android:id="@+id/appsRow"
@@ -91,13 +85,46 @@
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content" />
 
-                <!-- Ключ заканчивается (за 2 дня) — продлить в боте -->
-                <include
+                <!-- Ключ заканчивается (за 2 дня): одна строка, «Продлить» — в боте -->
+                <LinearLayout
                     android:id="@+id/keyBanner"
-                    layout="@layout/item_row"
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:visibility="gone" />
+                    android:layout_height="44dp"
+                    android:layout_marginTop="@dimen/space_1"
+                    android:background="@drawable/bg_banner"
+                    android:clickable="true"
+                    android:focusable="true"
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal"
+                    android:paddingStart="@dimen/space_2"
+                    android:paddingEnd="@dimen/space_2"
+                    android:visibility="gone">
+
+                    <ImageView
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
+                        android:importantForAccessibility="no"
+                        android:src="@drawable/ic_key"
+                        android:tint="@color/accent" />
+
+                    <TextView
+                        android:id="@+id/keyBannerText"
+                        style="@style/Text.Oda.CardSub"
+                        android:layout_width="0dp"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="10dp"
+                        android:layout_weight="1"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:textColor="@color/text" />
+
+                    <TextView
+                        style="@style/Text.Oda.Caption"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/banner_action"
+                        android:textColor="@color/accent" />
+                </LinearLayout>
 
                 <Space
                     android:layout_width="match_parent"
@@ -109,8 +136,7 @@
                     android:id="@+id/powerButton"
                     android:layout_width="@dimen/power_button"
                     android:layout_height="@dimen/power_button"
-                    android:layout_gravity="center_horizontal"
-                    android:layout_marginTop="@dimen/space_1" />
+                    android:layout_gravity="center_horizontal" />
 
                 <TextView
                     android:id="@+id/status"
@@ -127,7 +153,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_horizontal"
-                    android:layout_marginTop="10dp"
+                    android:layout_marginTop="6dp"
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
@@ -142,9 +168,10 @@
                         style="@style/Text.Oda.CardSub"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="10dp"
+                        android:layout_marginStart="8dp"
                         android:accessibilityLiveRegion="polite"
-                        android:maxLines="2" />
+                        android:ellipsize="end"
+                        android:maxLines="1" />
                 </LinearLayout>
 
                 <!-- Пояснения к подключению (запасной путь Psiphon и т. п.) или текст ошибки -->
@@ -155,7 +182,9 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="6dp"
                     android:accessibilityLiveRegion="polite"
+                    android:ellipsize="end"
                     android:gravity="center"
+                    android:maxLines="2"
                     android:textSize="12sp"
                     android:visibility="gone" />
 
@@ -166,20 +195,20 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_gravity="center_horizontal"
-                    android:layout_marginTop="@dimen/space_2"
+                    android:layout_marginTop="12dp"
                     android:background="@drawable/bg_pill"
                     android:contentDescription="@string/cd_timer"
-                    android:paddingStart="@dimen/space_4"
-                    android:paddingTop="10dp"
-                    android:paddingEnd="@dimen/space_4"
-                    android:paddingBottom="10dp"
-                    android:visibility="gone" />
+                    android:paddingStart="28dp"
+                    android:paddingTop="8dp"
+                    android:paddingEnd="28dp"
+                    android:paddingBottom="8dp"
+                    android:visibility="invisible" />
 
                 <Space
                     android:layout_width="match_parent"
                     android:layout_height="0dp"
                     android:layout_weight="1"
-                    android:minHeight="@dimen/space_3" />
+                    android:minHeight="@dimen/space_2" />
 
                 <!-- Пинг и загрузка | Тест скорости -->
                 <LinearLayout
@@ -188,7 +217,7 @@
                     android:layout_height="wrap_content"
                     android:background="@drawable/bg_card_static"
                     android:baselineAligned="false"
-                    android:minHeight="88dp"
+                    android:minHeight="72dp"
                     android:orientation="horizontal">
 
                     <LinearLayout
@@ -233,7 +262,9 @@
                                 android:layout_width="wrap_content"
                                 android:layout_height="wrap_content"
                                 android:layout_marginTop="2dp"
-                                android:textSize="12sp" />
+                                android:ellipsize="end"
+                                android:maxLines="1"
+                                android:textSize="11.5sp" />
                         </LinearLayout>
                     </LinearLayout>
 
@@ -249,7 +280,7 @@
                         android:layout_width="0dp"
                         android:layout_height="match_parent"
                         android:layout_weight="1"
-                        android:background="?android:attr/selectableItemBackground"
+                        android:background="@drawable/bg_cell_right"
                         android:clickable="true"
                         android:focusable="true"
                         android:gravity="center_vertical"
@@ -271,8 +302,10 @@
                             android:layout_height="wrap_content"
                             android:layout_marginStart="12dp"
                             android:layout_weight="1"
+                            android:ellipsize="end"
+                            android:maxLines="1"
                             android:text="@string/speed_test"
-                            android:textSize="15sp" />
+                            android:textSize="14sp" />
 
                         <ImageView
                             android:layout_width="18dp"
@@ -290,7 +323,7 @@
                     android:layout_marginTop="@dimen/space_1"
                     android:background="@drawable/bg_card_static"
                     android:baselineAligned="false"
-                    android:minHeight="80dp"
+                    android:minHeight="68dp"
                     android:orientation="horizontal">
 
                     <LinearLayout
@@ -298,7 +331,7 @@
                         android:layout_width="0dp"
                         android:layout_height="match_parent"
                         android:layout_weight="1"
-                        android:background="?android:attr/selectableItemBackground"
+                        android:background="@drawable/bg_cell_left"
                         android:clickable="true"
                         android:focusable="true"
                         android:gravity="center_vertical"
@@ -354,7 +387,7 @@
                         android:layout_width="0dp"
                         android:layout_height="match_parent"
                         android:layout_weight="1"
-                        android:background="?android:attr/selectableItemBackground"
+                        android:background="@drawable/bg_cell_right"
                         android:clickable="true"
                         android:focusable="true"
                         android:gravity="center_vertical"
@@ -418,7 +451,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/space_3"
                     android:text="@string/history_title"
-                    android:textSize="26sp" />
+                    android:textSize="24sp" />
 
                 <TextView
                     style="@style/Text.Oda.Caption"
@@ -475,7 +508,7 @@
                     android:layout_height="wrap_content"
                     android:layout_marginTop="@dimen/space_3"
                     android:text="@string/settings_title"
-                    android:textSize="26sp" />
+                    android:textSize="24sp" />
 
                 <TextView
                     style="@style/Text.Oda.Caption"
@@ -494,7 +527,7 @@
         </androidx.core.widget.NestedScrollView>
     </FrameLayout>
 
-    <!-- Нижняя навигация -->
+    <!-- Нижняя навигация: подсветка нажатия — круг вокруг иконки -->
     <LinearLayout
         android:id="@+id/nav"
         android:layout_width="match_parent"
@@ -503,84 +536,111 @@
         android:orientation="horizontal">
 
         <FrameLayout
-            android:id="@+id/navHome"
             android:layout_width="0dp"
             android:layout_height="@dimen/nav_height"
-            android:layout_weight="1"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/nav_home">
+            android:layout_weight="1">
 
-            <ImageView
-                android:layout_width="26dp"
-                android:layout_height="26dp"
+            <FrameLayout
+                android:id="@+id/navHome"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
                 android:layout_gravity="center"
-                android:duplicateParentState="true"
-                android:importantForAccessibility="no"
-                android:src="@drawable/ic_home"
-                android:tint="@color/nav_tint" />
+                android:background="@drawable/bg_nav_ripple"
+                android:clickable="true"
+                android:contentDescription="@string/nav_home"
+                android:focusable="true">
 
-            <View
-                android:layout_width="26dp"
-                android:layout_height="3dp"
-                android:layout_gravity="bottom|center_horizontal"
-                android:layout_marginBottom="8dp"
-                android:background="@drawable/bg_nav_indicator"
-                android:tag="indicator"
-                android:visibility="invisible" />
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:layout_marginBottom="4dp"
+                    android:duplicateParentState="true"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_home"
+                    android:tint="@color/nav_tint" />
+
+                <View
+                    android:layout_width="22dp"
+                    android:layout_height="3dp"
+                    android:layout_gravity="bottom|center_horizontal"
+                    android:layout_marginBottom="6dp"
+                    android:background="@drawable/bg_nav_indicator"
+                    android:tag="indicator"
+                    android:visibility="invisible" />
+            </FrameLayout>
         </FrameLayout>
 
         <FrameLayout
-            android:id="@+id/navHistory"
             android:layout_width="0dp"
             android:layout_height="@dimen/nav_height"
-            android:layout_weight="1"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/nav_history">
+            android:layout_weight="1">
 
-            <ImageView
-                android:layout_width="26dp"
-                android:layout_height="26dp"
+            <FrameLayout
+                android:id="@+id/navHistory"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
                 android:layout_gravity="center"
-                android:duplicateParentState="true"
-                android:importantForAccessibility="no"
-                android:src="@drawable/ic_history"
-                android:tint="@color/nav_tint" />
+                android:background="@drawable/bg_nav_ripple"
+                android:clickable="true"
+                android:contentDescription="@string/nav_history"
+                android:focusable="true">
 
-            <View
-                android:layout_width="26dp"
-                android:layout_height="3dp"
-                android:layout_gravity="bottom|center_horizontal"
-                android:layout_marginBottom="8dp"
-                android:background="@drawable/bg_nav_indicator"
-                android:tag="indicator"
-                android:visibility="invisible" />
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:layout_marginBottom="4dp"
+                    android:duplicateParentState="true"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_history"
+                    android:tint="@color/nav_tint" />
+
+                <View
+                    android:layout_width="22dp"
+                    android:layout_height="3dp"
+                    android:layout_gravity="bottom|center_horizontal"
+                    android:layout_marginBottom="6dp"
+                    android:background="@drawable/bg_nav_indicator"
+                    android:tag="indicator"
+                    android:visibility="invisible" />
+            </FrameLayout>
         </FrameLayout>
 
         <FrameLayout
-            android:id="@+id/navSettings"
             android:layout_width="0dp"
             android:layout_height="@dimen/nav_height"
-            android:layout_weight="1"
-            android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="@string/nav_settings">
+            android:layout_weight="1">
 
-            <ImageView
-                android:layout_width="26dp"
-                android:layout_height="26dp"
+            <FrameLayout
+                android:id="@+id/navSettings"
+                android:layout_width="52dp"
+                android:layout_height="52dp"
                 android:layout_gravity="center"
-                android:duplicateParentState="true"
-                android:importantForAccessibility="no"
-                android:src="@drawable/ic_settings"
-                android:tint="@color/nav_tint" />
+                android:background="@drawable/bg_nav_ripple"
+                android:clickable="true"
+                android:contentDescription="@string/nav_settings"
+                android:focusable="true">
 
-            <View
-                android:layout_width="26dp"
-                android:layout_height="3dp"
-                android:layout_gravity="bottom|center_horizontal"
-                android:layout_marginBottom="8dp"
-                android:background="@drawable/bg_nav_indicator"
-                android:tag="indicator"
-                android:visibility="invisible" />
+                <ImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_gravity="center"
+                    android:layout_marginBottom="4dp"
+                    android:duplicateParentState="true"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/ic_settings"
+                    android:tint="@color/nav_tint" />
+
+                <View
+                    android:layout_width="22dp"
+                    android:layout_height="3dp"
+                    android:layout_gravity="bottom|center_horizontal"
+                    android:layout_marginBottom="6dp"
+                    android:background="@drawable/bg_nav_indicator"
+                    android:tag="indicator"
+                    android:visibility="invisible" />
+            </FrameLayout>
         </FrameLayout>
     </LinearLayout>
 </LinearLayout>

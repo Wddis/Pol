@@ -62,6 +62,11 @@ public final class Country {
         for (Country c : all(context)) {
             if (c.code.equals(code)) return c.name;
         }
+        // Страны вне списка выбора (например, своя — Россия при обходе DPI): название из системы
+        if (code != null && code.length() == 2) {
+            String name = new java.util.Locale("", code).getDisplayCountry(new java.util.Locale("ru"));
+            if (!name.isEmpty() && !name.equalsIgnoreCase(code)) return name;
+        }
         return code;
     }
 

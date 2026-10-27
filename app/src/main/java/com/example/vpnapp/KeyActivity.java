@@ -40,6 +40,12 @@ import java.util.Locale;
  */
 public class KeyActivity extends AppCompatActivity {
 
+    @Override
+    protected void attachBaseContext(Context base) {
+        // Размер шрифта и масштаб экрана — не крупнее обычных (см. Ui)
+        super.attachBaseContext(Ui.wrap(base));
+    }
+
     private final Handler main = new Handler(Looper.getMainLooper());
     private KeyManager keys;
     private KeyManager.Gate shown;

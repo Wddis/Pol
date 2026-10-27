@@ -204,20 +204,22 @@ public class PowerButtonView extends View {
         super.onDraw(canvas);
         float cx = getWidth() / 2f;
         float cy = getHeight() / 2f;
-        // Снаружи — место под свечение
-        float ringR = (Math.min(getWidth(), getHeight()) / 2f - glowWidth) * press;
+        // Снаружи — место под свечение; всё — в долях размера (кнопка подстраивается под высоту экрана)
+        float half = Math.min(getWidth(), getHeight()) / 2f;
+        float glowW = Math.min(glowWidth, half * 0.24f);
+        float ringR = (half - glowW) * press;
 
         // Свечение вокруг кольца (подключено), дышит
         float g = glow * (0.75f + 0.25f * breath);
         if (g > 0.01f) {
-            float outer = ringR + glowWidth;
+            float outer = ringR + glowW;
             if (glowShaderColor != colorOn || glowShaderR != outer) {
                 glowShaderColor = colorOn;
                 glowShaderR = outer;
                 int c0 = (colorOn & 0x00FFFFFF) | 0x66000000;
                 glowPaint.setShader(new RadialGradient(cx, cy, outer,
                         new int[]{Color.TRANSPARENT, c0, Color.TRANSPARENT},
-                        new float[]{Math.max(0f, (ringR - glowWidth * 0.4f) / outer), ringR / outer, 1f},
+                        new float[]{Math.max(0f, (ringR - glowW * 0.4f) / outer), ringR / outer, 1f},
                         Shader.TileMode.CLAMP));
             }
             glowPaint.setAlpha(Math.round(255 * g));
@@ -238,8 +240,8 @@ public class PowerButtonView extends View {
         }
 
         if (icon != null) {
-            float half = iconSize * press / 2f;
-            icon.setBounds(Math.round(cx - half), Math.round(cy - half), Math.round(cx + half), Math.round(cy + half));
+            float ih = Math.min(iconSize / 2f, ringR * 0.4f);
+            icon.setBounds(Math.round(cx - ih), Math.round(cy - ih), Math.round(cx + ih), Math.round(cy + ih));
             icon.setAlpha(Math.round(255 * iconAlpha));
             icon.draw(canvas);
         }

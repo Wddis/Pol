@@ -54,7 +54,7 @@
 
     <style name="Text.Oda.Status">
         <item name="android:fontFamily">sans-serif</item>
-        <item name="android:textSize">30sp</item>
+        <item name="android:textSize">26sp</item>
     </style>
 
     <style name="Text.Oda.Code">
@@ -65,7 +65,7 @@
 
     <style name="Text.Oda.Body">
         <item name="android:fontFamily">sans-serif</item>
-        <item name="android:textSize">16sp</item>
+        <item name="android:textSize">15sp</item>
     </style>
 
     <style name="Text.Oda.Link">
@@ -83,7 +83,7 @@
     <!-- 0.11: надпись ODA, подписи капслоком, карточки -->
     <style name="Text.Oda.Logo">
         <item name="android:fontFamily">sans-serif-light</item>
-        <item name="android:textSize">34sp</item>
+        <item name="android:textSize">28sp</item>
         <item name="android:letterSpacing">0.22</item>
     </style>
 
@@ -104,19 +104,19 @@
 
     <style name="Text.Oda.CardTitle">
         <item name="android:fontFamily">sans-serif</item>
-        <item name="android:textSize">16sp</item>
+        <item name="android:textSize">15sp</item>
     </style>
 
     <style name="Text.Oda.CardSub">
         <item name="android:fontFamily">sans-serif</item>
-        <item name="android:textSize">13sp</item>
+        <item name="android:textSize">12.5sp</item>
         <item name="android:textColor">@color/text_secondary</item>
         <item name="android:lineSpacingExtra">2dp</item>
     </style>
 
     <style name="Text.Oda.Value">
         <item name="android:fontFamily">sans-serif</item>
-        <item name="android:textSize">17sp</item>
+        <item name="android:textSize">16sp</item>
         <item name="android:letterSpacing">0.02</item>
     </style>
 
@@ -146,7 +146,7 @@
     <!-- Секундомер подключения: цифры одной ширины, чтобы не «прыгали» -->
     <style name="Text.Oda.Timer">
         <item name="android:fontFamily">sans-serif-light</item>
-        <item name="android:textSize">20sp</item>
+        <item name="android:textSize">18sp</item>
         <item name="android:letterSpacing">0.08</item>
         <item name="android:fontFeatureSettings">tnum</item>
     </style>

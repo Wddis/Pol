@@ -6,6 +6,7 @@ import android.animation.ValueAnimator;
 import android.app.StatusBarManager;
 import android.content.ActivityNotFoundException;
 import android.content.ComponentName;
+import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.content.res.ColorStateList;
@@ -59,6 +60,12 @@ import java.util.Locale;
  */
 public class MainActivity extends AppCompatActivity implements StatusBus.Listener {
 
+    @Override
+    protected void attachBaseContext(Context base) {
+        // Размер шрифта и масштаб экрана — не крупнее обычных (см. Ui)
+        super.attachBaseContext(Ui.wrap(base));
+    }
+
     /** Открыть экран и сразу подключиться (плитка в шторке, когда сама подключить не может). */
     public static final String EXTRA_CONNECT = "com.example.vpnapp.extra.CONNECT";
 
@@ -104,12 +111,12 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private TextView killValue;
     private MaterialSwitch killToggle;
     private View modeRow;
-    private View countryRow;
     private View appsRow;
     private View keyBanner;
     private View[] pages;
     private View[] navItems;
     private LinearLayout historyList;
+    private LinearLayout homeContent;
     private LinearLayout settingsList;
 
     // Системный диалог «Разрешить VPN»
@@ -158,7 +165,6 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         killValue = findViewById(R.id.killValue);
         killToggle = findViewById(R.id.killSwitchToggle);
         modeRow = findViewById(R.id.modeRow);
-        countryRow = findViewById(R.id.countryRow);
         appsRow = findViewById(R.id.appsRow);
         keyBanner = findViewById(R.id.keyBanner);
         historyList = findViewById(R.id.historyList);
@@ -167,11 +173,17 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         navItems = new View[]{findViewById(R.id.navHome), findViewById(R.id.navHistory), findViewById(R.id.navSettings)};
 
         applyInsets(root, findViewById(R.id.nav));
+        // Главная помещается в один экран на любом телефоне: кнопка питания подстраивается под высоту
+        homeContent = findViewById(R.id.homeContent);
+        View.OnLayoutChangeListener fit = (v, l, t, r, b, ol, ot, or, ob) -> {
+            if (b - t != ob - ot || r - l != or - ol) main.post(this::fitHome);
+        };
+        pages[TAB_HOME].addOnLayoutChangeListener(fit);
+        homeContent.addOnLayoutChangeListener(fit);
         Motion.animateLayout(findViewById(R.id.homeContent));
         showRows();
 
         modeRow.setOnClickListener(v -> openBridges());
-        countryRow.setOnClickListener(v -> openPicker());
         appsRow.setOnClickListener(v -> openApps());
         keyBanner.setOnClickListener(v -> OdaSheet.openBot(this, "renew"));
         findViewById(R.id.menuButton).setOnClickListener(v -> OdaSheet.open(this, OdaSheet.MENU));
@@ -298,13 +310,10 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         return false;
     }
 
-    /** Карточка «Ключ заканчивается» за 2 дня до конца. */
+    /** Полоса «Ключ: осталось …» за 2 дня до конца. */
     private void renderKey() {
         boolean soon = !keys.forever() && keys.secondsLeft() <= 2 * 86400L;
-        if (soon) {
-            bindRow(keyBanner, R.drawable.ic_key, true, getString(R.string.banner_title, keys.leftText()),
-                    getString(R.string.banner_sub), null);
-        }
+        if (soon) ((TextView) findViewById(R.id.keyBannerText)).setText(getString(R.string.banner_text, keys.leftText()));
         keyBanner.setVisibility(soon ? View.VISIBLE : View.GONE);
     }
 
@@ -460,7 +469,8 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         engineValue.setText(engineTitle());
         renderKillSwitch();
         // Секундомер — и в коротком «Подключение…» после подключения (переход способа), с прежнего времени
-        timerView.setVisibility(connectedAt > 0 ? View.VISIBLE : View.GONE);
+        // Место под секундомер занято всегда: экран не «прыгает» при подключении
+        timerView.setVisibility(connectedAt > 0 ? View.VISIBLE : View.INVISIBLE);
         main.removeCallbacks(ticker);
         if (connectedAt > 0 && started) tick();
         if (becameOn && animate) offerTile();
@@ -619,17 +629,32 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         }
     }
 
+    /**
+     * Подгонка главной под высоту экрана: всё (шапка, строки, кнопка, статус, секундомер, карточки) должно
+     * помещаться без прокрутки — размер кнопки питания = сколько остаётся (от 100 до 220 dp).
+     */
+    private void fitHome() {
+        View scroll = pages[TAB_HOME];
+        int avail = scroll.getHeight() - scroll.getPaddingTop() - scroll.getPaddingBottom();
+        if (avail <= 0 || homeContent.getWidth() <= 0) return;
+        homeContent.measure(View.MeasureSpec.makeMeasureSpec(homeContent.getWidth(), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec(0, View.MeasureSpec.UNSPECIFIED));
+        ViewGroup.LayoutParams lp = powerButton.getLayoutParams();
+        int target = lp.height + (avail - homeContent.getMeasuredHeight());
+        target = Math.max(dp(100), Math.min(dp(220), target));
+        if (Math.abs(target - lp.height) > dp(2)) {
+            lp.width = target;
+            lp.height = target;
+            powerButton.setLayoutParams(lp);
+        }
+    }
+
     // ---------- строки главной ----------
 
     private void showRows() {
         BridgeMode mode = prefs.getMode();
         bindRow(modeRow, R.drawable.ic_bolt, true, getString(mode.title),
                 getString(mode == BridgeMode.AUTO ? R.string.mode_row_sub_auto : R.string.mode_row_sub), null);
-        Country country = Country.find(this, prefs.getCountry());
-        bindRow(countryRow, R.drawable.ic_place, false, country.name, getString(R.string.country_row_sub),
-                Country.isAny(country.code) ? null : Country.flag(country.code));
-        // Обход DPI идёт напрямую, своей страны выхода нет — прячем выбор страны
-        countryRow.setVisibility(mode != BridgeMode.BYPASS ? View.VISIBLE : View.GONE);
         bindRow(appsRow, R.drawable.ic_globe, false, getString(R.string.apps_row), appsText(), null);
         if (engineValue != null) engineValue.setText(engineTitle());
     }
@@ -727,6 +752,10 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         return h > 0 ? h + " ч " + m + " мин" : m + " мин";
     }
 
+    /**
+     * «Настройки» — только то, что настраивает подключение и телефон. Ключ, справка, поддержка и бот — в меню ☰
+     * (OdaSheet), чтобы разделы не повторяли друг друга.
+     */
     private void buildSettings() {
         settingsList.removeAllViews();
         BridgeMode mode = prefs.getMode();
@@ -734,32 +763,71 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         row(R.drawable.ic_bolt, true, getString(R.string.set_mode), getString(mode.hint), getString(mode.title), v -> openBridges());
         if (mode != BridgeMode.BYPASS) {
             Country c = Country.find(this, prefs.getCountry());
-            row(R.drawable.ic_place, false, getString(R.string.set_country), null, c.name, v -> openPicker());
+            row(R.drawable.ic_place, false, getString(R.string.set_country), getString(R.string.set_country_sub),
+                    c.name + (Country.isAny(c.code) ? "" : " " + Country.flag(c.code)), v -> openPicker());
         }
         row(R.drawable.ic_globe, false, getString(R.string.set_apps), appsText(), null, v -> openApps());
+
+        section(R.string.section_protection);
         int k = prefs.getKillSwitch();
         row(R.drawable.ic_shield, false, getString(R.string.set_kill), getString(R.string.set_kill_sub),
                 getString(k == 2 ? R.string.kill_on : k == 1 ? R.string.kill_partial : R.string.kill_off),
                 v -> openKillSwitchSettings());
+        row(R.drawable.ic_bolt, false, getString(R.string.set_tile), getString(R.string.set_tile_sub), null, v -> addTile());
 
-        section(R.string.section_key);
-        String key = keys.key();
-        row(R.drawable.ic_key, true, getString(R.string.keyinfo_title), key == null ? null : key + " · " + keys.leftText(), null,
-                v -> OdaSheet.open(this, OdaSheet.KEY));
-        row(R.drawable.ic_send, false, getString(R.string.set_renew), getString(R.string.set_renew_sub), null,
-                v -> OdaSheet.openBot(this, "renew"));
+        section(R.string.section_phone);
+        row(R.drawable.ic_phone, false, getString(R.string.set_battery), getString(R.string.set_battery_sub), null,
+                v -> openSystem(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS));
+        row(R.drawable.ic_info, false, getString(R.string.set_notifications), getString(R.string.set_notifications_sub), null,
+                v -> openNotificationSettings());
 
-        section(R.string.section_help);
-        row(R.drawable.ic_cart, false, getString(R.string.menu_buy), getString(R.string.menu_buy_sub), null, v -> OdaSheet.open(this, OdaSheet.BUY));
-        row(R.drawable.ic_doc, false, getString(R.string.menu_howto), getString(R.string.menu_howto_sub), null, v -> OdaSheet.open(this, OdaSheet.HOWTO));
-        row(R.drawable.ic_help, false, getString(R.string.menu_faq), null, null, v -> OdaSheet.open(this, OdaSheet.FAQ));
-        row(R.drawable.ic_chat, false, getString(R.string.menu_support), getString(R.string.menu_support_sub), null, v -> OdaSheet.openBot(this, "support"));
-        row(R.drawable.ic_send, false, getString(R.string.menu_bot), getString(R.string.menu_bot_sub), null, v -> OdaSheet.openBot(this, ""));
-
-        section(R.string.section_about);
+        section(R.string.section_data);
         row(R.drawable.ic_list, false, getString(R.string.set_log), getString(R.string.set_log_sub), null, v -> openLog());
-        row(R.drawable.ic_lock, false, getString(R.string.menu_privacy), null, null, v -> OdaSheet.open(this, OdaSheet.PRIVACY));
-        row(R.drawable.ic_info, false, getString(R.string.menu_about), null, "ODA " + OdaSheet.appVersion(this), v -> OdaSheet.open(this, OdaSheet.ABOUT));
+        row(R.drawable.ic_history, false, getString(R.string.set_history), getString(R.string.set_history_sub), null,
+                v -> showTab(TAB_HISTORY, true));
+    }
+
+    /** Плитка в шторке: Android 13+ — системный запрос, раньше — подсказка, как добавить вручную. */
+    private void addTile() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            StatusBarManager sbm = getSystemService(StatusBarManager.class);
+            if (sbm != null) {
+                try {
+                    sbm.requestAddTileService(new ComponentName(this, OdaTileService.class),
+                            getString(R.string.app_name), Icon.createWithResource(this, R.drawable.ic_power),
+                            getMainExecutor(), result -> { });
+                    return;
+                } catch (RuntimeException ignored) {
+                    // оболочка производителя не поддерживает — подсказка ниже
+                }
+            }
+        }
+        Toast.makeText(this, R.string.set_tile_hint, Toast.LENGTH_LONG).show();
+    }
+
+    private void openNotificationSettings() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            try {
+                startActivity(new Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+                        .putExtra(Settings.EXTRA_APP_PACKAGE, getPackageName()));
+                return;
+            } catch (ActivityNotFoundException ignored) {
+                // ниже — общие настройки приложения
+            }
+        }
+        openSystem(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
+    }
+
+    private void openSystem(String action) {
+        Intent i = new Intent(action);
+        if (Settings.ACTION_APPLICATION_DETAILS_SETTINGS.equals(action)) {
+            i.setData(android.net.Uri.fromParts("package", getPackageName(), null));
+        }
+        try {
+            startActivity(i);
+        } catch (ActivityNotFoundException e) {
+            startActivity(new Intent(Settings.ACTION_SETTINGS));
+        }
     }
 
     private void section(int title) {

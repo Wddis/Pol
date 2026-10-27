@@ -41,6 +41,12 @@ import java.util.Locale;
  */
 public class PageActivity extends AppCompatActivity {
 
+    @Override
+    protected void attachBaseContext(Context base) {
+        // Размер шрифта и масштаб экрана — не крупнее обычных (см. Ui)
+        super.attachBaseContext(Ui.wrap(base));
+    }
+
     static final String EXTRA_PAGE = "page";
 
     private final Handler main = new Handler(Looper.getMainLooper());

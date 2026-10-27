@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Полоса «ключ заканчивается»: зелёная обводка -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#1F3DDB94">
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="@color/accent_bg" />
+            <corners android:radius="@dimen/corner_pill" />
+        </shape>
+    </item>
+</ripple>

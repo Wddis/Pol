@@ -11,7 +11,7 @@
     <dimen name="space_5">40dp</dimen>
     <dimen name="corner_card">22dp</dimen>
     <dimen name="corner_pill">28dp</dimen>
-    <dimen name="icon_circle">44dp</dimen>
+    <dimen name="icon_circle">40dp</dimen>
     <dimen name="icon_small">22dp</dimen>
     <dimen name="nav_height">64dp</dimen>
     <dimen name="screen_pad">20dp</dimen>

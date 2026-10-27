@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Правая половина карточки: подсветка нажатия не выходит за скругление -->
+<ripple xmlns:android="http://schemas.android.com/apk/res/android" android:color="#14FFFFFF">
+    <item android:id="@android:id/mask">
+        <shape android:shape="rectangle">
+            <solid android:color="#FFFFFFFF" />
+            <corners android:topRightRadius="@dimen/corner_card" android:bottomRightRadius="@dimen/corner_card"
+                android:topLeftRadius="0dp" android:bottomLeftRadius="0dp" />
+        </shape>
+    </item>
+</ripple>
