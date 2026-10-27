@@ -13,6 +13,8 @@ export interface Env {
   FREE_MODE?: string;
   APK_URL?: string;
   SUPPORT?: string;
+  ADMIN_IDS?: string;
+  BOT_USERNAME?: string;
 }
 
 export interface Settings {
@@ -23,6 +25,9 @@ export interface Settings {
   freeMode: boolean;
   apkUrl: string;
   support: string;
+  /** Администраторы — по Telegram ID (ADMIN_IDS в wrangler.toml): меню /admin, обращения в поддержку. */
+  adminIds: number[];
+  botUsername: string;
 }
 
 const int = (v: string | undefined, d: number) => {
@@ -39,5 +44,7 @@ export function settings(env: Env): Settings {
     freeMode: (env.FREE_MODE ?? "1").trim() !== "0",
     apkUrl: (env.APK_URL ?? "").trim(),
     support: (env.SUPPORT ?? "").trim(),
+    adminIds: (env.ADMIN_IDS ?? "").split(/[\s,]+/).filter((x) => /^\d+$/.test(x)).map(Number),
+    botUsername: (env.BOT_USERNAME ?? "oda_connect_vpn_bot").trim().replace(/^@/, ""),
   };
 }

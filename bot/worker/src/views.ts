@@ -1,8 +1,8 @@
 // Экраны бота — как bot/oda_bot/views.py (макет «ODA VPN — бот и ключ»): текст (HTML) + кнопки.
 // Без сети: проверяются тестом. Данные кнопок — в том же виде, что у aiogram (nav:main, buy:month:1:0, key:show:ODA-…:).
 import type { Settings } from "./config";
-import { DAY, type Device, type Key, isActive, secondsLeft, tariffTitle } from "./db";
-import { MAX_DEVICES, MIN_DEVICES, TARIFFS, plural, price } from "./keys";
+import { type Ban, type Device, type Key, isActive, secondsLeft, tariffTitle } from "./db";
+import { FOREVER, MAX_DEVICES, MIN_DEVICES, TARIFFS, durationText, leftText, plural, price } from "./keys";
 
 export interface Button {
   text: string;
@@ -64,7 +64,7 @@ const devicesText = (n: number) => `${n} ${plural(n, "устройство", "у
 
 // ---------- главное меню ----------
 
-export function main(cfg: Settings): Screen {
+export function main(cfg: Settings, admin = false): Screen {
   const text =
     "<b>ODA</b>\n\n" +
     "Доступ к приложению ODA — одним ключом.\n\n" +
@@ -76,10 +76,11 @@ export function main(cfg: Settings): Screen {
   return {
     text,
     markup: kb(
-      [btn("Купить ключ", { cb: buy("month", 1), style: "primary" })],
+      [btn("Купить ключ", { cb: buy("month", 1), style: "primary" }), btn("Как купить", { cb: nav("pay") })],
       [btn("Пробный день", { cb: nav("trial"), style: "success" }), btn("Профиль", { cb: nav("profile") })],
       [btn("Приложение", { cb: nav("app") }), btn("О VPN", { cb: nav("about") })],
       [btn("Как подключить", { cb: nav("howto") }), btn("Поддержка", { cb: nav("support") })],
+      admin ? [btn("Админ", { cb: "adm:home", style: "danger" })] : [],
     ),
   };
 }
@@ -99,7 +100,8 @@ export function tariffs(cfg: Settings, period: string, devices: number): Screen 
     "Срок начнётся, когда вы введёте ключ в приложении. " +
       `Каждое устройство сверх первого — +${cfg.extraDevicePct}% к цене.`,
   ];
-  if (cfg.freeMode) lines.push("\n<i>Оплата подключается позже — сейчас ключ выдаётся без оплаты.</i>");
+  lines.push("\nОплата: <b>СБП</b> или <b>Telegram Stars</b>.");
+  if (cfg.freeMode) lines.push("<i>Оплата подключается — сейчас ключ выдаётся без оплаты.</i>");
   const periods = Object.keys(TARIFFS).map((p) =>
     btn((p === period ? "● " : "") + TARIFFS[p].title, { cb: buy(p, devices) }),
   );
@@ -130,11 +132,11 @@ export function keyIssued(cfg: Settings, k: Key): Screen {
     "<i>нажмите на ключ, чтобы скопировать</i>\n\n" +
     `Тариф: ${tariffTitle(k)}\n` +
     `Устройств: до ${k.devices_max}\n` +
-    `Срок: ${days(k.days)} с активации\n` +
+    `Срок: ${durationText(k.seconds)} с активации\n` +
     "Статус: не активирован\n\n" +
     "1. Установите приложение ODA\n" +
     "2. При первом входе введите этот ключ\n" +
-    `3. Отсчёт ${days(k.days)} начнётся с активации`;
+    (k.seconds >= FOREVER ? "3. Ключ бессрочный" : `3. Отсчёт срока (${durationText(k.seconds)}) начнётся с активации`);
   return {
     text,
     markup: kb(
@@ -172,12 +174,12 @@ export function profile(cfg: Settings, tgId: number, k: Key | null, devs: Device
   }
   const lines = ["<b>Профиль</b>", `ID ${tgId}\n`, `<code>${k.key}</code> — ${statusLine(k, now)}`];
   if (k.activated_at === null) {
-    lines.push(`${tariffTitle(k)}: ${days(k.days)} начнутся с ввода ключа в приложении`);
+    lines.push(`${tariffTitle(k)}: срок пойдёт с ввода ключа в приложении`);
   } else if (isActive(k, now)) {
     const left = secondsLeft(k, now);
-    const daysLeft = Math.ceil(left / DAY); // «остался 1 день», пока не прошли сутки
-    const used = Math.max(0, Math.min(10, Math.round(((k.days * DAY - left) / (k.days * DAY)) * 10)));
-    lines.push(`<b>${days(daysLeft)}</b> осталось · до ${fmtDate(k.expires_at!)}`);
+    const total = Math.max(1, k.expires_at! - k.activated_at);
+    const used = Math.max(0, Math.min(10, Math.round(((total - left) / total) * 10)));
+    lines.push(k.seconds >= FOREVER ? "<b>Бессрочно</b>" : `<b>${leftText(left)}</b> осталось · до ${fmtDate(k.expires_at!)}`);
     lines.push("▰".repeat(used) + "▱".repeat(10 - used));
     lines.push(`Тариф ${tariffTitle(k)} · активирован ${fmtDate(k.activated_at)}`);
   } else {
@@ -209,7 +211,7 @@ export function extendChoose(cfg: Settings, k: Key): Screen {
     `<b>Продление</b>\n\n<code>${k.key}</code>\n\n` +
     "Срок добавится к оставшемуся (или начнётся сейчас, если закончился). Ключ останется тем же — " +
     "в приложении вводить заново не нужно.";
-  if (cfg.freeMode) text += "\n\n<i>Оплата подключается позже — сейчас продление без оплаты.</i>";
+  if (cfg.freeMode) text += "\n\n<i>Оплата подключается — сейчас продление без оплаты.</i>";
   return {
     text,
     markup: kb(
@@ -278,14 +280,109 @@ export function about(cfg: Settings): Screen {
 }
 
 export function support(cfg: Settings): Screen {
-  const contact = cfg.support ? escapeHtml(cfg.support) : "[КОНТАКТ ПОДДЕРЖКИ]";
+  const extra = cfg.support ? `\nЕщё можно написать: ${escapeHtml(cfg.support)}\n` : "";
   return {
     text:
       "<b>Поддержка</b>\n\n" +
-      `Напишите: ${contact}\n\n` +
-      "Если что-то не подключается, приложите журнал: в ODA нажмите «ЖУРНАЛ» → «КОПИРОВАТЬ» " +
-      "и вставьте в сообщение. Укажите ключ (Профиль → «Копировать ключ») и модель телефона.",
-    markup: kb([btn("Если не работает", { cb: nav("trouble") }), btn("Как подключить", { cb: nav("howto") })], menuRow()),
+      "Нажмите «Написать в поддержку» и отправьте вопрос одним сообщением — ответ придёт в этот чат.\n" +
+      extra +
+      "\nЕсли что-то не подключается, приложите журнал: в ODA нажмите «ЖУРНАЛ» → «КОПИРОВАТЬ» " +
+      "и вставьте в сообщение. Укажите модель телефона.",
+    markup: kb(
+      [btn("Написать в поддержку", { cb: "sup:write", style: "primary" })],
+      [btn("Если не работает", { cb: nav("trouble") }), btn("Как подключить", { cb: nav("howto") })],
+      menuRow(),
+    ),
+  };
+}
+
+export function supportWrite(): Screen {
+  return {
+    text: "<b>Сообщение в поддержку</b>\n\nНапишите вопрос одним сообщением и отправьте. Ответ придёт сюда.",
+    markup: kb([btn("Отмена", { cb: "sup:cancel", back: true })]),
+  };
+}
+
+export function supportSent(): Screen {
+  return {
+    text: "<b>Сообщение отправлено</b>\n\nПоддержка ответит в этот чат.",
+    markup: kb([btn("Написать ещё", { cb: "sup:write" })], menuRow()),
+  };
+}
+
+export function supportLimit(): Screen {
+  return {
+    text: "<b>Слишком много сообщений</b>\n\nЗа сутки можно отправить до 10 сообщений. Дождитесь ответа поддержки.",
+    markup: kb(menuRow()),
+  };
+}
+
+/** Сообщение пользователя для администраторов. */
+export function supportForAdmin(from: { id: number; username?: string }, text: string, keys: Key[], ban: Ban | null, now: number): Screen {
+  const who = from.username ? `@${escapeHtml(from.username)}` : "без имени";
+  const keyLines = keys.slice(0, 5).map((k) => `• <code>${k.key}</code> — ${tariffTitle(k)}, ${statusLine(k, now)}`);
+  return {
+    text:
+      "<b>Обращение в поддержку</b>\n" +
+      `От: ${who} (ID <code>${from.id}</code>)\n` +
+      (keyLines.length ? `Ключи:\n${keyLines.join("\n")}\n` : "Ключей нет\n") +
+      (ban ? `Заблокирован: ${escapeHtml(ban.reason)} (${banUntil(ban)})\n` : "") +
+      `\n${escapeHtml(text)}`,
+    markup: kb([btn("Ответить", { cb: `adm:rep:${from.id}`, style: "primary" }), btn("Пользователь", { cb: `adm:u:${from.id}` })]),
+  };
+}
+
+export function supportAnswer(text: string): Screen {
+  return {
+    text: `<b>Ответ поддержки</b>\n\n${escapeHtml(text)}`,
+    markup: kb([btn("Ответить", { cb: "sup:write" })], menuRow()),
+  };
+}
+
+export const banUntil = (b: Ban) => (b.until === null ? "навсегда" : `до ${fmtDate(b.until)}`);
+
+/** Заблокированный пользователь в боте: причина, срок, поддержка. */
+export function banned(b: Ban): Screen {
+  return {
+    text:
+      "<b>Доступ заблокирован</b>\n\n" +
+      `Причина: ${escapeHtml(b.reason)}\n` +
+      `Срок: ${banUntil(b)}\n\n` +
+      "Пока действует блокировка, ключи и приложение ODA недоступны. Если вы считаете, что это ошибка, — " +
+      "напишите в поддержку.",
+    markup: kb([btn("Написать в поддержку", { cb: "sup:write", style: "primary" })]),
+  };
+}
+
+// ---------- как купить ----------
+
+export function payInfo(cfg: Settings): Screen {
+  let text =
+    "<b>Как купить</b>\n\n" +
+    "1. «Купить ключ» → выберите срок (1 неделя, 1 месяц, 3 месяца) и число устройств.\n" +
+    "2. Оплатите удобным способом:\n" +
+    "• <b>СБП</b> — из приложения вашего банка по QR-коду или ссылке\n" +
+    "• <b>Telegram Stars</b> — прямо в Telegram\n" +
+    "3. Ключ сразу придёт в этот чат — нажмите на него, чтобы скопировать.\n" +
+    "4. Откройте ODA и введите ключ. Срок пойдёт с этой минуты.\n\n" +
+    "Продлить — «Профиль» → «Продлить»: ключ останется тем же, вводить заново не нужно.\n" +
+    "Не уверены — начните с пробного дня.";
+  if (cfg.freeMode) text += "\n\n<i>Оплата подключается — сейчас ключи выдаются без оплаты.</i>";
+  return {
+    text,
+    markup: kb(
+      [btn("Купить ключ", { cb: buy("month", 1), style: "primary" }), btn("Пробный день", { cb: nav("trial"), style: "success" })],
+      menuRow(),
+    ),
+  };
+}
+
+// ---------- ключ, присланный боту ----------
+
+export function keyForeign(): Screen {
+  return {
+    text: "<b>Ключ привязан к другому аккаунту</b>\n\nЭтот ключ получен в другом аккаунте Telegram. Пользоваться им в ODA можно, а продлевать — из того аккаунта.",
+    markup: kb(menuRow()),
   };
 }
 
@@ -342,7 +439,9 @@ export function privacy(cfg: Settings): Screen {
     "<b>Что хранится</b>\n" +
     "• Telegram ID и имя пользователя — чтобы показать ваши ключи\n" +
     "• ключи: тариф, число устройств, даты активации и окончания\n" +
-    "• устройства ключа: их идентификатор в ODA, модель телефона, время последней проверки ключа\n\n" +
+    "• устройства ключа: их идентификатор в ODA, модель телефона, время последней проверки ключа\n" +
+    "• включён ли сейчас VPN в ODA, каким способом и версия ODA — чтобы видеть, что подключение работает\n" +
+    "• сообщения в поддержку\n\n" +
     "<b>Что не хранится</b>\n" +
     "• какие сайты и приложения вы открываете, ваш трафик и его содержимое\n" +
     "• IP-адреса: после неудачного ввода ключа адрес учитывается 10 минут только для защиты от подбора " +

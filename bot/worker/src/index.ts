@@ -2,7 +2,7 @@
 import { KeyApi, json } from "./api";
 import { type Env, settings } from "./config";
 import { Db } from "./db";
-import { Bot, COMMANDS, DESCRIPTION, SHORT_DESCRIPTION } from "./handlers";
+import { ADMIN_COMMANDS, Bot, COMMANDS, DESCRIPTION, SHORT_DESCRIPTION } from "./handlers";
 import { Signer } from "./license";
 import { Telegram, type TgUpdate } from "./telegram";
 
@@ -58,6 +58,10 @@ export default {
         drop_pending_updates: true,
       });
       const commands = await tg.call("setMyCommands", { commands: COMMANDS });
+      // Администраторам — ещё /admin в меню команд (только в их чате)
+      for (const id of settings(env).adminIds) {
+        await tg.call("setMyCommands", { commands: ADMIN_COMMANDS, scope: { type: "chat", chat_id: id } });
+      }
       const profile = [
         await tg.call("setMyDescription", { description: DESCRIPTION }),
         await tg.call("setMyShortDescription", { short_description: SHORT_DESCRIPTION }),
@@ -67,7 +71,7 @@ export default {
     }
 
     try {
-      const res = await new KeyApi(db, () => getSigner(env), env.WEBHOOK_SECRET).handle(req, url.pathname);
+      const res = await new KeyApi(db, () => getSigner(env), env.WEBHOOK_SECRET, settings(env)).handle(req, url.pathname);
       if (res) return res;
     } catch (e) {
       console.error("api:", e instanceof Error ? e.stack : e);

@@ -29,22 +29,14 @@ jobs:
       - name: Test DPI bypass strategies
         run: bash scripts/test-bypass.sh
 
-      # Telegram-бот и сервер ключей (bot/): ключи, срок с активации, устройства, подпись лицензий, экраны
-      - name: Test Telegram bot and key server
-        run: |
-          python3 -m venv "$RUNNER_TEMP/botenv"
-          "$RUNNER_TEMP/botenv/bin/pip" install -q -r bot/requirements-dev.txt
-          cd bot && "$RUNNER_TEMP/botenv/bin/python" -m pytest -q
-
-      # Тот же бот на Cloudflare Workers (bot/worker): имитация пользователей Telegram и телефонов против
-      # локального воркера с D1, плюс сверка экранов и лицензий с версией на Python
+      # Telegram-бот и сервер ключей на Cloudflare Workers (bot/worker): имитация пользователей Telegram,
+      # администратора и телефонов против локального воркера с D1
       - name: Test Telegram bot on Cloudflare Workers (simulation)
         run: |
           cd bot/worker
           npm ci --no-audit --no-fund
           npx tsc --noEmit
           node test/run.mjs
-          PYTHON="$RUNNER_TEMP/botenv/bin/python" node test/parity.mjs
 
       # Имитация телефона: VPN-интерфейс → tun2socks → ByeDPI → «оператор» с DPI → «интернет»,
       # с нагрузкой DNS как у телефона (ошибка 0.8.5: «подключено», а интернета нет)

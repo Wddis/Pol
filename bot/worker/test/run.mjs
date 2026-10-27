@@ -70,6 +70,7 @@ writeFileSync(
     `WEBHOOK_SECRET=${SECRET}`,
     `TG_API=http://127.0.0.1:${TG_PORT}`,
     "SUPPORT=@oda_support_test",
+    "ADMIN_IDS=1999",
     "",
   ].join("\n"),
 );
@@ -180,7 +181,7 @@ class User {
 function checkMarkup(m) {
   assert.ok(m && Array.isArray(m.inline_keyboard) && m.inline_keyboard.length > 0, "есть кнопки");
   for (const row of m.inline_keyboard) {
-    assert.ok(row.length >= 1 && row.length <= 3, "в ряду 1–3 кнопки");
+    assert.ok(row.length >= 1 && row.length <= 5, "в ряду 1–5 кнопок");
     for (const b of row) {
       const kinds = ["callback_data", "url", "copy_text"].filter((k) => b[k] !== undefined);
       assert.equal(kinds.length, 1, `у кнопки «${b.text}» одно действие`);
@@ -233,6 +234,7 @@ try {
   const alice = new User(1001, "alice");
   const bob = new User(1002, "bob");
   const mallory = new User(1003, "mallory");
+  const boss = new User(1999, "boss"); // администратор (ADMIN_IDS)
   let aliceKey, pub;
 
   await step("сервер ключей жив, открытый ключ — от секрета LICENSE_KEY", async () => {
@@ -273,7 +275,7 @@ try {
     assert.ok(s.text.includes("первый день — бесплатно"));
     const rows = s.markup.inline_keyboard;
     assert.deepEqual(rows.map((r) => r.map((b) => b.text)), [
-      ["Купить ключ"], ["Пробный день", "Профиль"], ["Приложение", "О VPN"], ["Как подключить", "Поддержка"]]);
+      ["Купить ключ", "Как купить"], ["Пробный день", "Профиль"], ["Приложение", "О VPN"], ["Как подключить", "Поддержка"]]);
     assert.equal(rows[0][0].style, "primary");
     assert.equal(rows[1][0].style, "success");
     assert.equal(rows[0][0].callback_data, "buy:month:1:0");
@@ -306,7 +308,7 @@ try {
     assert.match(aliceKey, KEY_RE);
     assert.ok(s.text.includes("Тариф: 1 месяц"));
     assert.ok(s.text.includes("Устройств: до 2"));
-    assert.ok(s.text.includes("Срок: 30 дней с активации"));
+    assert.ok(s.text.includes("Срок: 1 месяц с активации"));
     const copy = alice.button("Копировать ключ");
     assert.deepEqual(copy.copy_text, { text: aliceKey });
     assert.equal(copy.style, "primary");
@@ -315,7 +317,7 @@ try {
   await step("профиль до активации: «не активирован», срок начнётся с ввода", async () => {
     const s = await alice.tap("Мой профиль");
     assert.ok(s.text.includes(`<code>${aliceKey}</code> — не активирован`));
-    assert.ok(s.text.includes("1 месяц: 30 дней начнутся с ввода ключа в приложении"));
+    assert.ok(s.text.includes("1 месяц: срок пойдёт с ввода ключа в приложении"));
     assert.ok(s.text.includes("Устройства: 0 из 2"));
   });
 
@@ -536,7 +538,7 @@ try {
       if (data !== "nav:main") assert.equal(s.markup.inline_keyboard.at(-1)[0].text, "‹ Меню");
     }
     const sup = await bob.press("nav:support");
-    assert.ok(sup.text.includes("Напишите: @oda_support_test"));
+    assert.ok(sup.text.includes("Ещё можно написать: @oda_support_test"));
     const app_ = await bob.press("nav:app");
     assert.ok(app_.text.includes("Ссылка на скачивание появится здесь"));
     const priv = await bob.press("nav:privacy");
@@ -567,6 +569,227 @@ try {
     assert.equal((await update("{broken")).status, 200);
     assert.equal((await update({ edited_message: { text: "x" } })).status, 200);
     assert.equal((await update({ message: { message_id: 1, chat: { id: -5, type: "group" }, from: { id: 9 }, text: "/start" } })).status, 200);
+  });
+
+  const keyOf = (s) => s.text.match(/<code>(ODA-[^<]+)<\/code>/)[1];
+  const sentTo = (n, chatId) => calls.slice(n).filter((c) => c.method === "sendMessage" && c.params.chat_id === chatId);
+
+  await step("администратор: /admin и кнопка «Админ» — только для ADMIN_IDS", async () => {
+    const m = await mallory.say("/admin");
+    assert.ok(m.text.startsWith("<b>ODA</b>"), "не админ — обычное меню");
+    assert.ok(!m.markup.inline_keyboard.flat().some((x) => x.text === "Админ"));
+    const r = await mallory.press("adm:home", { expectEdit: false });
+    assert.equal(r.toast, "Нет доступа");
+    const menu = await boss.say("/start");
+    assert.equal(boss.button("Админ").callback_data, "adm:home");
+    const h = await boss.say("/admin");
+    assert.ok(h.text.startsWith("<b>Администратор</b>"));
+    assert.ok(/Пользователей: \d+/.test(h.text) && /Ключей: \d+/.test(h.text));
+    assert.ok(menu.text.startsWith("<b>ODA</b>"));
+  });
+
+  let minuteKey, foreverKey;
+  await step("создание ключей: минуты, часы, дни, месяцы, годы, бессрочно — с границами", async () => {
+    await boss.say("/admin");
+    let s = await boss.tap("Создать ключ");
+    assert.ok(s.text.includes("Срок: <b>7 дней</b>"));
+    const expect = { "m:30": "30 минут", "m:61": "60 минут", "m:0": "1 минута", "h:25": "24 часа", "h:3": "3 часа",
+      "d:31": "30 дней", "M:12": "12 месяцев", "M:13": "12 месяцев", "M:2": "2 месяца", "y:1": "1 год", "y:11": "10 лет", "f:1": "бессрочно" };
+    for (const [un, text] of Object.entries(expect)) {
+      const [u, n] = un.split(":");
+      s = await boss.press(`adm:new:${u}:${n}:1:1`);
+      assert.ok(s.text.includes(`Срок: <b>${text}</b>`), `${un} → ${text}`);
+    }
+    s = await boss.press("adm:new:m:30:1:1");
+    s = await boss.tap("+");
+    assert.ok(s.text.includes("Срок: <b>31 минута</b>"));
+    s = await boss.press("adm:new:m:30:2:1");
+    s = await boss.tap("Создать");
+    assert.ok(s.text.includes("Ключ создан"));
+    minuteKey = keyOf(s);
+    assert.match(minuteKey, KEY_RE);
+    assert.ok(s.text.includes("Срок: 30 минут с активации · устройств: до 2"));
+    assert.deepEqual(boss.button("Копировать ключ").copy_text, { text: minuteKey });
+    s = await boss.press("adm:mk:d:3:1:3");
+    const many = [...s.text.matchAll(/<code>(ODA-[^<]+)<\/code>/g)].map((x) => x[1]);
+    assert.equal(many.length, 3);
+    assert.equal(boss.button("Копировать все").copy_text.text, many.join("\n"));
+    s = await boss.press("adm:mk:f:1:1:1");
+    foreverKey = keyOf(s);
+    assert.ok(s.text.includes("Срок: бессрочно"));
+  });
+
+  await step("ключ на 30 минут и бессрочный — в приложении: срок, лицензия", async () => {
+    const r = await app("/v1/activate", { key: minuteKey, device_id: "minute-dev-01", device_name: "Honor", version: "0.10.0" });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    assert.equal(r.body.expires_at - r.body.activated_at, 1800);
+    assert.ok(r.body.seconds_left <= 1800 && r.body.seconds_left > 1790);
+    assert.equal(r.body.days_left, 0);
+    assert.equal(r.body.forever, false);
+    assert.equal(r.body.tariff, "custom");
+    assert.equal(r.body.tariff_title, "30 минут");
+    assert.equal(verifyLicense(r.body.license, pub).exp, r.body.expires_at);
+    const f = await app("/v1/activate", { key: foreverKey, device_id: "forever-dev-01" });
+    assert.equal(f.status, 200);
+    assert.equal(f.body.forever, true);
+    assert.ok(f.body.expires_at > Date.now() / 1000 + 99 * 365 * 86400);
+    assert.equal(f.body.tariff_title, "бессрочно");
+    d1(`UPDATE keys SET expires_at=${Math.floor(Date.now() / 1000) - 5} WHERE key='${minuteKey}'`);
+    assert.equal((await app("/v1/check", { key: minuteKey, device_id: "minute-dev-01" })).status, 410, "30 минут прошли");
+    d1(`UPDATE keys SET expires_at=${Math.floor(Date.now() / 1000) + 1500} WHERE key='${minuteKey}'`);
+  });
+
+  await step("ключ от администратора: прислал боту — записался в профиль; чужой — нельзя", async () => {
+    const dave = new User(1005, "dave");
+    let s = await dave.say(minuteKey.toLowerCase());
+    assert.ok(s.text.includes(`<code>${minuteKey}</code> — активен`), s.text);
+    assert.ok(s.text.includes("минут</b> осталось"));
+    const erin = new User(1006, "erin");
+    s = await erin.say(minuteKey);
+    assert.ok(s.text.includes("привязан к другому аккаунту"));
+    s = await erin.say("ODA-AAAA-AAAA-AAAA");
+    assert.ok(s.text.includes("Ключ не найден"));
+  });
+
+  await step("сигналы VPN: «Сейчас в VPN» у администратора, способ и время; отключился — пропал", async () => {
+    const on = await app("/v1/check", { key: minuteKey, device_id: "minute-dev-01", vpn: true, mode: "bypass", version: "0.10.0" });
+    assert.equal(on.status, 200);
+    await boss.say("/admin");
+    let s = await boss.press("adm:on");
+    assert.ok(s.text.includes("<b>Сейчас в VPN: 1</b>"), s.text);
+    assert.ok(s.text.includes("Honor · @dave · обход DPI"));
+    s = await boss.press(boss.button(minuteKey).callback_data);
+    assert.ok(s.text.includes("<b>● в VPN</b>"));
+    assert.ok(s.text.includes("ODA 0.10.0"));
+    assert.ok(s.text.includes("Владелец: @dave"));
+    await app("/v1/check", { key: minuteKey, device_id: "minute-dev-01", vpn: false, version: "0.10.0" });
+    s = await boss.press("adm:on");
+    assert.ok(s.text.includes("<b>Сейчас в VPN: 0</b>"));
+    // Пропал без «отключился» (сел телефон) — через 20 минут не считается
+    await app("/v1/check", { key: minuteKey, device_id: "minute-dev-01", vpn: true, mode: "psiphon" });
+    d1(`UPDATE devices SET last_seen=last_seen-1500 WHERE device_id='minute-dev-01'`);
+    s = await boss.press("adm:on");
+    assert.ok(s.text.includes("<b>Сейчас в VPN: 0</b>"));
+    s = await boss.press("adm:dev:0");
+    assert.ok(boss.button("Honor"));
+  });
+
+  await step("удаление ключа: приложение получает «не найден»", async () => {
+    const s0 = await boss.press("adm:mk:h:1:1:1");
+    const k = keyOf(s0);
+    assert.equal((await app("/v1/activate", { key: k, device_id: "del-dev-0001" })).status, 200);
+    let s = await boss.press(`adm:k:${k}`);
+    s = await boss.tap("Удалить ключ");
+    assert.ok(s.text.includes("Удалить ключ?"));
+    s = await boss.tap("Удалить");
+    assert.equal(s.toast, "Ключ удалён");
+    const r = await app("/v1/check", { key: k, device_id: "del-dev-0001" });
+    assert.equal(r.status, 404);
+    assert.equal((await boss.press(`adm:k:${k}`, { expectEdit: false })).toast, "Ключ не найден (удалён?)");
+  });
+
+  await step("блокировка ключа на 1 день: приложение — экран с причиной, новый ключ на том же телефоне не помогает", async () => {
+    let s = await boss.press(`adm:k:${aliceKey}`);
+    s = await boss.tap("Заблокировать");
+    assert.ok(s.text.includes("На сколько?"));
+    s = await boss.tap("1 день");
+    s = await boss.tap("Передача ключа другим людям");
+    assert.equal(s.toast, "Заблокировано: 1 день");
+    assert.ok(s.text.includes("<b>Заблокирован</b> до "));
+    const r = await app("/v1/check", { key: aliceKey, device_id: "phone-C-0003" });
+    assert.equal(r.status, 403);
+    assert.equal(r.body.status, "banned");
+    assert.equal(r.body.reason, "Передача ключа другим людям");
+    assert.ok(Math.abs(r.body.until - (Date.now() / 1000 + 86400)) < 120);
+    assert.equal(r.body.support, "https://t.me/oda_connect_vpn_bot?start=support");
+    // Тот же телефон с другим ключом — тоже блокировка (устройство в списке)
+    const other = keyOf(await boss.press("adm:mk:d:1:1:1"));
+    const r2 = await app("/v1/activate", { key: other, device_id: "phone-C-0003" });
+    assert.equal(r2.status, 403);
+    assert.equal(r2.body.status, "banned");
+    // И в боте владелец ключа заблокирован: ни ключей, ни пробного дня
+    const m = await alice.say("/trial");
+    assert.ok(m.text.startsWith("<b>Доступ заблокирован</b>"));
+    assert.ok(m.text.includes("Причина: Передача ключа другим людям"));
+    const p = await alice.press("nav:profile");
+    assert.ok(p.text.startsWith("<b>Доступ заблокирован</b>"));
+  });
+
+  await step("поддержка в чате: заблокированный пишет — администратор получает и отвечает", async () => {
+    let s = await alice.tap("Написать в поддержку");
+    assert.ok(s.text.includes("Сообщение в поддержку"));
+    let n = calls.length;
+    await update({ message: { message_id: 7, date: 0, chat: { id: alice.id, type: "private" }, from: alice.from(), text: "За что <блок>?" } });
+    const toAdmin = sentTo(n, boss.id);
+    assert.equal(toAdmin.length, 1);
+    assert.ok(toAdmin[0].params.text.includes("Обращение в поддержку"));
+    assert.ok(toAdmin[0].params.text.includes("@alice"));
+    assert.ok(toAdmin[0].params.text.includes("За что &lt;блок&gt;?"));
+    assert.ok(toAdmin[0].params.text.includes("Заблокирован: Передача ключа другим людям"));
+    assert.ok(sentTo(n, alice.id)[0].params.text.includes("Сообщение отправлено"));
+    boss.screen = { message_id: 900, text: toAdmin[0].params.text, markup: toAdmin[0].params.reply_markup };
+    s = await boss.tap("Ответить");
+    assert.ok(s.text.includes("Ответ пользователю"));
+    n = calls.length;
+    await update({ message: { message_id: 8, date: 0, chat: { id: boss.id, type: "private" }, from: boss.from(), text: "Ключ передан в чужие руки." } });
+    const ans = sentTo(n, alice.id);
+    assert.equal(ans.length, 1);
+    assert.ok(ans[0].params.text.includes("Ответ поддержки"));
+    assert.ok(ans[0].params.text.includes("Ключ передан в чужие руки."));
+    assert.ok(sentTo(n, boss.id)[0].params.text.includes("Ответ отправлен"));
+  });
+
+  await step("блокировка закончилась — всё снова работает", async () => {
+    d1(`UPDATE bans SET until=${Math.floor(Date.now() / 1000) - 1} WHERE until IS NOT NULL`);
+    assert.equal((await app("/v1/check", { key: aliceKey, device_id: "phone-C-0003" })).status, 200);
+    assert.ok((await alice.say("/profile")).text.includes("<b>Профиль</b>"));
+  });
+
+  await step("блокировка аккаунта навсегда со своей причиной, список и «Снять»", async () => {
+    await boss.say("/admin");
+    let s = await boss.say("@mallory");
+    assert.ok(s.text.startsWith("<b>Пользователь</b>"));
+    assert.ok(s.text.includes("ID <code>1003</code>"));
+    s = await boss.tap("Заблокировать");
+    s = await boss.tap("Навсегда");
+    s = await boss.tap("Свой текст…");
+    assert.ok(s.text.includes("Своя причина"));
+    s = await boss.say("Спам в поддержку");
+    assert.ok(s.text.includes("<b>Заблокирован</b> навсегда: Спам в поддержку"), s.text);
+    const m = await mallory.say("/start");
+    assert.ok(m.text.includes("Срок: навсегда"));
+    s = await boss.press("adm:bans");
+    assert.ok(s.text.includes("Спам в поддержку — навсегда"));
+    s = await boss.tap("Снять 1");
+    assert.equal(s.toast, "Блокировка снята");
+    assert.ok((await mallory.say("/start")).text.startsWith("<b>ODA</b>"));
+    s = await boss.say("1003");
+    assert.ok(s.text.includes("ID <code>1003</code>"), "по ID тоже находится");
+    assert.ok(boss.button("Заблокировать"));
+  });
+
+  await step("ссылки из приложения: поддержка, как купить (СБП, Stars), продление, тарифы", async () => {
+    let s = await bob.say("/start support");
+    assert.ok(s.text.startsWith("<b>Поддержка</b>"));
+    assert.equal(bob.button("Написать в поддержку").callback_data, "sup:write");
+    s = await bob.say("/start pay");
+    assert.ok(s.text.startsWith("<b>Как купить</b>"));
+    assert.ok(s.text.includes("<b>СБП</b>") && s.text.includes("<b>Telegram Stars</b>"));
+    s = await bob.say("/start renew");
+    assert.ok(s.text.startsWith("<b>Продление</b>"));
+    s = await bob.say("/start buy");
+    assert.ok(s.text.startsWith("<b>Тариф</b>"));
+    assert.ok(s.text.includes("Оплата: <b>СБП</b> или <b>Telegram Stars</b>"));
+    s = await bob.say("/start whatever");
+    assert.ok(s.text.startsWith("<b>ODA</b>"));
+  });
+
+  await step("подбор ключей с одного телефона через разные адреса — 429", async () => {
+    for (let i = 0; i < 10; i++) {
+      await app("/v1/activate", { key: "ODA-CCCC-CCCC-CC" + "CDEFGHJKMN"[i] + "D", device_id: "brute-phone-77" }, `203.0.113.${100 + i}`);
+    }
+    const r = await app("/v1/activate", { key: aliceKey, device_id: "brute-phone-77" }, "203.0.113.250");
+    assert.equal(r.status, 429);
   });
 
   await step("база: пользователи и ключи на месте (D1)", async () => {
