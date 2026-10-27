@@ -42,6 +42,8 @@ PYTHON=/tmp/botenv/bin/python npm run parity  # экраны и лицензии
 сценарий в `test/run.mjs`. В CI — шаг «Test Telegram bot on Cloudflare Workers (simulation)».
 
 ## Cloudflare Workers (основное размещение)
+Работает: `https://oda-vpn-bot.dimazoltinsky.workers.dev`, открытый ключ — в `bot/README.md`. Токен Cloudflare
+у владельца (в репозитории его нет): для обновления попросить его снова или запустить `deploy.sh` у себя.
 `cd bot/worker && CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_API_TOKEN=… BOT_TOKEN=… bash deploy.sh` — база D1 (id
 пишется в `wrangler.toml`, закоммитить), таблицы, воркер, секреты (`LICENSE_KEY` создаётся один раз и **не
 перезаписывается** — иначе старые лицензии не проверить), webhook и меню (`POST /setup` с секретом), печатает

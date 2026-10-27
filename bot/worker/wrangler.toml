@@ -8,7 +8,7 @@ workers_dev = true
 [[d1_databases]]
 binding = "DB"
 database_name = "oda-vpn-bot"
-database_id = "00000000-0000-0000-0000-000000000000"  # deploy.sh вписывает настоящий
+database_id = "70736af0-8d70-42eb-9309-f91247e92ed1"  # deploy.sh вписывает настоящий
 migrations_dir = "migrations"
 
 [vars]

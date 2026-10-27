@@ -80,6 +80,10 @@ API и лицензии у них совпадают один в один (пр�
 Workers — HTTPS сразу; на VPS — через Caddy перед портом 8080.
 
 ## Бесплатно: Cloudflare Workers (основной вариант)
+**Работает с 27.10.2026:** `https://oda-vpn-bot.dimazoltinsky.workers.dev` (аккаунт Cloudflare владельца, база D1
+`oda-vpn-bot`). Webhook бота — `/tg`, сервер ключей — `/v1/activate`, `/v1/check`, проверка — `/health`.
+**Открытый ключ лицензий** (вшить в приложение): `OSkRbr2ENcvsYqTI8JiusLO3M6k9vXL5m9lHKu8kcB4`.
+
 Бот и сервер ключей — один воркер (`worker/`, TypeScript, без библиотек), база — Cloudflare D1 (SQLite).
 Telegram сам присылает обновления на `https://<воркер>/tg` (webhook с секретом), поэтому сервер не нужен,
 работает круглосуточно. Бесплатного тарифа хватает с большим запасом: 100 000 запросов в сутки, база до 5 ГБ.
