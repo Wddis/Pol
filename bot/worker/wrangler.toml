@@ -1,0 +1,22 @@
+# Бот ODA VPN и сервер ключей на Cloudflare Workers (бесплатный тариф): webhook Telegram + /v1/* для приложения.
+# Секреты (не здесь, а `wrangler secret put`): BOT_TOKEN, LICENSE_KEY, WEBHOOK_SECRET — их ставит deploy.sh.
+name = "oda-vpn-bot"
+main = "src/index.ts"
+compatibility_date = "2025-10-01"
+workers_dev = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "oda-vpn-bot"
+database_id = "00000000-0000-0000-0000-000000000000"  # deploy.sh вписывает настоящий
+migrations_dir = "migrations"
+
+[vars]
+PRICE_WEEK = "0"          # цены, ₽; 0 — в боте «[ЦЕНА]»
+PRICE_MONTH = "0"
+PRICE_3M = "0"
+EXTRA_DEVICE_PCT = "50"   # наценка за каждое устройство сверх первого, %
+FREE_MODE = "1"           # 1 — ключи без оплаты
+APK_URL = ""              # ссылка «Скачать ODA»
+SUPPORT = ""              # контакт поддержки, например @username
+TG_API = "https://api.telegram.org"

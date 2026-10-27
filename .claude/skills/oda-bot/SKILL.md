@@ -1,6 +1,6 @@
 ---
 name: oda-bot
-description: Работа с Telegram-ботом ODA VPN (@oda_connect_vpn_bot) и сервером ключей доступа к приложению ODA (каталог bot/) — цель и решения, тесты, локальный запуск, развёртывание и обновление на VPS, связь с приложением (активация ключа, подписанные лицензии). Использовать при любых правках бота, экранов бота, тарифов, сервера ключей, при развёртывании на сервере и при работе над экраном ключа в приложении.
+description: Работа с Telegram-ботом ODA VPN (@oda_connect_vpn_bot) и сервером ключей доступа к приложению ODA (каталог bot/) — цель и решения, тесты и имитация пользователей, локальный запуск, развёртывание на Cloudflare Workers (основное, бесплатно) и на VPS, связь с приложением (активация ключа, подписанные лицензии). Использовать при любых правках бота, экранов бота, тарифов, сервера ключей, при развёртывании на сервере и при работе над экраном ключа в приложении.
 ---
 
 # Бот ODA VPN и сервер ключей
@@ -11,7 +11,10 @@ description: Работа с Telegram-ботом ODA VPN (@oda_connect_vpn_bot) 
 ## Суть за минуту
 - Ключ = доступ к **приложению** ODA на срок тарифа (подключение ODA делает сама). Срок — с первого ввода
   ключа в приложении; устройства — места на ключе; продление — тем же ключом.
-- Бот (aiogram 3, `oda_bot/handlers.py` + экраны `oda_bot/views.py`) и сервер ключей (aiohttp,
+- **Две одинаковые версии.** Основная — Cloudflare Workers (`bot/worker/`, TypeScript, D1, webhook `/tg`
+  с секретом): бесплатно и круглосуточно. Запасная — Python ниже (VPS). Любую правку экрана, текста, кнопки,
+  API или лицензии делать **в обеих** — `npm run parity` (и CI) сверяет 25 экранов и подпись один в один.
+- Бот на Python (aiogram 3, `oda_bot/handlers.py` + экраны `oda_bot/views.py`) и сервер ключей (aiohttp,
   `oda_bot/api.py`: `/v1/activate`, `/v1/check`) — один процесс `python -m oda_bot`, база SQLite, лицензии
   Ed25519 (`oda_bot/license.py`; закрытый ключ — `data/license_ed25519.key`, открытый — в журнале при
   запуске, его вшивают в приложение).
@@ -26,15 +29,34 @@ cd bot && python3 -m venv /tmp/botenv && /tmp/botenv/bin/pip install -q -r requi
 Новый экран — функция в `views.py` + ветка в `handlers.py` + строка в `tests/test_views.py` (проверка
 длины callback_data ≤ 64 и текста < 4096). В CI это шаг «Test Telegram bot and key server».
 
+Воркер (Node 20+):
+```bash
+cd bot/worker && npm ci
+npx tsc --noEmit                              # типы
+npm test                                      # имитация: локальный воркер + поддельный Telegram, 27 сценариев
+PYTHON=/tmp/botenv/bin/python npm run parity  # экраны и лицензии = версия на Python
+```
+Имитация (`test/run.mjs`): пользователи шлют команды и жмут кнопки через webhook, «телефоны» зовут
+`/v1/activate` и `/v1/check`; время ключа сдвигается через `wrangler d1 execute --local`. Новый экран —
+функция в `views.ts` и `views.py`, ветка в `handlers.ts` и `handlers.py`, строка в `test/parity/screens.{mjs,py}`,
+сценарий в `test/run.mjs`. В CI — шаг «Test Telegram bot on Cloudflare Workers (simulation)».
+
+## Cloudflare Workers (основное размещение)
+`cd bot/worker && CLOUDFLARE_ACCOUNT_ID=… CLOUDFLARE_API_TOKEN=… BOT_TOKEN=… bash deploy.sh` — база D1 (id
+пишется в `wrangler.toml`, закоммитить), таблицы, воркер, секреты (`LICENSE_KEY` создаётся один раз и **не
+перезаписывается** — иначе старые лицензии не проверить), webhook и меню (`POST /setup` с секретом), печатает
+адрес и открытый ключ. Повтор = обновление. Журнал — `npx wrangler tail`. Токены Cloudflare и бота —
+только из окружения, не в репозиторий. Перед webhook остановить бота на Python с тем же токеном.
+
 ## Живой запуск в облачной сессии
 Нужен доступ к api.telegram.org (сеть окружения: Custom/Full). Токен — только из окружения или от
 пользователя в чате, **никогда не в файлы репозитория**. Через прокси сессии:
 `BOT_TOKEN=… ODA_DATA_DIR=<scratchpad>/botlive python -m oda_bot` (прокси подхватывается из HTTPS_PROXY,
-нужен `pip install aiohttp-socks`). Сессия временная — бот живёт, пока она открыта; постоянно — VPS.
+нужен `pip install aiohttp-socks`). Сессия временная — бот живёт, пока она открыта; постоянно — Cloudflare.
 Два процесса с одним токеном мешают друг другу (getUpdates conflict): перед запуском на VPS остановить
 тестовый.
 
-## VPS
+## VPS (запасной вариант)
 `bot/deploy/install.sh` (одна команда из `bot/README.md`): Docker, код в `/opt/oda`, `.env`, Caddy (HTTPS
 по домену), ежедневный бэкап. Обновление — `./update.sh`, бэкап — `./backup.sh`. Сервер — вне РФ
 (api.telegram.org в РФ режется), сервер ключей должен открываться из РФ без VPN.
@@ -42,4 +64,5 @@ cd bot && python3 -m venv /tmp/botenv && /tmp/botenv/bin/pip install -q -r requi
 ## Следующие шаги (не сделаны)
 Экран ключа в приложении (Android): ввод → `/v1/activate` → хранить лицензию, проверять подпись открытым
 ключом, `/v1/check` раз в сутки, уведомления за 2 и 1 день, блокировка подключения (и плитки) после срока,
-экран «Тариф закончился». Оплата. Адрес сервера ключей в приложении — после VPS и домена.
+экран «Тариф закончился». Оплата. Адрес сервера ключей в приложении — адрес воркера (`*.workers.dev` у части
+операторов РФ бывает недоступен: запасной — свой домен через Cloudflare, вход через обход DPI самой ODA).

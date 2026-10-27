@@ -36,6 +36,16 @@ jobs:
           "$RUNNER_TEMP/botenv/bin/pip" install -q -r bot/requirements-dev.txt
           cd bot && "$RUNNER_TEMP/botenv/bin/python" -m pytest -q
 
+      # Тот же бот на Cloudflare Workers (bot/worker): имитация пользователей Telegram и телефонов против
+      # локального воркера с D1, плюс сверка экранов и лицензий с версией на Python
+      - name: Test Telegram bot on Cloudflare Workers (simulation)
+        run: |
+          cd bot/worker
+          npm ci --no-audit --no-fund
+          npx tsc --noEmit
+          node test/run.mjs
+          PYTHON="$RUNNER_TEMP/botenv/bin/python" node test/parity.mjs
+
       # Имитация телефона: VPN-интерфейс → tun2socks → ByeDPI → «оператор» с DPI → «интернет»,
       # с нагрузкой DNS как у телефона (ошибка 0.8.5: «подключено», а интернета нет)
       - name: Simulate phone traffic through tun2socks and ByeDPI

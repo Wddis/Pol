@@ -19,8 +19,9 @@ log = logging.getLogger(__name__)
 def make_router(cfg: Settings, db: Db) -> Router:
     r = Router()
 
-    async def show(target: Message | CallbackQuery, screen: Screen) -> None:
-        """Команда — новое сообщение; кнопка — то же сообщение меняется (без ленты из меню)."""
+    async def show(target: Message | CallbackQuery, screen: Screen, toast: str | None = None) -> None:
+        """Команда — новое сообщение; кнопка — то же сообщение меняется (без ленты из меню).
+        toast — короткая надпись поверх чата (на нажатие кнопки отвечают один раз)."""
         for attempt in range(2):
             try:
                 if isinstance(target, CallbackQuery):
@@ -41,7 +42,7 @@ def make_router(cfg: Settings, db: Db) -> Router:
                     break  # сообщение слишком старое для правки
                 raise
         if isinstance(target, CallbackQuery):
-            await target.answer()
+            await target.answer(toast)
 
     def user(event: Message | CallbackQuery) -> int:
         u = event.from_user
@@ -151,16 +152,14 @@ def make_router(cfg: Settings, db: Db) -> Router:
                 await q.answer("Оплата скоро появится", show_alert=True)
                 return
             db.extend(k.key, TARIFFS[callback_data.period].days)
-            await q.answer(f"Продлено: +{TARIFFS[callback_data.period].title}")
-            await show(q, profile_screen(tg_id, k.key))
+            await show(q, profile_screen(tg_id, k.key), f"Продлено: +{TARIFFS[callback_data.period].title}")
         elif action == "extend":
             await show(q, views.extend_choose(cfg, k))
         elif action == "reset":
             await show(q, views.reset_confirm(k, db.devices(k.key)))
         elif action == "reset_ok":
             n = db.reset_devices(k.key)
-            await q.answer(f"Отвязано устройств: {n}")
-            await show(q, profile_screen(tg_id, k.key))
+            await show(q, profile_screen(tg_id, k.key), f"Отвязано устройств: {n}")
         else:
             await show(q, profile_screen(tg_id, k.key))
 
