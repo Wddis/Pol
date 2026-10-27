@@ -2,8 +2,8 @@
 // ключи любого срока (минуты … бессрочно), список ключей и устройств, кто сейчас в VPN, удаление ключей,
 // блокировки (1 день, неделя, месяц, навсегда) с причиной, ответы на обращения в поддержку.
 // Данные кнопок: adm:<действие>:… (≤ 64 байт). Цель блокировки t: «k<ключ>» или «u<Telegram ID>».
-import { EDITABLE, type Settings } from "./config";
-import { type CpBalance, CryptoPay } from "./cryptopay";
+import { EDITABLE, type Settings, cardReady } from "./config";
+import { Cashera, type CsBalance, type CsCardQuote } from "./cashera";
 import type { TgResult } from "./telegram";
 import { type Ban, Db, type Device, type DeviceRow, type Key, type User, isActive, isOnline, secondsLeft, tariffTitle } from "./db";
 import { FOREVER, MAX_DEVICES, UNITS, durationText, leftText, normalize, unitSeconds, unitText } from "./keys";
@@ -281,54 +281,83 @@ export function bansList(bans: (Ban & { targets: string })[]): Screen {
 
 // ---------- оплата ----------
 
+const rub = (kop: number) => `${(kop / 100).toLocaleString("ru-RU", { maximumFractionDigits: 2 })} ₽`;
+const cardMask = (c: string) => (c ? `•• ${c.slice(-4)}` : "—");
+
 const shown = (cfg: Settings, name: string) => {
   const e = EDITABLE[name];
   const v = cfg[e.field];
   if (e.kind === "bool") return v ? "да" : "нет";
   if (e.kind === "int") return String(v);
   if (e.kind === "secret") return v ? "задан" : "—";
+  if (e.kind === "card") return cardMask(String(v));
   return v ? escapeHtml(String(v)) : "—";
 };
 
 export function settingsScreen(cfg: Settings): Screen {
   const lines = Object.keys(EDITABLE).map((n) => `${EDITABLE[n].title}: <b>${shown(cfg, n)}</b>`);
-  const cryptoReady = cfg.cpToken !== "" && (cfg.priceWeek > 0 || cfg.priceMonth > 0 || cfg.price3m > 0);
+  const card = cardReady(cfg) && (cfg.priceWeek > 0 || cfg.priceMonth > 0 || cfg.price3m > 0);
   const starsReady = cfg.starsWeek > 0 || cfg.starsMonth > 0 || cfg.stars3m > 0;
   const state = cfg.freeMode
-    ? "Сейчас ключи <b>выдаются бесплатно</b>. Задайте цены (и токен CryptoBot), затем «Включить оплату»."
-    : `Оплата включена: криптовалюта — ${cryptoReady ? "да" : "нет (нужны токен CryptoBot и цена в ₽)"}, звёзды — ${starsReady ? "да" : "нет (нужна цена в звёздах)"}.`;
+    ? "Сейчас ключи <b>выдаются бесплатно</b>. Задайте цены (и ключи Cashera), затем «Включить оплату»."
+    : `Оплата включена: картой / СБП — ${card ? "да" : "нет (нужны ключ и секрет Cashera и цена в ₽)"}, звёзды — ${starsReady ? "да" : "нет (нужна цена в звёздах)"}.`;
   const edit = Object.keys(EDITABLE).filter((n) => EDITABLE[n].kind !== "bool");
   const rows: Button[][] = [[b(cfg.freeMode ? "Включить оплату" : "Выдавать бесплатно", "adm:free", cfg.freeMode ? "success" : "danger")]];
   for (let i = 0; i < edit.length; i += 2) rows.push(edit.slice(i, i + 2).map((n) => b(EDITABLE[n].title.replace(/^Цена /, ""), `adm:set:${n}`)));
-  rows.push([b(cfg.cpTestnet ? "CryptoBot: тестовая сеть → настоящая" : "CryptoBot: настоящая сеть → тестовая", "adm:cpnet")]);
   rows.push([b("Баланс и вывод", "adm:bal")], home());
   return {
     text:
       "<b>Цены и оплата</b>\n\n" + lines.join("\n") + "\n\n" + state +
-      "\n\nЦена 0 — способ выключен для этого срока. Цена в ₽ — для оплаты криптовалютой (счёт в рублях, " +
-      "покупатель платит USDT, TON и др. по курсу). Каждое устройство сверх первого — + наценка." +
-      "\n\n<b>Как подключить CryptoBot</b> (один раз, анонимно):\n" +
-      "1. @CryptoBot → Crypto Pay → Create App → скопировать токен → «Токен CryptoBot» здесь.\n" +
-      `2. Там же: Webhooks → Enable → адрес <code>${cfg.origin || "https://<воркер>"}/cryptopay</code>.\n` +
-      "3. Security → Transfers → включить (вывод из «Баланс и вывод»).",
+      "\n\nЦена 0 — способ выключен для этого срока. Цена в ₽ — для оплаты картой / СБП. Каждое устройство " +
+      "сверх первого — + наценка." +
+      "\n\n<b>Как подключить оплату картой / СБП</b> (Cashera, один раз):\n" +
+      "1. Заявка на cashera.cash или менеджеру @cashera_integration; в кабинете my.cashera.cash — «Методы приёма»: " +
+      "оставьте СБП и карту.\n" +
+      `2. Кабинет → настройки уведомлений: адрес <code>${cfg.origin || "https://<воркер>"}/cashera</code>, включить уведомления.\n` +
+      "3. «Настройка API» → ключ <code>pk_…</code> и секрет <code>sk_…</code> → сюда («Cashera: ключ», «Cashera: секрет»). " +
+      "Сообщения с ними бот сразу удалит.\n" +
+      "4. Для вывода: «Карта МИР для вывода» (Т-Банк выпускает МИР) и выплаты на карту, включённые в Cashera.",
     markup: kb(...rows),
   };
 }
 
-export function balanceScreen(cfg: Settings, bal: CpBalance[] | null, err?: string): Screen {
-  if (!cfg.cpToken) {
-    return { text: "<b>Баланс и вывод</b>\n\nCryptoBot не подключён — «Цены и оплата» → «Токен CryptoBot».", markup: kb([b("Цены и оплата", "adm:set")], home()) };
+export function balanceScreen(cfg: Settings, bal: CsBalance | null, err?: string): Screen {
+  if (!cardReady(cfg)) {
+    return { text: "<b>Баланс и вывод</b>\n\nCashera не подключена — «Цены и оплата» → ключ и секрет Cashera.", markup: kb([b("Цены и оплата", "adm:set")], home()) };
   }
-  const has = (bal ?? []).filter((x) => parseFloat(x.available) > 0 || parseFloat(x.onhold) > 0);
-  const lines = has.map((x) => `• <b>${escapeHtml(x.available)} ${escapeHtml(x.currency_code)}</b>` + (parseFloat(x.onhold) > 0 ? ` (ещё ${escapeHtml(x.onhold)} в обработке)` : ""));
-  const rows = has.filter((x) => parseFloat(x.available) > 0).map((x) => [b(`Вывести ${x.available} ${x.currency_code}`, `adm:wd:${x.currency_code}`, "success")]);
+  const lines = bal
+    ? [
+        `Доступно к выводу: <b>${rub(bal.available)}</b>`,
+        bal.pending ? `В обработке (ещё не доступно): ${rub(bal.pending)}` : "",
+        bal.in_payout ? `Выводится сейчас: ${rub(bal.in_payout)}` : "",
+        bal.frozen ? `Заморожено: ${rub(bal.frozen)}` : "",
+      ].filter(Boolean)
+    : [err ? `Не получилось: ${escapeHtml(err)}` : "Баланса в рублях пока нет."];
+  const rows: Button[][] = [];
+  if (bal && bal.available > 0) {
+    rows.push([cfg.payoutCard ? b(`Вывести ${rub(bal.available)} на карту ${cardMask(cfg.payoutCard)}`, "adm:wd", "success") : b("Указать карту МИР для вывода", "adm:set:payout_card", "primary")]);
+  }
   return {
     text:
-      `<b>Баланс CryptoBot</b>${cfg.cpTestnet ? " (тестовая сеть)" : ""}\n\n` +
-      (err ? `Не получилось: ${escapeHtml(err)}` : lines.join("\n") || "Пока пусто.") +
-      "\n\nВывод — перевод на ваш аккаунт в @CryptoBot (откройте его хотя бы раз). Дальше — продать за рубли " +
-      "(P2P), перевести на кошелёк или биржу. Покупатели вас не видят, вы — их.",
-    markup: kb(...rows, [b("Обновить", "adm:bal"), b("Как вывести на Т-Банк", "adm:tb")], home()),
+      "<b>Баланс Cashera</b>\n\n" + lines.join("\n") +
+      "\n\nВывод — на карту МИР (например, Т-Банка): сначала расчёт с комиссией, потом подтверждение. " +
+      "Покупатели вашей карты не видят.",
+    markup: kb(...rows, [b("Обновить", "adm:bal"), b("Вывод на Т-Банк", "adm:tb")], home()),
+  };
+}
+
+export function payoutConfirm(cfg: Settings, q: CsCardQuote): Screen {
+  const lim = q.card_payout_limits;
+  const tooSmall = lim?.min_net_amount_minor !== undefined && q.net_card_rub_amount < lim.min_net_amount_minor;
+  return {
+    text:
+      "<b>Вывод на карту</b>\n\n" +
+      `Карта: <b>${cardMask(cfg.payoutCard)}</b>\n` +
+      `Спишется с баланса: <b>${rub(q.source_amount)}</b>\n` +
+      `Комиссия: ${rub(q.fee_amount)}\n` +
+      `Придёт на карту: <b>${rub(q.net_card_rub_amount)}</b>\n` +
+      (tooSmall ? `\n<b>Меньше минимума для карты</b> (${rub(lim!.min_net_amount_minor!)}) — накопите больше.` : "\nОбычно деньги приходят в течение часа; итог бот пришлёт сообщением."),
+    markup: kb(tooSmall ? [] : [b(`Вывести ${rub(q.source_amount)}`, `adm:wdok:${q.source_amount}`, "success")], [b("‹ Баланс", "adm:bal")]),
   };
 }
 
@@ -363,18 +392,14 @@ export function tbankScreen(): Screen {
   return {
     text:
       "<b>Вывод на Т-Банк</b>\n\n" +
-      "<b>Оплаты криптовалютой</b> (CryptoBot):\n" +
-      "1. Здесь: «Баланс и вывод» → «Вывести» — монеты придут на ваш аккаунт в @CryptoBot.\n" +
-      "2. @CryptoBot → P2P → «Продать» → USDT за RUB → способ оплаты «Т-Банк» (или СБП) → сумма и курс.\n" +
-      "3. Покупатель переводит рубли на вашу карту Т-Банка; увидели деньги в приложении банка — подтвердите в " +
-      "@CryptoBot, монеты уйдут ему. Монеты держатся в сделке, пока вы не подтвердите.\n\n" +
-      "<b>Звёзды</b>: Fragment выплачивает в TON на кошелёк (например, Tonkeeper) → отправьте TON на адрес " +
-      "пополнения в @CryptoBot (Кошелёк → TON → Пополнить) → продайте через P2P, как выше.\n\n" +
-      "<b>Осторожно</b>: много переводов от незнакомых людей на карту банк может счесть подозрительными (115-ФЗ) и " +
-      "ограничить карту. Лучше продавать крупнее и реже, проверенным покупателям с хорошим рейтингом, " +
-      "держать для этого отдельную карту. Доход от продажи ключей облагается налогом — проще всего статус " +
-      "самозанятого (4–6%).\n\n" +
-      "Покупатели ключей вашей карты не видят: её видит только покупатель криптовалюты в P2P.",
+      "<b>Оплаты картой / СБП</b> (Cashera) — прямо из бота:\n" +
+      "1. «Цены и оплата» → «Карта МИР для вывода» — номер карты МИР Т-Банка (её можно бесплатно открыть в " +
+      "приложении Т-Банка, если сейчас Visa/Mastercard). Выплаты на карту должны быть включены в Cashera.\n" +
+      "2. «Баланс и вывод» → «Вывести … на карту» → расчёт с комиссией → «Вывести». Итог придёт сообщением.\n\n" +
+      "<b>Звёзды</b> в рубли напрямую не выводятся: Telegram платит за них только в TON через Fragment. " +
+      "Без криптовалюты звёзды можно потратить на Telegram Premium себе («Звёзды»).\n\n" +
+      "<b>Налоги</b>: доход от продажи ключей облагается налогом — проще всего статус самозанятого (4–6%). " +
+      "Поступления от Cashera банк видит как выплаты одного отправителя, а не переводы от незнакомых людей.",
     markup: kb([b("Баланс и вывод", "adm:bal"), b("Звёзды", "adm:st")], home()),
   };
 }
@@ -489,36 +514,41 @@ export class Admin {
         if (!e || e.kind === "bool") return { screen: settingsScreen(this.cfg) };
         await this.db.setState(adminId, "set", a);
         const hint = e.kind === "int" ? "Пришлите число (0 — выключить)."
-          : e.kind === "secret" ? "Пришлите токен из @CryptoBot → Crypto Pay → My Apps → приложение → API Token. Сообщение с токеном бот сразу удалит. «-» — отключить."
+          : e.kind === "secret" ? "Пришлите значение из кабинета Cashera → «Настройка API». Сообщение бот сразу удалит. «-» — отключить."
+          : e.kind === "card" ? "Пришлите 16 цифр карты МИР (можно с пробелами). Сообщение с номером бот сразу удалит. «-» — убрать."
           : "Пришлите значение одним сообщением («-» — очистить).";
         return { screen: askText(e.title, `Сейчас: <b>${shown(this.cfg, a)}</b>\n\n${hint}`, "adm:set") };
       }
-      case "cpnet": {
-        const v = !this.cfg.cpTestnet;
-        await this.db.setSetting("cp_testnet", v ? "1" : "0");
-        this.cfg.cpTestnet = v;
-        return { screen: settingsScreen(this.cfg), toast: v ? "Тестовая сеть: деньги ненастоящие" : "Настоящая сеть" };
-      }
       case "bal": {
-        if (!this.cfg.cpToken) return { screen: balanceScreen(this.cfg, null) };
+        if (!cardReady(this.cfg)) return { screen: balanceScreen(this.cfg, null) };
         try {
-          return { screen: balanceScreen(this.cfg, await this.cp().getBalance()) };
+          return { screen: balanceScreen(this.cfg, await this.cs().balanceRub()) };
         } catch (e) {
           return { screen: balanceScreen(this.cfg, null, String((e as Error).message)) };
         }
       }
       case "wd": {
-        // Сумма — с баланса в момент нажатия: вывод всего доступного
+        // Вывод всего доступного: сначала расчёт (комиссия, сколько придёт), затем подтверждение
+        if (!cardReady(this.cfg) || !this.cfg.payoutCard) return { toast: "Сначала укажите карту МИР в «Цены и оплата»", alert: true };
         try {
-          const x = (await this.cp().getBalance()).find((y) => y.currency_code === a);
-          if (!x || !(parseFloat(x.available) > 0)) return { toast: "Нечего выводить", alert: true };
-          const t = await this.cp().transfer(adminId, x.currency_code, x.available, `oda-${adminId}-${x.currency_code}-${x.available}-${Math.floor(now / 60)}`);
-          return { screen: balanceScreen(this.cfg, await this.cp().getBalance()), toast: `Выведено ${t.amount} ${t.asset} в @CryptoBot`, alert: true };
+          const bal = await this.cs().balanceRub();
+          if (!bal || bal.available <= 0) return { toast: "Нечего выводить", alert: true };
+          return { screen: payoutConfirm(this.cfg, await this.cs().quoteCard(bal.available, this.cfg.payoutCard)) };
+        } catch (e) {
+          return { toast: `Расчёт не получился: ${(e as Error).message}`.slice(0, 190), alert: true };
+        }
+      }
+      case "wdok": {
+        const amount = parseInt(a, 10);
+        if (!(amount > 0) || !this.cfg.payoutCard) return { toast: "?", alert: true };
+        try {
+          // external_id стабилен в пределах минуты: двойное нажатие не создаст вторую заявку
+          const p = await this.cs().payoutCard(amount, this.cfg.payoutCard, `oda-wd-${amount}-${Math.floor(now / 60)}`);
+          const net = p.card_payout?.net_card_rub_amount ?? p.net_amount ?? amount;
+          return { screen: balanceScreen(this.cfg, await this.cs().balanceRub().catch(() => null)), toast: `Заявка на вывод создана: придёт ${rub(net)}. Итог — сообщением`, alert: true };
         } catch (e) {
           const m = String((e as Error).message);
-          const hint = /TRANSFER|DISABLED|FORBIDDEN/i.test(m) ? " — включите переводы: @CryptoBot → Crypto Pay → приложение → Security → Transfers"
-            : /USER|NOT_FOUND/i.test(m) ? " — откройте @CryptoBot и нажмите «Старт»"
-            : /AMOUNT|SMALL|MIN/i.test(m) ? " — сумма меньше минимальной для вывода" : "";
+          const hint = /403|card|карт/i.test(m) ? " — проверьте, что выплаты на карту включены в Cashera" : "";
           return { toast: `Не выведено: ${m}${hint}`.slice(0, 190), alert: true };
         }
       }
@@ -559,18 +589,18 @@ export class Admin {
     return { screen: s ?? (await this.home()), toast: `Заблокировано: ${time.title}` };
   }
 
-  /** Текст от администратора: ожидаемый ввод (своя причина, ответ пользователю) или поиск. null — не админское. */
   private async starBalance(): Promise<number | null> {
     const r = await this.tgCall("getMyStarBalance", {});
     const v = r.ok ? (r.result as { amount?: number } | undefined)?.amount : undefined;
     return typeof v === "number" ? v : null;
   }
 
-  private cp(): CryptoPay {
-    return new CryptoPay(this.cfg.cpToken, CryptoPay.endpoint(this.cfg.cpTestnet, this.cfg.cpApi || undefined));
+  private cs(): Cashera {
+    return new Cashera(this.cfg.csKey, this.cfg.csSecret, this.cfg.csApi);
   }
 
-  /** forget — удалить сообщение администратора (в нём токен). */
+  /** Текст от администратора: ожидаемый ввод (своя причина, ответ пользователю, настройка) или поиск. null — не админское.
+   * forget — удалить сообщение администратора (в нём ключ, секрет или номер карты). */
   async text(adminId: number, text: string, forget?: () => Promise<void>): Promise<Screen | null> {
     const st = await this.db.getState(adminId);
     if (st && st.state === "set" && EDITABLE[st.data]) {
@@ -581,25 +611,25 @@ export class Admin {
         if (!/^\d{1,7}$/.test(t)) return askText(e.title, "Нужно целое число, например 199. Пришлите ещё раз.", "adm:set");
         v = String(parseInt(t, 10));
         (this.cfg as unknown as Record<string, unknown>)[e.field] = Number(v);
-      } else if (e.kind === "secret") {
+      } else if (e.kind === "secret" || e.kind === "card") {
         await forget?.();
-        v = t === "-" ? "" : t;
-        if (v) {
-          const prev = this.cfg.cpToken;
-          this.cfg.cpToken = v;
+        v = t === "-" ? "" : e.kind === "card" ? t.replace(/[\s-]/g, "") : t;
+        if (e.kind === "card" && v && !/^\d{16}$/.test(v)) return askText(e.title, "Нужно 16 цифр карты МИР. Пришлите ещё раз.", "adm:set");
+        (this.cfg as unknown as Record<string, unknown>)[e.field] = v;
+        await this.db.clearState(adminId);
+        await this.db.setSetting(st.data, v);
+        const s = settingsScreen(this.cfg);
+        let note = "Сообщение удалено из чата.";
+        if (e.kind === "secret" && cardReady(this.cfg)) {
           try {
-            const me = await this.cp().getMe();
-            await this.db.clearState(adminId);
-            await this.db.setSetting(st.data, v);
-            const s = settingsScreen(this.cfg);
-            s.text = `<b>CryptoBot подключён</b>: приложение «${escapeHtml(me.name)}»${this.cfg.cpTestnet ? " (тестовая сеть)" : ""}. Сообщение с токеном удалено.\n\n` + s.text;
-            return s;
+            const bal = await this.cs().balanceRub();
+            note = `<b>Cashera подключена</b>${bal ? `: доступно ${rub(bal.available)}` : ""}. ` + note;
           } catch (err) {
-            this.cfg.cpToken = prev;
-            return askText(e.title, `CryptoBot не принял токен (${escapeHtml(String((err as Error).message))}). Проверьте и пришлите ещё раз. Тестовый токен — из @CryptoTestnetBot и «тестовая сеть».`, "adm:set");
+            note = `<b>Cashera не приняла ключ</b> (${escapeHtml(String((err as Error).message))}) — проверьте ключ и секрет. ` + note;
           }
         }
-        this.cfg.cpToken = "";
+        s.text = note + "\n\n" + s.text;
+        return s;
       } else {
         v = t === "-" ? "" : t.slice(0, 100);
         (this.cfg as unknown as Record<string, unknown>)[e.field] = v;

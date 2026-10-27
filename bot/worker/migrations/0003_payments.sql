@@ -1,7 +1,7 @@
--- 0.12: оплата — CryptoBot (счёт в ₽, оплата криптовалютой, webhook) и Telegram Stars; настройки из меню администратора
+-- 0.12: оплата — картой / СБП (Cashera, см. 0004) и Telegram Stars; настройки из меню администратора
 -- (только комментарии поправлены после применения: схема та же)
 CREATE TABLE IF NOT EXISTS settings (
-    name   TEXT PRIMARY KEY,           -- free_mode, price_week|month|q (₽), stars_week|month|q, extra_pct, cp_token, cp_testnet
+    name   TEXT PRIMARY KEY,           -- free_mode, price_week|month|q (₽), stars_week|month|q, extra_pct, cs_key, cs_secret, payout_card
     value  TEXT NOT NULL
 );
 
@@ -13,10 +13,10 @@ CREATE TABLE IF NOT EXISTS orders (
     period      TEXT NOT NULL,          -- week | month | q
     devices     INTEGER NOT NULL,
     key         TEXT,                   -- продлеваемый или выданный ключ
-    method      TEXT NOT NULL,          -- crypto | stars
-    amount      INTEGER NOT NULL,       -- ₽ (crypto, счёт в рублях) или звёзды (stars)
+    method      TEXT NOT NULL,          -- card (Cashera) | stars
+    amount      INTEGER NOT NULL,       -- ₽ (card) или звёзды (stars)
     status      TEXT NOT NULL,          -- new → paid | cancelled
-    charge_id   TEXT,                   -- invoice_id Crypto Pay или telegram_payment_charge_id (Stars)
+    charge_id   TEXT,                   -- uuid платежа Cashera или telegram_payment_charge_id (Stars)
     created_at  INTEGER NOT NULL,
     updated_at  INTEGER NOT NULL
 );

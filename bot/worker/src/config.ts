@@ -18,8 +18,8 @@ export interface Env {
   STARS_WEEK?: string;
   STARS_MONTH?: string;
   STARS_3M?: string;
-  /** Только для тестов: подмена адреса Crypto Pay API. */
-  CRYPTO_PAY_API?: string;
+  /** Только для тестов: подмена адреса API Cashera. */
+  CASHERA_API?: string;
 }
 
 export interface Settings {
@@ -37,17 +37,18 @@ export interface Settings {
   starsWeek: number;
   starsMonth: number;
   stars3m: number;
-  /** Токен приложения Crypto Pay (@CryptoBot → Crypto Pay → Create App); пусто — оплата криптовалютой выключена. */
-  cpToken: string;
-  /** Тестовая сеть @CryptoTestnetBot (ненастоящие деньги) — проверить оплату до запуска. */
-  cpTestnet: boolean;
-  cpApi: string;
-  /** Адрес воркера (из запроса) — для подсказок администратору (webhook CryptoBot). */
+  /** Cashera (кабинет my.cashera.cash → «Настройка API»): ключ pk_… и секрет sk_…; пусто — оплата картой выключена. */
+  csKey: string;
+  csSecret: string;
+  csApi: string;
+  /** Карта МИР для вывода с баланса Cashera (16 цифр). */
+  payoutCard: string;
+  /** Адрес воркера (из запроса) — для подсказок администратору (webhook Cashera) и адреса уведомлений. */
   origin: string;
 }
 
 /** Что администратор может поменять в боте (таблица settings): имя → поле Settings. */
-export const EDITABLE: Record<string, { field: keyof Settings; kind: "int" | "text" | "bool" | "secret"; title: string }> = {
+export const EDITABLE: Record<string, { field: keyof Settings; kind: "int" | "text" | "bool" | "secret" | "card"; title: string }> = {
   free_mode: { field: "freeMode", kind: "bool", title: "Ключи без оплаты" },
   price_week: { field: "priceWeek", kind: "int", title: "Цена «1 неделя», ₽" },
   price_month: { field: "priceMonth", kind: "int", title: "Цена «1 месяц», ₽" },
@@ -56,8 +57,9 @@ export const EDITABLE: Record<string, { field: keyof Settings; kind: "int" | "te
   stars_month: { field: "starsMonth", kind: "int", title: "Цена «1 месяц», звёзды" },
   stars_q: { field: "stars3m", kind: "int", title: "Цена «3 месяца», звёзды" },
   extra_pct: { field: "extraDevicePct", kind: "int", title: "Наценка за устройство, %" },
-  cp_token: { field: "cpToken", kind: "secret", title: "Токен CryptoBot" },
-  cp_testnet: { field: "cpTestnet", kind: "bool", title: "CryptoBot: тестовая сеть" },
+  cs_key: { field: "csKey", kind: "secret", title: "Cashera: ключ pk_" },
+  cs_secret: { field: "csSecret", kind: "secret", title: "Cashera: секрет sk_" },
+  payout_card: { field: "payoutCard", kind: "card", title: "Карта МИР для вывода" },
 };
 
 const int = (v: string | undefined, d: number) => {
@@ -79,9 +81,10 @@ export function settings(env: Env): Settings {
     starsWeek: int(env.STARS_WEEK, 0),
     starsMonth: int(env.STARS_MONTH, 0),
     stars3m: int(env.STARS_3M, 0),
-    cpToken: "",
-    cpTestnet: false,
-    cpApi: (env.CRYPTO_PAY_API ?? "").trim(),
+    csKey: "",
+    csSecret: "",
+    csApi: (env.CASHERA_API ?? "").trim() || "https://api.cashera.cash/api/v1",
+    payoutCard: "",
     origin: "",
   };
 }
@@ -102,10 +105,13 @@ export async function loadSettings(env: Env, d1: D1Database, origin = ""): Promi
     if (!e) continue;
     if (e.kind === "int") c[e.field] = int(value, 0);
     else if (e.kind === "bool") c[e.field] = value === "1";
-    else c[e.field] = value; // text, secret
+    else c[e.field] = value; // text, secret, card
   }
   return cfg;
 }
+
+/** Оплата картой / СБП подключена: ключ и секрет Cashera заданы. */
+export const cardReady = (cfg: Settings) => cfg.csKey !== "" && cfg.csSecret !== "";
 
 /** Цена тарифа: рубли и звёзды за один ключ на одно устройство. */
 export function basePrice(cfg: Settings, period: string): { rub: number; stars: number } {

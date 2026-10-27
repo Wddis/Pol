@@ -1,8 +1,8 @@
 // Обработчики бота: команды, нажатия кнопок, поддержка в чате, меню администратора (admin.ts).
 // Кнопки меняют сообщение на месте.
 import { Admin, type Out } from "./admin";
-import type { Settings } from "./config";
-import { CryptoPay, type CpInvoice } from "./cryptopay";
+import { type Settings, cardReady } from "./config";
+import { Cashera, CasheraError, type CsPayout, type CsTransaction, payUrl } from "./cashera";
 import { Db, type Key, ORDER_TTL, type Order, isActive } from "./db";
 import { MAX_DEVICES, TARIFFS, TRIAL, normalize } from "./keys";
 import type { Telegram, TgCallback, TgMessage, TgPreCheckout, TgUpdate, TgUser } from "./telegram";
@@ -244,14 +244,14 @@ export class Bot {
 
   // ---------- оплата ----------
 
-  private cryptoPay(): CryptoPay {
-    return new CryptoPay(this.cfg.cpToken, CryptoPay.endpoint(this.cfg.cpTestnet, this.cfg.cpApi || undefined));
+  private cashera(): Cashera {
+    return new Cashera(this.cfg.csKey, this.cfg.csSecret, this.cfg.csApi);
   }
 
-  /** pay:<crypto|stars>:<срок>:<устройств>:<ключ для продления> — счёт в CryptoBot или в звёздах. */
+  /** pay:<card|stars>:<срок>:<устройств>:<ключ для продления> — ссылка Cashera или счёт в звёздах. */
   private async onPay(q: TgCallback, tgId: number, [method, p, d, key = ""]: string[]): Promise<void> {
     if (this.cfg.freeMode) return this.answer(q, "Сейчас ключи выдаются без оплаты", true);
-    if (!(p in TARIFFS) || (method !== "crypto" && method !== "stars")) return this.answer(q, "Устаревшая кнопка", true);
+    if (!(p in TARIFFS) || (method !== "card" && method !== "stars")) return this.answer(q, "Устаревшая кнопка", true);
     let devices = Math.max(1, Math.min(MAX_DEVICES, parseInt(d, 10) || 1));
     let k: Key | null = null;
     if (key) {
@@ -260,29 +260,21 @@ export class Bot {
       devices = k.devices_max; // продление — по числу устройств ключа
     }
     const { rub, stars } = views.amounts(this.cfg, p, devices);
-    const amount = method === "crypto" ? rub : stars;
-    if (amount <= 0 || (method === "crypto" && !this.cfg.cpToken)) return this.answer(q, "Этот способ оплаты сейчас выключен", true);
-    const o = await this.db.createOrder({ tg_id: tgId, kind: k ? "extend" : "new", period: p, devices, key: k?.key ?? null, method, amount });
-    const title = k ? `Продление ODA: ${TARIFFS[p].title}` : `Ключ ODA: ${TARIFFS[p].title}`;
-    const about = k ? `Ключ ${k.key}: +${TARIFFS[p].title}. Ключ останется тем же.` : `Устройств: ${devices}. Срок пойдёт с ввода ключа в приложении.`;
+    const amount = method === "card" ? rub : stars;
+    if (amount <= 0 || (method === "card" && !cardReady(this.cfg))) return this.answer(q, "Этот способ оплаты сейчас выключен", true);
 
-    if (method === "crypto") {
-      let inv: CpInvoice;
-      try {
-        inv = await this.cryptoPay().createInvoice(amount, `${title}. ${about} Заказ №${o.code}.`, `order:${o.id}`, `https://t.me/${this.cfg.botUsername}`);
-      } catch (e) {
-        console.error(`cryptopay createInvoice: ${e}`);
-        await this.db.moveOrder(o.id, ["new"], "cancelled");
-        return this.answer(q, "Не получилось выставить счёт. Попробуйте через минуту или оплатите звёздами", true);
-      }
-      await this.db.moveOrder(o.id, ["new"], "new", { charge_id: String(inv.invoice_id) });
-      return this.edit(q, views.cryptoOrder(o, inv.bot_invoice_url));
+    if (method === "card") {
+      // Не плодить платежи: та же ссылка, пока действует
+      const open = await this.db.openCardOrder(tgId, p, devices, k?.key ?? null);
+      if (open) return this.edit(q, views.cardOrder(open, now(), true));
+      return this.newCardOrder(q, tgId, p, devices, k);
     }
 
+    const o = await this.db.createOrder({ tg_id: tgId, kind: k ? "extend" : "new", period: p, devices, key: k?.key ?? null, method, amount });
     const r = await this.tg.call("sendInvoice", {
       chat_id: q.message?.chat.id ?? tgId,
-      title,
-      description: about,
+      title: k ? `Продление ODA: ${TARIFFS[p].title}` : `Ключ ODA: ${TARIFFS[p].title}`,
+      description: k ? `Ключ ${k.key}: +${TARIFFS[p].title}. Ключ останется тем же.` : `Устройств: ${devices}. Срок пойдёт с ввода ключа в приложении.`,
       payload: `order:${o.id}`,
       currency: "XTR",
       prices: [{ label: TARIFFS[p].title, amount }],
@@ -291,10 +283,29 @@ export class Bot {
       await this.db.moveOrder(o.id, ["new"], "cancelled");
       return this.answer(q, "Не получилось выставить счёт. Попробуйте ещё раз", true);
     }
-    await this.answer(q, "Счёт — ниже: «Заплатить»");
+    await this.edit(q, views.starsSent(o));
   }
 
-  /** Кнопки заказа: ord:check — спросить CryptoBot (если webhook не дошёл), ord:cancel. */
+  /** Новый платёж Cashera: заказ, ссылка на платёжную страницу (карта или СБП). */
+  private async newCardOrder(q: TgCallback, tgId: number, p: string, devices: number, k: Key | null): Promise<void> {
+    const { rub } = views.amounts(this.cfg, p, devices);
+    const o = await this.db.createOrder({ tg_id: tgId, kind: k ? "extend" : "new", period: p, devices, key: k?.key ?? null, method: "card", amount: rub });
+    const what = k ? `Продление ключа ODA на ${TARIFFS[p].title}` : `Ключ ODA на ${TARIFFS[p].title}, устройств: ${devices}`;
+    let tx: CsTransaction;
+    try {
+      tx = await this.cashera().createPayment(rub * 100, `oda-${o.id}`, `${what}. Заказ №${o.code}`, `${this.cfg.origin}/cashera`, `https://t.me/${this.cfg.botUsername}`);
+    } catch (e) {
+      console.error(`cashera createPayment: ${e instanceof CasheraError ? `${e.status} ${e.message}` : e}`);
+      await this.db.moveOrder(o.id, ["new"], "cancelled");
+      return this.answer(q, "Не получилось создать оплату. Попробуйте через минуту или оплатите звёздами", true);
+    }
+    const exp = tx.expires_at ? Math.floor(Date.parse(tx.expires_at) / 1000) : NaN;
+    const o2 = { ...o, charge_id: tx.uuid, pay_url: payUrl(tx.payment_url ?? ""), expires_at: Number.isFinite(exp) ? exp : now() + 600 };
+    await this.db.setPayment(o.id, o2.charge_id, o2.pay_url, o2.expires_at);
+    await this.edit(q, views.cardOrder(o2, now()));
+  }
+
+  /** Кнопки заказа: ord:check — спросить Cashera (если webhook не дошёл), ord:renew — новая ссылка, ord:cancel. */
   private async onOrder(q: TgCallback, tgId: number, action: string, id: number): Promise<void> {
     const o = id ? await this.db.getOrder(id) : null;
     if (!o || o.tg_id !== tgId) return this.answer(q, "Заказ не найден", true);
@@ -302,41 +313,60 @@ export class Bot {
       if (await this.db.moveOrder(o.id, ["new"], "cancelled")) return this.edit(q, views.orderCancelled());
       return this.answer(q, o.status === "paid" ? "Заказ уже оплачен — ключ в чате" : "Заказ уже закрыт", true);
     }
+    if (action === "renew") {
+      if (o.status === "paid") return this.answer(q, "Заказ уже оплачен — ключ в чате", true);
+      await this.db.moveOrder(o.id, ["new"], "cancelled");
+      const k = o.key ? await this.db.getKey(o.key) : null;
+      return this.newCardOrder(q, tgId, o.period, o.devices, k);
+    }
     if (action !== "check") return this.answer(q);
     if (o.status === "paid") return this.answer(q, "Оплачено — ключ уже в чате", true);
-    if (o.status !== "new" || o.method !== "crypto" || !o.charge_id) return this.answer(q, "Заказ закрыт — создайте новый", true);
-    let inv: CpInvoice | null = null;
+    if (o.status !== "new" || o.method !== "card" || !o.charge_id) return this.answer(q, "Заказ закрыт — создайте новый", true);
+    let tx: CsTransaction;
     try {
-      inv = await this.cryptoPay().getInvoice(Number(o.charge_id));
+      tx = await this.cashera().getPayment(o.charge_id);
     } catch (e) {
-      console.error(`cryptopay getInvoices: ${e}`);
-      return this.answer(q, "CryptoBot не отвечает — попробуйте через минуту", true);
+      console.error(`cashera getPayment: ${e}`);
+      return this.answer(q, "Платёжный сервис не отвечает — попробуйте через минуту", true);
     }
-    if (inv?.status === "paid") {
-      await this.cryptoPaid(inv);
+    if (tx.status === "paid") {
+      await this.cardPaid(tx);
       return this.answer(q, "Оплата найдена — ключ отправлен");
     }
-    if (inv?.status === "expired") {
+    if (tx.status !== "pending") {
       await this.db.moveOrder(o.id, ["new"], "cancelled");
-      return this.edit(q, views.orderCancelled(), "Счёт истёк — создайте новый", true);
+      return this.edit(q, views.orderCancelled(), "Оплата не прошла или ссылка истекла — создайте новую", true);
     }
-    await this.edit(q, views.orderNotPaid(o));
+    await this.edit(q, views.orderNotPaid(o, now()));
   }
 
-  /** Счёт CryptoBot оплачен (webhook invoice_paid или «Проверить оплату»): ключ сразу. */
-  async cryptoPaid(inv: CpInvoice): Promise<void> {
-    const id = Number((inv.payload ?? "").replace(/^order:/, ""));
+  /** Платёж Cashera оплачен (webhook или «Проверить оплату»): сверка суммы — и ключ сразу. */
+  async cardPaid(tx: CsTransaction): Promise<void> {
+    const id = Number(/^oda-(\d+)$/.exec(tx.external_id ?? "")?.[1]);
     const o = id ? await this.db.getOrder(id) : null;
-    if (!o || o.method !== "crypto" || o.charge_id !== String(inv.invoice_id)) {
-      console.error(`cryptopay: оплата без заказа ${inv.invoice_id} ${inv.payload}`);
+    if (!o || o.method !== "card" || tx.currency !== "RUB" || tx.amount !== o.amount * 100) {
+      console.warn(`cashera: оплата не сходится с заказом ${tx.uuid} ${tx.external_id} ${tx.amount} ${tx.currency}`);
       for (const a of this.cfg.adminIds) {
-        await this.sendTo(a, { text: `<b>Оплата CryptoBot без заказа</b>\n\nСчёт ${inv.invoice_id}, ${views.escapeHtml(inv.amount)} ${views.escapeHtml(inv.fiat ?? "")}, ${views.escapeHtml(inv.payload ?? "")}\nПроверьте и выдайте ключ вручную.`, markup: { inline_keyboard: [] } });
+        await this.sendTo(a, {
+          text: `<b>Оплата Cashera не сходится с заказом</b>\n\nПлатёж <code>${views.escapeHtml(tx.uuid)}</code>, ${views.escapeHtml(tx.external_id ?? "")}, ${tx.amount / 100} ${views.escapeHtml(tx.currency ?? "")}\nПроверьте в кабинете Cashera и выдайте ключ вручную.`,
+          markup: { inline_keyboard: [] },
+        });
       }
       return;
     }
-    // Оплатили после отмены — всё равно выдаём: деньги пришли
-    if (!(await this.db.moveOrder(o.id, ["new", "cancelled"], "paid"))) return; // повтор webhook
+    // Оплатили после отмены или истечения ссылки — всё равно выдаём: деньги пришли
+    if (!(await this.db.moveOrder(o.id, ["new", "cancelled"], "paid", { charge_id: tx.uuid }))) return; // повтор
     await this.fulfill(o);
+  }
+
+  /** Итог вывода на карту — администраторам. */
+  async payoutUpdated(p: CsPayout): Promise<void> {
+    if (p.status !== "completed" && p.status !== "failed") return;
+    const net = (p.card_payout?.net_card_rub_amount ?? p.net_amount ?? p.amount) / 100;
+    const text = p.status === "completed"
+      ? `<b>Вывод выполнен</b>\n\nНа карту: ${net.toLocaleString("ru-RU")} ₽ (заявка ${views.escapeHtml(p.external_id)}).`
+      : `<b>Вывод не выполнен</b>\n\n${views.escapeHtml(p.failure_reason ?? "причина не указана")}. Деньги вернулись на баланс Cashera.`;
+    for (const a of this.cfg.adminIds) await this.sendTo(a, { text, markup: { inline_keyboard: [[{ text: "Баланс и вывод", callback_data: "adm:bal" }]] } });
   }
 
   /** Перед оплатой звёздами Telegram спрашивает, действует ли заказ (ответ — за 10 с). */

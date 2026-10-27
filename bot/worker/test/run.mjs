@@ -25,40 +25,61 @@ const calls = [];
 const lastShown = new Map();
 let notModified = 0;
 let msgId = 100;
-// Поддельный Crypto Pay API (@CryptoBot): /cp/<метод>?параметры, токен — в заголовке
-const CP_TOKEN = "777:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
-const cp = { invoices: new Map(), balance: [{ currency_code: "USDT", available: "12.5", onhold: "0" }, { currency_code: "TON", available: "0", onhold: "0" }] };
-function cryptoPay(req, res) {
+// Поддельный Cashera API: /cs/api/v1/…, ключ — X-Api-Key; выплаты — проверка подписи HMAC-SHA256 секретом
+const CS_KEY = "pk_test_0123456789abcdef";
+const CS_SECRET = "sk_test_fedcba9876543210";
+const cs = { tx: new Map(), payouts: new Map(), balance: { currency: "RUB", available: 74700, pending: 0, frozen: 0, in_payout: 0 } };
+function cashera(req, res, body) {
   const u = new URL(req.url, "http://x");
-  const method = u.pathname.slice(4);
-  const params = Object.fromEntries(u.searchParams);
-  calls.push({ method: `cp:${method}`, params, token: req.headers["crypto-pay-api-token"] });
+  const path = u.pathname.replace(/^\/cs\/api\/v1/, "");
+  const params = body ? JSON.parse(body) : {};
+  calls.push({ method: `cs:${req.method} ${path}`, params, key: req.headers["x-api-key"] });
   res.setHeader("content-type", "application/json");
-  const ok = (result) => res.end(JSON.stringify({ ok: true, result }));
-  if (req.headers["crypto-pay-api-token"] !== CP_TOKEN) return res.end(JSON.stringify({ ok: false, error: { code: 401, name: "UNAUTHORIZED" } }));
-  if (method === "getMe") return ok({ app_id: 1, name: "ODA shop", payment_processing_bot_username: "CryptoBot" });
-  if (method === "createInvoice") {
-    const inv = { invoice_id: 500 + cp.invoices.size, hash: "IVx", currency_type: "fiat", fiat: params.fiat, amount: params.amount, status: "active",
-      payload: params.payload, bot_invoice_url: `https://t.me/CryptoBot?start=IV${500 + cp.invoices.size}` };
-    cp.invoices.set(inv.invoice_id, inv);
-    return ok(inv);
+  const send = (code, obj) => { res.statusCode = code; res.end(JSON.stringify(obj)); };
+  if (req.headers["x-api-key"] !== CS_KEY) return send(401, { message: "Unauthenticated." });
+  if (path.startsWith("/integration/payouts")) {
+    const line = [req.headers["x-timestamp"], req.method, u.pathname, createHash("sha256").update(body).digest("hex")].join("\n");
+    const sig = createHmac("sha256", CS_SECRET).update(line).digest("hex");
+    if (req.headers["x-signature"] !== sig || Math.abs(Date.now() / 1000 - Number(req.headers["x-timestamp"])) > 300) return send(401, { message: "Invalid signature." });
   }
-  if (method === "getInvoices") return ok({ items: params.invoice_ids.split(",").map((i) => cp.invoices.get(Number(i))).filter(Boolean) });
-  if (method === "getBalance") return ok(cp.balance);
-  if (method === "transfer") {
-    const b = cp.balance.find((x) => x.currency_code === params.asset);
-    if (!b || parseFloat(b.available) < parseFloat(params.amount)) return res.end(JSON.stringify({ ok: false, error: { code: 400, name: "INSUFFICIENT_FUNDS" } }));
-    b.available = "0";
-    return ok({ transfer_id: 1, user_id: Number(params.user_id), asset: params.asset, amount: params.amount, status: "completed" });
+  if (req.method === "POST" && path === "/integration/transactions") {
+    const old = [...cs.tx.values()].find((t) => t.external_id === params.external_id);
+    if (old) return send(201, old);
+    const uuid = `tx-${cs.tx.size + 1}`;
+    const t = { uuid, type: "deposit", amount: params.amount, currency: params.currency, external_id: params.external_id, status: "pending",
+      payment_url: `pay.cashera.cash/${uuid}`, expires_at: new Date(Date.now() + 600_000).toISOString(), callback_url: params.callback_url };
+    cs.tx.set(uuid, t);
+    return send(201, t);
   }
-  res.end(JSON.stringify({ ok: false, error: { code: 400, name: "METHOD_NOT_FOUND" } }));
+  if (req.method === "GET" && path.startsWith("/integration/transactions/")) {
+    const t = cs.tx.get(decodeURIComponent(path.split("/").pop()));
+    return t ? send(200, t) : send(404, { message: "Not found" });
+  }
+  if (path === "/integration/balances") return send(200, [{ uuid: "m1", name: "oda", title: "ODA", balances: [cs.balance] }]);
+  if (req.method === "POST" && path === "/integration/payouts/quote") {
+    const fee = 1500;
+    return send(200, { quote_type: "card", source_amount: params.amount, source_currency: "RUB", available_amount: cs.balance.available, fee_percent_bps: 200,
+      fee_amount: fee, net_card_rub_amount: Math.floor((params.amount - fee) / 100) * 100, card_payout_limits: { min_net_amount_minor: 10000 } });
+  }
+  if (req.method === "POST" && path === "/integration/payouts") {
+    if (cs.payouts.has(params.external_id)) return send(201, cs.payouts.get(params.external_id));
+    if (params.amount > cs.balance.available) return send(422, { message: "Недостаточно средств", errors: { amount: ["Недостаточно средств"] } });
+    cs.balance.available -= params.amount;
+    cs.balance.in_payout += params.amount;
+    const p = { uuid: `po-${cs.payouts.size + 1}`, external_id: params.external_id, status: "pending", amount: params.amount, currency: "RUB",
+      withdrawal_fee_amount: 1500, net_amount: params.amount - 1500, destination: params.destination,
+      card_payout: { net_card_rub_amount: Math.floor((params.amount - 1500) / 100) * 100 } };
+    cs.payouts.set(params.external_id, p);
+    return send(201, p);
+  }
+  send(404, { message: "Not found" });
 }
 
 const tgServer = createServer((req, res) => {
-  if (req.url.startsWith("/cp/")) return cryptoPay(req, res);
   let body = "";
   req.on("data", (c) => (body += c));
   req.on("end", () => {
+    if (req.url.startsWith("/cs/")) return cashera(req, res, body);
     const m = req.url.match(/^\/bot([^/]+)\/(\w+)$/);
     const params = body ? JSON.parse(body) : {};
     calls.push({ token: m?.[1], method: m?.[2], params });
@@ -102,7 +123,7 @@ writeFileSync(
     `TG_API=http://127.0.0.1:${TG_PORT}`,
     "SUPPORT=@oda_support_test",
     "ADMIN_IDS=1999",
-    `CRYPTO_PAY_API=http://127.0.0.1:${TG_PORT}/cp`,
+    `CASHERA_API=http://127.0.0.1:${TG_PORT}/cs/api/v1`,
     "",
   ].join("\n"),
 );
@@ -800,18 +821,18 @@ try {
     assert.ok(boss.button("Заблокировать"));
   });
 
-  await step("ссылки из приложения: поддержка, как купить (криптовалюта, Stars), продление, тарифы", async () => {
+  await step("ссылки из приложения: поддержка, как купить (карта / СБП, Stars), продление, тарифы", async () => {
     let s = await bob.say("/start support");
     assert.ok(s.text.startsWith("<b>Поддержка</b>"));
     assert.equal(bob.button("Написать в поддержку").callback_data, "sup:write");
     s = await bob.say("/start pay");
     assert.ok(s.text.startsWith("<b>Как купить</b>"));
-    assert.ok(s.text.includes("<b>Криптовалюта</b>") && s.text.includes("<b>Telegram Stars</b>") && s.text.includes("анонимная"));
+    assert.ok(s.text.includes("<b>Картой / СБП</b>") && s.text.includes("<b>Telegram Stars</b>"));
     s = await bob.say("/start renew");
     assert.ok(s.text.startsWith("<b>Продление</b>"));
     s = await bob.say("/start buy");
     assert.ok(s.text.startsWith("<b>Тариф</b>"));
-    assert.ok(s.text.includes("Оплата: <b>криптовалютой</b> (@CryptoBot) или <b>Telegram Stars</b> — анонимно, ключ сразу."));
+    assert.ok(s.text.includes("Оплата: <b>картой / СБП</b> или <b>Telegram Stars</b> — ключ сразу после оплаты."));
     s = await bob.say("/start whatever");
     assert.ok(s.text.startsWith("<b>ODA</b>"));
   });
@@ -834,21 +855,25 @@ try {
     return s;
   };
 
-  await step("администратор: токен CryptoBot (сообщение удаляется, неверный — отказ), цены, включение оплаты", async () => {
+  await step("администратор: ключ и секрет Cashera (сообщения удаляются, неверный — отказ), цены, включение оплаты", async () => {
     let s = await boss.say("/admin");
     s = await boss.tap("Цены и оплата");
     assert.ok(s.text.includes("<b>выдаются бесплатно</b>"));
-    assert.ok(s.text.includes(`${BASE}/cryptopay`), "подсказка: адрес webhook для CryptoBot");
-    await boss.tap("Токен CryptoBot");
+    assert.ok(s.text.includes(`${BASE}/cashera`), "подсказка: адрес уведомлений для Cashera");
+    await boss.tap("Cashera: ключ pk_");
     let n = calls.length;
-    s = await boss.say("777:WRONGWRONGWRONGWRONGWRONGWRONGWRONG");
-    assert.ok(s.text.includes("CryptoBot не принял токен (UNAUTHORIZED)"), s.text);
-    assert.ok(calls.slice(n).some((c) => c.method === "deleteMessage"), "сообщение с токеном удалено");
+    s = await boss.say("pk_wrong");
+    assert.ok(calls.slice(n).some((c) => c.method === "deleteMessage"), "сообщение с ключом удалено");
+    assert.ok(s.text.includes("Cashera: ключ pk_: <b>задан</b>") && !s.text.includes("pk_wrong"), "ключ не показывается");
+    await boss.tap("Cashera: секрет sk_");
+    s = await boss.say(CS_SECRET);
+    assert.ok(s.text.startsWith("<b>Cashera не приняла ключ</b> (Unauthenticated.)"), s.text);
+    await boss.tap("Cashera: ключ pk_");
     n = calls.length;
-    s = await boss.say(CP_TOKEN);
-    assert.ok(s.text.startsWith("<b>CryptoBot подключён</b>: приложение «ODA shop»"), s.text);
+    s = await boss.say(CS_KEY);
     assert.ok(calls.slice(n).some((c) => c.method === "deleteMessage"));
-    assert.ok(s.text.includes("Токен CryptoBot: <b>задан</b>") && !s.text.includes(CP_TOKEN), "токен не показывается");
+    assert.ok(s.text.startsWith("<b>Cashera подключена</b>: доступно 747 ₽"), s.text);
+    assert.ok(!s.text.includes(CS_KEY) && !s.text.includes(CS_SECRET));
     await setValue("«1 месяц», ₽", "199");
     s = await boss.say("/admin");
     await boss.tap("Цены и оплата");
@@ -861,98 +886,133 @@ try {
     await setValue("«1 неделя», звёзды", "50");
     s = await boss.tap("Включить оплату");
     assert.equal(s.toast, "Оплата включена");
-    assert.ok(s.text.includes("Оплата включена: криптовалюта — да, звёзды — да"), s.text);
+    assert.ok(s.text.includes("Оплата включена: картой / СБП — да, звёзды — да"), s.text);
   });
 
-  const cpHook = (body, token = CP_TOKEN) => {
-    const raw = JSON.stringify(body);
-    const sig = createHmac("sha256", createHash("sha256").update(token).digest()).update(raw).digest("hex");
-    return fetch(`${BASE}/cryptopay`, { method: "POST", headers: { "content-type": "application/json", "crypto-pay-api-signature": sig }, body: raw });
-  };
-  let inv;
-  await step("криптовалюта: «Оплатить» → счёт в рублях в CryptoBot, без номера владельца", async () => {
+  const csHook = (body, key = CS_KEY, secret = CS_SECRET) =>
+    fetch(`${BASE}/cashera`, { method: "POST", headers: { "content-type": "application/json", "x-api-key": key, "x-secret": secret }, body: JSON.stringify(body) });
+  const lastTx = () => [...cs.tx.values()].pop();
+  let tx;
+  await step("картой / СБП: «Оплатить» → ссылка на платёжную страницу на 10 минут, номера владельца нет", async () => {
     let s = await carol.say("/buy");
     assert.ok(s.text.includes("Итого: <b>249 ₽ или 150 ⭐</b>"), s.text);
     s = await carol.tap("Оплатить");
-    assert.ok(s.text.startsWith("<b>Оплата</b>"));
-    assert.ok(s.text.includes("<b>Криптовалюта</b> — 249 ₽") && s.text.includes("<b>Telegram Stars</b> — 150 ⭐"));
-    assert.ok(s.text.includes("ключ приходит сразу после оплаты"));
+    assert.ok(s.text.startsWith("<b>Оплата</b>") && s.text.includes("Выберите способ оплаты:"));
+    assert.ok(s.text.includes("<b>Картой / СБП</b> — 249 ₽") && s.text.includes("<b>Telegram Stars</b> — 150 ⭐"));
+    assert.deepEqual(s.markup.inline_keyboard.map((r) => r.map((x) => x.text)), [["Картой / СБП"], ["Telegram Stars"], ["‹ Назад"]]);
     const n = calls.length;
-    s = await carol.tap("Криптовалюта — 249 ₽");
-    const c = calls.slice(n).find((x) => x.method === "cp:createInvoice");
-    assert.equal(c.token, CP_TOKEN);
-    assert.equal(c.params.currency_type, "fiat");
-    assert.equal(c.params.fiat, "RUB");
-    assert.equal(c.params.amount, "249");
-    assert.ok(/^order:\d+$/.test(c.params.payload));
-    inv = cp.invoices.get(Math.max(...cp.invoices.keys()));
-    assert.ok(s.text.startsWith("<b>Счёт готов</b>") && s.text.includes("Сумма: <b>249 ₽</b>"));
+    s = await carol.tap("Картой / СБП");
+    const c = calls.slice(n).find((x) => x.method === "cs:POST /integration/transactions");
+    assert.equal(c.key, CS_KEY);
+    assert.equal(c.params.amount, 24900, "сумма в копейках");
+    assert.equal(c.params.currency, "RUB");
+    assert.ok(!("payment_method" in c.params), "общая форма: карта или СБП на выбор покупателя");
+    assert.ok(/^oda-\d+$/.test(c.params.external_id));
+    assert.equal(c.params.callback_url, `${BASE}/cashera`);
+    tx = lastTx();
+    assert.ok(s.text.startsWith("<b>Оплата картой / СБП</b>") && s.text.includes("Статус: <b>не оплачено</b>") && s.text.includes("Сумма: <b>249 ₽</b>"));
+    assert.ok(s.text.includes("Ссылка действует 10 минут"), s.text);
     assert.ok(!/\+7|телефон/.test(s.text), "никаких номеров");
-    assert.equal(carol.button("Оплатить в CryptoBot").url, inv.bot_invoice_url);
+    assert.equal(carol.button("Оплатить").url, `https://${tx.payment_url}`, "ссылка со схемой https://");
   });
 
-  await step("webhook CryptoBot: чужая подпись — 401; оплата — ключ сразу; повтор — без второго ключа", async () => {
+  await step("повторно тот же тариф — «Платёж уже сформирован»; «Отменить и создать новый» — новая ссылка", async () => {
+    await carol.say("/buy");
+    await carol.tap("Оплатить");
+    const n = calls.length;
+    let s = await carol.tap("Картой / СБП");
+    assert.ok(s.text.startsWith("<b>Платёж уже сформирован</b>") && s.text.includes("Ссылка действует ещё <b>10 минут</b>"), s.text);
+    assert.ok(!calls.slice(n).some((x) => x.method === "cs:POST /integration/transactions"), "второй платёж не создан");
+    assert.equal(carol.button("Оплатить").url, `https://${tx.payment_url}`);
+    s = await carol.tap("Отменить и создать новый");
+    const tx2 = lastTx();
+    assert.notEqual(tx2.uuid, tx.uuid);
+    assert.ok(s.text.startsWith("<b>Оплата картой / СБП</b>"));
+    assert.equal(carol.button("Оплатить").url, `https://${tx2.payment_url}`);
+    tx = tx2;
+  });
+
+  await step("уведомление Cashera: чужой секрет — 401; сумма не та — администратору; оплата — ключ сразу; повтор — без второго", async () => {
     let n = calls.length;
-    assert.equal((await cpHook({ update_type: "invoice_paid", payload: { ...inv, status: "paid" } }, "1:FAKE")).status, 401);
-    assert.equal((await fetch(`${BASE}/cryptopay`, { method: "POST", body: "{}" })).status, 401);
+    assert.equal((await csHook({ event: "transaction.status_updated", transaction: { ...tx, status: "paid" } }, CS_KEY, "sk_fake_fake_fake_fake")).status, 401);
+    assert.equal((await fetch(`${BASE}/cashera`, { method: "POST", body: "{}" })).status, 401);
+    assert.equal((await csHook({ event: "webhook.test", test: { sent_at: "x" } })).status, 200);
     assert.equal(sentTo(n, 1004).length, 0);
     await carol.tap("Проверить оплату");
     assert.ok(carol.screen.text.startsWith("<b>Оплата ещё не пришла</b>"));
-    inv.status = "paid";
     n = calls.length;
-    const r = await cpHook({ update_id: 1, update_type: "invoice_paid", request_date: new Date().toISOString(), payload: inv });
+    await csHook({ event: "transaction.status_updated", transaction: { ...tx, status: "paid", amount: 100 } });
+    assert.equal(sentTo(n, 1004).length, 0, "1 ₽ вместо 249 ₽ — ключа нет");
+    assert.ok(sentTo(n, 1999)[0].params.text.startsWith("<b>Оплата Cashera не сходится с заказом</b>"));
+    tx.status = "paid";
+    n = calls.length;
+    const r = await csHook({ event: "transaction.status_updated", transaction: { uuid: tx.uuid, external_id: tx.external_id, status: "paid", type: "deposit",
+      amount: 24900, gross_amount: 24900, net_amount: 24153, currency: "RUB", payment_method: "sbp", paid_at: new Date().toISOString() } });
     assert.equal(r.status, 200);
     const got = sentTo(n, 1004);
     assert.equal(got.length, 1);
     assert.ok(got[0].params.text.startsWith("<b>Ключ готов</b>"));
     assert.ok(KEY_RE.test(got[0].params.text.match(/<code>(ODA-[^<]+)<\/code>/)[1]));
     n = calls.length;
-    assert.equal((await cpHook({ update_id: 2, update_type: "invoice_paid", payload: inv })).status, 200);
-    assert.equal(sentTo(n, 1004).length, 0, "повтор webhook — второго ключа нет");
-    const t = await carol.press(carol.button("Проверить ещё раз").callback_data, { expectEdit: false });
+    assert.equal((await csHook({ event: "transaction.status_updated", transaction: { ...tx, status: "paid" } })).status, 200);
+    assert.equal(sentTo(n, 1004).length, 0, "повтор уведомления — второго ключа нет");
+    const t = await carol.press(carol.button("Проверить оплату").callback_data, { expectEdit: false });
     assert.equal(t.toast, "Оплачено — ключ уже в чате");
   });
 
-  await step("webhook не дошёл: «Проверить оплату» спрашивает CryptoBot и выдаёт ключ; «Отменить»", async () => {
+  await step("уведомление не дошло: «Проверить оплату» спрашивает Cashera и выдаёт ключ; «Отмена»", async () => {
     await carol.say("/buy");
     await carol.tap("Оплатить");
-    await carol.tap("Криптовалюта");
-    const i2 = cp.invoices.get(Math.max(...cp.invoices.keys()));
-    i2.status = "paid";
+    await carol.tap("Картой / СБП");
+    lastTx().status = "paid";
     const n = calls.length;
     const t = await carol.press(carol.button("Проверить оплату").callback_data, { expectEdit: false });
     assert.equal(t.toast, "Оплата найдена — ключ отправлен");
     assert.ok(sentTo(n, 1004)[0].params.text.startsWith("<b>Ключ готов</b>"));
     await carol.say("/buy");
     await carol.tap("Оплатить");
-    await carol.tap("Криптовалюта");
+    await carol.tap("Картой / СБП");
     const checkCb = carol.button("Проверить оплату").callback_data;
-    const c = await carol.tap("Отменить");
-    assert.ok(c.text.startsWith("<b>Заказ отменён</b>"));
+    const c = await carol.tap("Отмена");
+    assert.ok(c.text.startsWith("<b>Оплата отменена</b>"));
     assert.equal((await carol.press(checkCb, { expectEdit: false })).toast, "Заказ закрыт — создайте новый");
     assert.equal((await mallory.press(checkCb, { expectEdit: false })).toast, "Заказ не найден", "чужой заказ не виден");
   });
 
-  await step("администратор: баланс CryptoBot и вывод себе в @CryptoBot", async () => {
+  await step("администратор: баланс Cashera и вывод на карту МИР (расчёт → подтверждение, подпись), итог — сообщением", async () => {
     await boss.say("/admin");
     let s = await boss.tap("Баланс и вывод");
-    assert.ok(s.text.includes("<b>12.5 USDT</b>") && !s.text.includes("TON"), s.text);
-    const n = calls.length;
-    s = await boss.tap("Вывести 12.5 USDT");
-    assert.equal(s.toast, "Выведено 12.5 USDT в @CryptoBot");
-    const tr = calls.slice(n).find((c) => c.method === "cp:transfer").params;
-    assert.equal(tr.user_id, "1999", "вывод — тому администратору, кто нажал");
-    assert.equal(tr.asset, "USDT");
-    assert.ok(tr.spend_id);
-    assert.ok(s.text.includes("Пока пусто"));
+    assert.ok(s.text.includes("Доступно к выводу: <b>747 ₽</b>"), s.text);
+    s = await boss.tap("Указать карту МИР для вывода");
+    let n = calls.length;
+    s = await boss.say("1234");
+    assert.ok(s.text.includes("Нужно 16 цифр"));
+    s = await boss.say("2200 1234 5678 9012");
+    assert.ok(calls.slice(n).filter((c) => c.method === "deleteMessage").length >= 2, "сообщения с номером карты удалены");
+    assert.ok(s.text.includes("Карта МИР для вывода: <b>•• 9012</b>") && !s.text.includes("2200 1234"), s.text);
+    await boss.say("/admin");
+    await boss.tap("Баланс и вывод");
+    s = await boss.tap("Вывести 747 ₽ на карту •• 9012");
+    assert.ok(s.text.includes("Комиссия: 15 ₽") && s.text.includes("Придёт на карту: <b>732 ₽</b>"), s.text);
+    n = calls.length;
+    s = await boss.tap("Вывести 747 ₽");
+    const po = calls.slice(n).find((c) => c.method === "cs:POST /integration/payouts").params;
+    assert.deepEqual(po.destination, { type: "card", address: "2200123456789012" });
+    assert.equal(po.amount, 74700);
+    assert.equal(s.toast, "Заявка на вывод создана: придёт 732 ₽. Итог — сообщением");
+    assert.ok(s.text.includes("Выводится сейчас: 747 ₽"));
+    n = calls.length;
+    await csHook({ event: "payout.status_updated", payout: { ...cs.payouts.get(po.external_id), status: "completed" } });
+    assert.ok(sentTo(n, 1999)[0].params.text.startsWith("<b>Вывод выполнен</b>\n\nНа карту: 732 ₽"));
   });
 
   await step("Telegram Stars: счёт XTR → pre_checkout → оплата → ключ; повтор не выдаёт второй", async () => {
     await carol.say("/buy");
     await carol.tap("Оплатить");
     const n = calls.length;
-    const s = await carol.press(carol.button("Telegram Stars").callback_data, { expectEdit: false });
-    assert.ok(s.toast.includes("Счёт"));
+    const s = await carol.tap("Telegram Stars");
+    assert.ok(s.text.startsWith("<b>Счёт на оплату отправлен</b>") && s.text.includes("Сумма: <b>150 ⭐</b>"), s.text);
+    assert.ok(carol.button("Отменить"));
     const inv = calls.slice(n).find((c) => c.method === "sendInvoice").params;
     assert.equal(inv.currency, "XTR");
     assert.deepEqual(inv.prices, [{ label: "1 месяц", amount: 150 }]);
@@ -984,9 +1044,9 @@ try {
     assert.ok(carol.button("1 месяц · 249 ₽"));
     s = await carol.tap("1 неделя");
     assert.ok(s.text.includes(`Продление ключа <code>${key}</code>`));
-    assert.ok(!s.text.includes("<b>Криптовалюта</b>"), "неделя без цены в ₽ — только звёзды");
+    assert.ok(!s.text.includes("<b>Картой / СБП</b>"), "неделя без цены в ₽ — только звёзды");
     const n = calls.length;
-    await carol.press(carol.button("Telegram Stars — 50 ⭐").callback_data, { expectEdit: false });
+    await carol.tap("Telegram Stars");
     const inv = calls.slice(n).find((c) => c.method === "sendInvoice").params;
     const m = calls.length;
     await update({ message: { message_id: 8, date: 0, chat: { id: 1004, type: "private" }, from: carol.from(),
@@ -1010,7 +1070,7 @@ try {
     assert.deepEqual([g.user_id, g.month_count, g.star_count], [1999, 3, 1000]);
     assert.equal(s.toast, "Premium на 3 мес — на вашем аккаунте");
     s = await boss.tap("Вывод на Т-Банк");
-    assert.ok(s.text.startsWith("<b>Вывод на Т-Банк</b>") && s.text.includes("P2P") && s.text.includes("115-ФЗ"));
+    assert.ok(s.text.startsWith("<b>Вывод на Т-Банк</b>") && s.text.includes("Карта МИР для вывода") && !/P2P|USDT|крипт/i.test(s.text.replace("Без криптовалюты", "")));
   });
 
   await step("администратор возвращает бесплатный режим", async () => {

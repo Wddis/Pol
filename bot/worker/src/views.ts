@@ -1,6 +1,6 @@
 // Экраны бота — как bot/oda_bot/views.py (макет «ODA VPN — бот и ключ»): текст (HTML) + кнопки.
 // Без сети: проверяются тестом. Данные кнопок — в том же виде, что у aiogram (nav:main, buy:month:1:0, key:show:ODA-…:).
-import { type Settings, basePrice } from "./config";
+import { type Settings, basePrice, cardReady } from "./config";
 import { type Ban, type Device, type Key, type Order, isActive, secondsLeft, tariffTitle } from "./db";
 import { FOREVER, MAX_DEVICES, MIN_DEVICES, TARIFFS, durationText, leftText, plural, price } from "./keys";
 
@@ -100,7 +100,7 @@ export function tariffs(cfg: Settings, period: string, devices: number): Screen 
     "Срок начнётся, когда вы введёте ключ в приложении. " +
       `Каждое устройство сверх первого — +${cfg.extraDevicePct}% к цене.`,
   ];
-  lines.push("\nОплата: <b>криптовалютой</b> (@CryptoBot) или <b>Telegram Stars</b> — анонимно, ключ сразу.");
+  lines.push("\nОплата: <b>картой / СБП</b> или <b>Telegram Stars</b> — ключ сразу после оплаты.");
   if (cfg.freeMode) lines.push("<i>Сейчас ключ выдаётся без оплаты.</i>");
   const periods = Object.keys(TARIFFS).map((p) =>
     btn((p === period ? "● " : "") + TARIFFS[p].title, { cb: buy(p, devices) }),
@@ -133,62 +133,78 @@ export const payCb = (method: string, period: string, devices: number, key = "")
 
 export function payChoose(cfg: Settings, period: string, devices: number, key?: string): Screen {
   const { rub, stars } = amounts(cfg, period, devices);
-  const crypto = rub > 0 && cfg.cpToken !== "";
+  const card = rub > 0 && cardReady(cfg);
   const lines = [
     "<b>Оплата</b>\n",
     key ? `Продление ключа <code>${key}</code>: <b>+${TARIFFS[period].title}</b>` : `Ключ: <b>${TARIFFS[period].title}</b>, устройств: ${devices}`,
   ];
-  if (crypto) {
-    lines.push(
-      `\n<b>Криптовалюта</b> — ${rub} ₽: счёт в @CryptoBot, оплата USDT, TON, BTC и др. по курсу. ` +
-        "Нет криптовалюты — её можно купить там же за рубли (P2P, в том числе по СБП).",
-    );
-  }
+  if (card) lines.push(`\n<b>Картой / СБП</b> — ${rub} ₽: платёжная страница, карта любого банка или СБП из приложения банка.`);
   if (stars > 0) lines.push(`\n<b>Telegram Stars</b> — ${stars} ⭐: оплата прямо в Telegram.`);
-  if (crypto || stars > 0) lines.push("\nОплата анонимная, ключ приходит сразу после оплаты — ждать проверки не нужно.");
+  if (card || stars > 0) lines.push("\nПосле оплаты бот <b>сам</b> пришлёт ключ (или продлит) — ждать проверки не нужно.");
   else lines.push("\nОплата пока не настроена — напишите в поддержку.");
+  lines.push("\nВыберите способ оплаты:");
   return {
     text: lines.join("\n"),
     markup: kb(
-      crypto ? [btn(`Криптовалюта — ${rub} ₽`, { cb: payCb("crypto", period, devices, key), style: "primary" })] : [],
-      stars > 0 ? [btn(`Telegram Stars — ${stars} ⭐`, { cb: payCb("stars", period, devices, key), style: "primary" })] : [],
-      [btn("Поддержка", { cb: nav("support") })],
-      [key ? btn("Профиль", { cb: keyAct("show", key), back: true }) : btn("Тарифы", { cb: buy(period, devices), back: true })],
+      card ? [btn("Картой / СБП", { cb: payCb("card", period, devices, key), style: "primary" })] : [],
+      stars > 0 ? [btn("Telegram Stars", { cb: payCb("stars", period, devices, key), style: "primary" })] : [],
+      [key ? btn("Назад", { cb: keyAct("show", key), back: true, style: "danger" }) : btn("Назад", { cb: buy(period, devices), back: true, style: "danger" })],
     ),
   };
 }
 
 const orderWhat = (o: Order) =>
-  o.kind === "extend" && o.key ? `продление <code>${o.key}</code> на ${TARIFFS[o.period]?.title ?? o.period}`
-    : `ключ на ${TARIFFS[o.period]?.title ?? o.period}, устройств: ${o.devices}`;
+  o.kind === "extend" && o.key ? `Продление <code>${o.key}</code> на ${TARIFFS[o.period]?.title ?? o.period}`
+    : `Ключ на ${TARIFFS[o.period]?.title ?? o.period}, устройств: ${o.devices}`;
 
-/** Счёт CryptoBot выставлен: кнопка на оплату, ключ придёт сам. */
-export function cryptoOrder(o: Order, payUrl: string): Screen {
+const minutesLeft = (o: Order, now: number) => Math.max(1, Math.ceil(((o.expires_at ?? now + 600) - now) / 60));
+
+/** Ссылка на оплату картой / СБП; again — у покупателя уже есть действующая ссылка на этот тариф. */
+export function cardOrder(o: Order, now: number, again = false): Screen {
+  const m = minutesLeft(o, now);
+  const left = `${m} ${plural(m, "минуту", "минуты", "минут")}`;
+  const head = again
+    ? `<b>Платёж уже сформирован</b>\n\nУ вас уже есть активная ссылка на оплату.\nСсылка действует ещё <b>${left}</b>.`
+    : "<b>Оплата картой / СБП</b>";
   return {
     text:
-      "<b>Счёт готов</b>\n\n" +
-      `Заказ №${o.code}: ${orderWhat(o)}\n` +
-      `Сумма: <b>${o.amount} ₽</b> (в криптовалюте по курсу)\n\n` +
-      "1. «Оплатить в CryptoBot» → выберите валюту → «Оплатить».\n" +
-      "2. Ключ придёт в этот чат <b>сразу после оплаты</b>.\n\n" +
-      "<i>Счёт действует 1 час. Не пришёл ключ за минуту — «Проверить оплату».</i>",
+      `${head}\n\n` +
+      `Заказ №: <code>${o.code}</code>\n` +
+      "Статус: <b>не оплачено</b>\n" +
+      `${orderWhat(o)}\n` +
+      `Сумма: <b>${o.amount} ₽</b>\n\n` +
+      "После оплаты бот автоматически пришлёт ключ (или продлит).\n\n" +
+      `<i>Нажмите «Оплатить».${again ? "" : ` Ссылка действует ${left}.`}</i>`,
     markup: kb(
-      [btn("Оплатить в CryptoBot", { url: payUrl, style: "primary" })],
+      [btn("Оплатить", { url: o.pay_url!, style: "success" })],
       [btn("Проверить оплату", { cb: `ord:check:${o.id}` })],
-      [btn("Отменить", { cb: `ord:cancel:${o.id}`, back: true })],
+      again ? [btn("Отменить и создать новый", { cb: `ord:renew:${o.id}` })] : [],
+      [btn(again ? "Назад" : "Отмена", { cb: `ord:cancel:${o.id}`, back: true, style: "danger" })],
     ),
   };
 }
 
-export function orderNotPaid(o: Order): Screen {
+/** Счёт в звёздах отправлен отдельным сообщением ниже. */
+export function starsSent(o: Order): Screen {
   return {
-    text: `<b>Оплата ещё не пришла</b>\n\nЗаказ №${o.code}. Оплатите счёт в CryptoBot — ключ придёт сюда сам. Оплатили, а ключа нет — напишите в поддержку, укажите номер заказа.`,
-    markup: kb([btn("Проверить ещё раз", { cb: `ord:check:${o.id}` })], [btn("Поддержка", { cb: nav("support") })], menuRow()),
+    text:
+      "<b>Счёт на оплату отправлен</b>\n\n" +
+      `${orderWhat(o)}\n` +
+      `Сумма: <b>${o.amount} ⭐</b>\n\n` +
+      "Счёт — отдельным сообщением ниже: «Заплатить». Ключ придёт сразу после оплаты.\n" +
+      "Передумали — отмените оплату и вернитесь в меню.",
+    markup: kb([btn("Отменить", { cb: `ord:cancel:${o.id}`, back: true, style: "danger" })]),
   };
 }
 
+export function orderNotPaid(o: Order, now: number): Screen {
+  const s = cardOrder(o, now);
+  s.text = s.text.replace("<b>Оплата картой / СБП</b>", "<b>Оплата ещё не пришла</b>\n\nОплатите по ссылке — ключ придёт сюда сам. Оплатили, а ключа нет — «Поддержка», укажите номер заказа.");
+  return s;
+}
+
 export function orderCancelled(): Screen {
-  return { text: "<b>Заказ отменён</b>\n\nМожно выбрать тариф заново.", markup: kb([btn("Тарифы", { cb: buy("month", 1), style: "primary" })], menuRow()) };
+  return { text: "<b>Оплата отменена</b>\n\nМожно выбрать тариф заново.", markup: kb([btn("Тарифы", { cb: buy("month", 1), style: "primary" })], menuRow()) };
 }
 
 // ---------- ключ выдан ----------
@@ -448,10 +464,8 @@ export function payInfo(cfg: Settings): Screen {
     "<b>Как купить</b>\n\n" +
     "1. «Купить ключ» → выберите срок (1 неделя, 1 месяц, 3 месяца) и число устройств.\n" +
     "2. «Оплатить» → удобный способ:\n" +
-    "• <b>Криптовалюта</b> — счёт в @CryptoBot в рублях, оплата USDT, TON, BTC и др. Нет криптовалюты — купите её " +
-    "там же за рубли (P2P, в том числе по СБП)\n" +
-    "• <b>Telegram Stars</b> — прямо в Telegram\n" +
-    "Оплата анонимная: ни вы, ни мы не видим данных друг друга.\n" +    "3. Ключ придёт в этот чат сразу после оплаты — нажмите на него, чтобы скопировать.\n" +
+    "• <b>Картой / СБП</b> — платёжная страница: карта любого банка или СБП из приложения банка\n" +
+    "• <b>Telegram Stars</b> — прямо в Telegram\n" +    "3. Ключ придёт в этот чат сразу после оплаты — нажмите на него, чтобы скопировать.\n" +
     "4. Откройте ODA и введите ключ. Срок пойдёт с этой минуты.\n\n" +
     "Продлить — «Профиль» → «Продлить»: ключ останется тем же, вводить заново не нужно.\n" +
     "Не уверены — начните с пробного дня.";

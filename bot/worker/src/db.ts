@@ -52,16 +52,19 @@ export interface Order {
   period: string;
   devices: number;
   key: string | null;
-  method: "crypto" | "stars";
+  method: "card" | "stars";
   amount: number;
   status: "new" | "paid" | "cancelled";
-  /** Счёт: invoice_id Crypto Pay (с создания) или telegram_payment_charge_id (Stars, после оплаты). */
+  /** Платёж: uuid Cashera (с создания) или telegram_payment_charge_id (Stars, после оплаты). */
   charge_id: string | null;
+  /** Ссылка на платёжную страницу Cashera и до какого времени она действует. */
+  pay_url: string | null;
+  expires_at: number | null;
   created_at: number;
   updated_at: number;
 }
 
-/** Неоплаченный заказ живёт сутки (счёт CryptoBot — час). */
+/** Неоплаченный заказ живёт сутки (ссылка Cashera — сколько скажет Cashera, обычно минуты). */
 export const ORDER_TTL = 86400;
 
 export interface Ban {
@@ -511,6 +514,23 @@ export class Db {
       return (await this.getOrder(Number(r.meta.last_row_id)))!;
     }
     throw new Error("нет свободного кода заказа");
+  }
+
+  /** Ссылка на оплату того же тарифа, ещё действующая (не плодить платежи: «Платёж уже сформирован»). */
+  async openCardOrder(tgId: number, period: string, devices: number, key: string | null, t = now()): Promise<Order | null> {
+    return (
+      (await this.d1
+        .prepare(
+          "SELECT * FROM orders WHERE tg_id=? AND method='card' AND status='new' AND period=? AND devices=? AND COALESCE(key,'')=? " +
+            "AND pay_url IS NOT NULL AND expires_at > ? ORDER BY id DESC LIMIT 1",
+        )
+        .bind(tgId, period, devices, key ?? "", t + 30)
+        .first<Order>()) ?? null
+    );
+  }
+
+  async setPayment(id: number, uuid: string, url: string, expiresAt: number): Promise<void> {
+    await this.d1.prepare("UPDATE orders SET charge_id=?, pay_url=?, expires_at=? WHERE id=?").bind(uuid, url, expiresAt, id).run();
   }
 
   async getOrder(id: number): Promise<Order | null> {
