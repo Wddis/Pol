@@ -366,7 +366,12 @@ def main():
         cards_ok("подключено через Psiphon" if psi else "подключение через Psiphon")
         ok(not overlaps(), "Psiphon: тексты не налезают друг на друга")
         tap(rid="speedLink")
-        time.sleep(15)
+        # Через Psiphon замер дольше: ждать, пока «Измеряю…» сменится результатом (до 60 с)
+        end = time.time() + 60
+        time.sleep(5)
+        while time.time() < end and find(text="Измеряю…") is not None:
+            time.sleep(3)
+        ok(find(text="Измеряю…") is None, "тест скорости через Psiphon закончился за минуту")
         shot("psiphon-тест-скорости")
         cards_ok("тест скорости через Psiphon")
     c = crashed()
