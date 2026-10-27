@@ -18,8 +18,8 @@ ClientHello, перестановки (disorder), TTL, флаг URG (OOB), от�
   ip_block   — сети, где режутся все пакеты с данными (TCP соединяется, данные не доходят; и UDP);
   freeze     — {имя: байт}: после стольких байт от сервера соединение «замерзает»;
   dns_block  — адреса DNS-серверов, к которым не проходит UDP-DNS (порт 53).
-Расстояния: DPI видит пакет, если он дошёл до оператора; до сервера ещё SERVER_HOPS — пакет
-с меньшим TTL (фейк с малым TTL) до сервера не доходит, а больший доходит и портит ClientHello.
+Расстояния: до сервера от оператора ещё SERVER_HOPS — пакет с меньшим TTL (фейк с малым TTL) до сервера не
+доходит и DPI его не учитывает; фейк с большим TTL доходит и портит ClientHello.
 
 Запуск (root, в netns isp): tspu.py <профиль> [журнал решений]
 """
@@ -295,6 +295,11 @@ def main():
         f.seen = now
         if f.state == "block":
             continue
+        if to_srv and payload and ttl <= SERVER_HOPS:
+            # Фейк с малым TTL до сервера не дойдёт, и ТСПУ его не учитывает: иначе исход зависел бы от гонки
+            # отправки фейка и настоящих данных в ByeDPI (CI то проходил, то нет); на телефоне (0.8.6–0.8.8)
+            # стратегии с fake ни разу не открыли заблокированное
+            continue
         if to_srv:
             if payload and f.state == "open":
                 urg_pos = seq + urgp - 1 if flags & 0x20 and urgp else None
@@ -309,8 +314,6 @@ def main():
                         continue
                     f.state = "pass"
                     log(f"пропуск {dst}:{dport} {host or '-'}")
-            if payload and ttl <= SERVER_HOPS:
-                continue  # до сервера не дойдёт (фейк с малым TTL), но DPI его уже увидел
         elif payload and f.host and f.host in prof["freeze"]:
             f.srv_bytes += len(payload)
             if f.srv_bytes > prof["freeze"][f.host]:
