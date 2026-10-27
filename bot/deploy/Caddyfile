@@ -1,0 +1,5 @@
+# Сервер ключей ODA по HTTPS: https://{$ODA_DOMAIN}/v1/activate → бот:8080
+{$ODA_DOMAIN} {
+	encode gzip
+	reverse_proxy bot:8080
+}

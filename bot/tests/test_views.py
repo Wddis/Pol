@@ -43,6 +43,9 @@ def test_all_screens_render():
     check(views.about(cfg))
     check(views.support(cfg))
     check(views.trial_used())
+    for screen in (views.howto(cfg), views.trouble(cfg), views.privacy(cfg), views.rules(cfg)):
+        check(screen)
+        assert len(screen.text) < 4096  # предел сообщения Telegram
 
 
 def test_price_placeholder_and_value():
@@ -59,12 +62,12 @@ def test_icons_and_styles(tmp_path):
         s = views.main(Settings())
         buy = buttons(s)[0]
         assert buy.style == "primary" and buy.icon_custom_emoji_id is None
-        back = buttons(views.support(Settings()))[0]
+        back = buttons(views.support(Settings()))[-1]
         assert back.text == "‹ Меню"  # без иконки — стрелка в тексте
         icons.ICONS.set("key", "5409357944619802453")
         icons.ICONS.set("back", "5409357944619802454")
         assert buttons(views.main(Settings()))[0].icon_custom_emoji_id == "5409357944619802453"
-        back = buttons(views.support(Settings()))[0]
+        back = buttons(views.support(Settings()))[-1]
         assert back.text == "Меню" and back.icon_custom_emoji_id == "5409357944619802454"
         stripped = views.without_icons(views.main(Settings()).markup)
         assert all(b.icon_custom_emoji_id is None for row in stripped.inline_keyboard for b in row)

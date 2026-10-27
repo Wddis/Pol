@@ -15,3 +15,5 @@ __pycache__/
 # Бот: база ключей и закрытый ключ подписи лицензий — только на сервере
 /bot/data/
 .pytest_cache/
+/bot/deploy/.env
+/bot/deploy/data/

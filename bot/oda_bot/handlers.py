@@ -112,6 +112,14 @@ def make_router(cfg: Settings, db: Db) -> Router:
             screen = views.about(cfg)
         elif to == "support":
             screen = views.support(cfg)
+        elif to == "howto":
+            screen = views.howto(cfg)
+        elif to == "trouble":
+            screen = views.trouble(cfg)
+        elif to == "privacy":
+            screen = views.privacy(cfg)
+        elif to == "rules":
+            screen = views.rules(cfg)
         else:
             screen = views.main(cfg)
         await show(q, screen)
