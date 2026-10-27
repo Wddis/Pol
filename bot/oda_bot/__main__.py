@@ -20,6 +20,10 @@ from .license import Signer
 
 log = logging.getLogger("oda_bot")
 
+# Профиль бота: описание — в пустом чате до «Старт», короткое — в профиле бота (то же в worker/src/handlers.ts)
+DESCRIPTION = "ODA — приложение для Android: одна кнопка, и телефон подключён. Способ подключения ODA выбирает сама.\n\nЗдесь — ключ доступа к приложению:\n• пробный день — бесплатно\n• 1 неделя, 1 месяц или 3 месяца\n• от 1 до 5 устройств на ключ\n• срок идёт с ввода ключа в приложении\n\nИнструкция, ответы на вопросы и поддержка — внутри. Нажмите «Старт»."
+SHORT_DESCRIPTION = "Ключ доступа к приложению ODA: пробный день бесплатно, тарифы от недели, до 5 устройств. Инструкция и поддержка."
+
 COMMANDS = [
     ("start", "Главное меню"),
     ("buy", "Купить ключ"),
@@ -50,6 +54,8 @@ async def run(cfg: Settings) -> None:
         dp.include_router(make_router(cfg, db))
         # Меню команд в Telegram — само, без /setcommands в BotFather
         await bot.set_my_commands([BotCommand(command=c, description=d) for c, d in COMMANDS])
+        await bot.set_my_description(DESCRIPTION)
+        await bot.set_my_short_description(SHORT_DESCRIPTION)
         log.info("Бот запущен%s", " (тестовый режим: ключи без оплаты)" if cfg.free_mode else "")
         await dp.start_polling(bot)
     finally:

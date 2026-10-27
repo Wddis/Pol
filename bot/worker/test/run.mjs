@@ -261,6 +261,8 @@ try {
     assert.equal(hook.params.url, `${BASE}/tg`);
     assert.equal(hook.params.secret_token, SECRET);
     assert.equal(hook.token, "123:TEST");
+    assert.ok(calls.slice(n).find((c) => c.method === "setMyDescription").params.description.length <= 512);
+    assert.ok(calls.slice(n).find((c) => c.method === "setMyShortDescription").params.short_description.length <= 120);
     const cmds = calls.slice(n).find((c) => c.method === "setMyCommands");
     assert.deepEqual(cmds.params.commands.map((c) => c.command), ["start", "buy", "trial", "profile", "help"]);
   });

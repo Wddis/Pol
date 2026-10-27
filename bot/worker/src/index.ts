@@ -2,7 +2,7 @@
 import { KeyApi, json } from "./api";
 import { type Env, settings } from "./config";
 import { Db } from "./db";
-import { Bot, COMMANDS } from "./handlers";
+import { Bot, COMMANDS, DESCRIPTION, SHORT_DESCRIPTION } from "./handlers";
 import { Signer } from "./license";
 import { Telegram, type TgUpdate } from "./telegram";
 
@@ -49,7 +49,7 @@ export default {
     }
 
     if (url.pathname === "/setup" && req.method === "POST") {
-      // Подключение бота к этому адресу: webhook с секретом и меню команд (вызывает deploy.sh)
+      // Подключение бота к этому адресу: webhook с секретом, меню команд и описание бота (вызывает deploy.sh)
       if (!sameSecret(req.headers.get("x-setup-secret"), env.WEBHOOK_SECRET)) return new Response("forbidden", { status: 403 });
       const hook = await tg.call("setWebhook", {
         url: `${url.origin}/tg`,
@@ -58,8 +58,12 @@ export default {
         drop_pending_updates: true,
       });
       const commands = await tg.call("setMyCommands", { commands: COMMANDS });
+      const profile = [
+        await tg.call("setMyDescription", { description: DESCRIPTION }),
+        await tg.call("setMyShortDescription", { short_description: SHORT_DESCRIPTION }),
+      ];
       const me = await tg.call("getMe", {});
-      return json({ webhook: hook, commands, me: me.result ?? me, pubkey: (await getSigner(env)).publicB64 });
+      return json({ webhook: hook, commands, profile: { ok: profile.every((r) => r.ok) }, me: me.result ?? me, pubkey: (await getSigner(env)).publicB64 });
     }
 
     try {

@@ -78,7 +78,7 @@ done
 echo "$RES" | node -e '
   const r = JSON.parse(require("fs").readFileSync(0, "utf8"));
   if (!r.webhook.ok) { console.error("setWebhook:", r.webhook.description); process.exit(1); }
-  console.log("webhook: ok, команды:", r.commands.ok ? "ok" : r.commands.description);
+  console.log("webhook: ok, команды:", r.commands.ok ? "ok" : r.commands.description, "описание:", r.profile.ok ? "ok" : "ошибка");
   console.log("бот: @" + (r.me.username || "?"));
   console.log("\nОткрытый ключ лицензий (вшить в приложение): " + r.pubkey);'
 
