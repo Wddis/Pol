@@ -15,8 +15,8 @@ android {
         applicationId = 'com.example.vpnapp'
         minSdk = 24
         targetSdk = 36
-        versionCode = 26
-        versionName = '0.12.2'
+        versionCode = 27
+        versionName = '0.12.3'
 
         // Только ARM: реальные телефоны (x86 нужен лишь эмуляторам, экономим ~15 МБ).
         // -PodaEmulator — только x86_64: проверка в эмуляторе CI без трансляции ARM-кода (Go под ней падает)

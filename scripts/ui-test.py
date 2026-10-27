@@ -179,8 +179,10 @@ def overlaps():
 
 
 def crashed():
+    """Падения процессов ODA (Java — «Process: <пакет>», нативные — «>>> … <<<» и Cmdline с путём APK).
+    Падения служебных процессов эмулятора (UiAutomation самого теста и т. п.) не считаются."""
     log = adb("logcat -d -b crash", timeout=30).decode(errors="replace")
-    return [l for l in log.splitlines() if PKG in l or "FATAL EXCEPTION" in l]
+    return [l for l in log.splitlines() if PKG in l]
 
 
 def crash_report():
@@ -335,10 +337,12 @@ def main():
     if left > 0:
         print(f"    жду конца срока ключа: {int(left)} с")
         time.sleep(left)
-    adb(f"shell am start -n {PKG}/.MainActivity")
-    expired = wait(60, text="Тариф закончился") is not None
+    # Экран открыт: ODA должна сама показать «Тариф закончился» (без перезапуска приложения)
+    expired = wait(90, text="Тариф закончился") is not None
     shot("ключ-закончился")
-    ok(expired, "срок вышел — экран «Тариф закончился», VPN отключён")
+    ok(expired, "срок вышел — ODA сама открыла «Тариф закончился»")
+    tun = adb("shell ip link show tun0", timeout=30).decode(errors="replace")
+    ok("tun0:" not in tun, "срок вышел — VPN отключён (нет tun0)")
 
     print("7) Падения")
     c = crashed()

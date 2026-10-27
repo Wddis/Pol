@@ -82,6 +82,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private final Handler main = new Handler(Looper.getMainLooper());
     private final Runnable ticker = this::tick;
     private final Runnable slowCheck = () -> renderIndicator(true);
+    private final Runnable keyTick = this::keyTick;
 
     private Prefs prefs;
     private KeyManager keys;
@@ -253,6 +254,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     @Override
     protected void onNewIntent(Intent intent) {
         super.onNewIntent(intent);
+        if (!keyAllowsMain()) return;
         handleConnectIntent(intent);
     }
 
@@ -272,7 +274,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         firstStatus = true;
         StatusBus.addListener(this);
         if (!keyAllowsMain()) return;
-        renderKey();
+        keyTick();
         showRows();
         if (tab == TAB_SETTINGS) buildSettings();
         if (tab == TAB_HISTORY) buildHistory();
@@ -285,6 +287,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         started = false;
         main.removeCallbacks(ticker);
         main.removeCallbacks(slowCheck);
+        main.removeCallbacks(keyTick);
         stopPulse();
         StatusBus.removeListener(this);
         super.onStop();
@@ -295,7 +298,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     /** Ключ изменился (проверка, смена ключа): нет доступа — экран ключа, иначе обновить срок. */
     void onKeyChanged() {
         if (!keyAllowsMain()) return;
-        renderKey();
+        keyTick();
         if (tab == TAB_SETTINGS) buildSettings();
     }
 
@@ -308,6 +311,20 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         finish();
         overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
         return false;
+    }
+
+    /**
+     * Срок ключа, пока экран открыт: полоса «осталось …» обновляется раз в минуту, а в момент окончания
+     * срока сразу открывается «Тариф закончился» (раньше экран оставался с «Ошибкой» и старым сроком,
+     * пока приложение не открыть заново).
+     */
+    private void keyTick() {
+        main.removeCallbacks(keyTick);
+        if (!started || !keyAllowsMain()) return;
+        renderKey();
+        if (keys.forever()) return;
+        long left = keys.secondsLeft();
+        main.postDelayed(keyTick, Math.max(1000L, Math.min(60_000L, left * 1000L + 500L)));
     }
 
     /** Полоса «Ключ: осталось …» за 2 дня до конца. */
@@ -341,6 +358,8 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         connectedAt = status.connectedAt;
         connectingSince = status.connectingSince;
         engine = status.engine;
+        // VPN отключён из-за ключа (срок вышел, блокировка) — сразу экран ключа, а не «Ошибка подключения»
+        if (status.state == ConnectionState.ERROR && !keyAllowsMain()) return;
         render(status.state, status.detail, status.error, animate);
         if (tab == TAB_HISTORY && (status.state == ConnectionState.ON || status.state == ConnectionState.OFF
                 || status.state == ConnectionState.ERROR)) {
