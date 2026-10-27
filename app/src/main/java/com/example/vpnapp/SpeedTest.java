@@ -57,7 +57,7 @@ final class SpeedTest {
 
         /** «Пинг 48 мс · загрузка 23,4 Мбит/с». */
         String summary() {
-            String ping = pingMs >= 0 ? pingMs + " мс" : "—";
+            String ping = pingMs > 0 ? pingMs + " мс" : pingMs == 0 ? "<1 мс" : "—";
             String speed = mbps >= 0 ? String.format(Locale.forLanguageTag("ru"), "%.1f Мбит/с", mbps) : "—";
             return "Пинг " + ping + " · загрузка " + speed;
         }
