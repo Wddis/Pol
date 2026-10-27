@@ -18,6 +18,8 @@ export interface Env {
   STARS_WEEK?: string;
   STARS_MONTH?: string;
   STARS_3M?: string;
+  /** Только для тестов: подмена адреса Crypto Pay API. */
+  CRYPTO_PAY_API?: string;
 }
 
 export interface Settings {
@@ -35,14 +37,17 @@ export interface Settings {
   starsWeek: number;
   starsMonth: number;
   stars3m: number;
-  /** Реквизиты для перевода по СБП (пусто — СБП выключена). */
-  sbpPhone: string;
-  sbpBank: string;
-  sbpName: string;
+  /** Токен приложения Crypto Pay (@CryptoBot → Crypto Pay → Create App); пусто — оплата криптовалютой выключена. */
+  cpToken: string;
+  /** Тестовая сеть @CryptoTestnetBot (ненастоящие деньги) — проверить оплату до запуска. */
+  cpTestnet: boolean;
+  cpApi: string;
+  /** Адрес воркера (из запроса) — для подсказок администратору (webhook CryptoBot). */
+  origin: string;
 }
 
 /** Что администратор может поменять в боте (таблица settings): имя → поле Settings. */
-export const EDITABLE: Record<string, { field: keyof Settings; kind: "int" | "text" | "bool"; title: string }> = {
+export const EDITABLE: Record<string, { field: keyof Settings; kind: "int" | "text" | "bool" | "secret"; title: string }> = {
   free_mode: { field: "freeMode", kind: "bool", title: "Ключи без оплаты" },
   price_week: { field: "priceWeek", kind: "int", title: "Цена «1 неделя», ₽" },
   price_month: { field: "priceMonth", kind: "int", title: "Цена «1 месяц», ₽" },
@@ -51,9 +56,8 @@ export const EDITABLE: Record<string, { field: keyof Settings; kind: "int" | "te
   stars_month: { field: "starsMonth", kind: "int", title: "Цена «1 месяц», звёзды" },
   stars_q: { field: "stars3m", kind: "int", title: "Цена «3 месяца», звёзды" },
   extra_pct: { field: "extraDevicePct", kind: "int", title: "Наценка за устройство, %" },
-  sbp_phone: { field: "sbpPhone", kind: "text", title: "СБП: номер телефона" },
-  sbp_bank: { field: "sbpBank", kind: "text", title: "СБП: банк" },
-  sbp_name: { field: "sbpName", kind: "text", title: "СБП: получатель (как в банке)" },
+  cp_token: { field: "cpToken", kind: "secret", title: "Токен CryptoBot" },
+  cp_testnet: { field: "cpTestnet", kind: "bool", title: "CryptoBot: тестовая сеть" },
 };
 
 const int = (v: string | undefined, d: number) => {
@@ -75,15 +79,17 @@ export function settings(env: Env): Settings {
     starsWeek: int(env.STARS_WEEK, 0),
     starsMonth: int(env.STARS_MONTH, 0),
     stars3m: int(env.STARS_3M, 0),
-    sbpPhone: "",
-    sbpBank: "",
-    sbpName: "",
+    cpToken: "",
+    cpTestnet: false,
+    cpApi: (env.CRYPTO_PAY_API ?? "").trim(),
+    origin: "",
   };
 }
 
 /** Настройки из wrangler.toml, поверх — то, что администратор поменял в боте (таблица settings). */
-export async function loadSettings(env: Env, d1: D1Database): Promise<Settings> {
+export async function loadSettings(env: Env, d1: D1Database, origin = ""): Promise<Settings> {
   const cfg = settings(env);
+  cfg.origin = origin;
   let rows: { name: string; value: string }[] = [];
   try {
     rows = (await d1.prepare("SELECT name, value FROM settings").all<{ name: string; value: string }>()).results;
@@ -96,7 +102,7 @@ export async function loadSettings(env: Env, d1: D1Database): Promise<Settings> 
     if (!e) continue;
     if (e.kind === "int") c[e.field] = int(value, 0);
     else if (e.kind === "bool") c[e.field] = value === "1";
-    else c[e.field] = value;
+    else c[e.field] = value; // text, secret
   }
   return cfg;
 }

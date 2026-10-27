@@ -2,6 +2,7 @@
 // Кнопки меняют сообщение на месте.
 import { Admin, type Out } from "./admin";
 import type { Settings } from "./config";
+import { CryptoPay, type CpInvoice } from "./cryptopay";
 import { Db, type Key, ORDER_TTL, type Order, isActive } from "./db";
 import { MAX_DEVICES, TARIFFS, TRIAL, normalize } from "./keys";
 import type { Telegram, TgCallback, TgMessage, TgPreCheckout, TgUpdate, TgUser } from "./telegram";
@@ -123,7 +124,9 @@ export class Bot {
     if (cmd) await this.db.clearState(tgId);
 
     if (isAdmin && !cmd && text) {
-      const s = await this.admin.text(tgId, text);
+      const s = await this.admin.text(tgId, text, async () => {
+        await this.tg.call("deleteMessage", { chat_id: m.chat.id, message_id: m.message_id });
+      });
       if (s) return void (await this.sendTo(m.chat.id, s));
     }
     if (!cmd) {
@@ -196,10 +199,6 @@ export class Bot {
       const out: Out = await this.admin.callback(tgId, parts);
       return this.edit(q, out.screen, out.toast, out.alert);
     }
-    if (kind === "ord" && (parts[0] === "ok" || parts[0] === "no")) {
-      if (!isAdmin) return this.answer(q, "Нет доступа", true);
-      return this.onOrderAdmin(q, parts[0] === "ok", Number(parts[1]));
-    }
     if (kind === "sup") {
       if (parts[0] === "write") {
         await this.db.setState(tgId, "support");
@@ -245,10 +244,14 @@ export class Bot {
 
   // ---------- оплата ----------
 
-  /** pay:<sbp|stars>:<срок>:<устройств>:<ключ для продления> — заказ и реквизиты (СБП) или счёт в звёздах. */
+  private cryptoPay(): CryptoPay {
+    return new CryptoPay(this.cfg.cpToken, CryptoPay.endpoint(this.cfg.cpTestnet, this.cfg.cpApi || undefined));
+  }
+
+  /** pay:<crypto|stars>:<срок>:<устройств>:<ключ для продления> — счёт в CryptoBot или в звёздах. */
   private async onPay(q: TgCallback, tgId: number, [method, p, d, key = ""]: string[]): Promise<void> {
     if (this.cfg.freeMode) return this.answer(q, "Сейчас ключи выдаются без оплаты", true);
-    if (!(p in TARIFFS) || (method !== "sbp" && method !== "stars")) return this.answer(q, "Устаревшая кнопка", true);
+    if (!(p in TARIFFS) || (method !== "crypto" && method !== "stars")) return this.answer(q, "Устаревшая кнопка", true);
     let devices = Math.max(1, Math.min(MAX_DEVICES, parseInt(d, 10) || 1));
     let k: Key | null = null;
     if (key) {
@@ -257,67 +260,83 @@ export class Bot {
       devices = k.devices_max; // продление — по числу устройств ключа
     }
     const { rub, stars } = views.amounts(this.cfg, p, devices);
-    const amount = method === "sbp" ? rub : stars;
-    if (amount <= 0 || (method === "sbp" && !this.cfg.sbpPhone)) return this.answer(q, "Этот способ оплаты сейчас выключен", true);
+    const amount = method === "crypto" ? rub : stars;
+    if (amount <= 0 || (method === "crypto" && !this.cfg.cpToken)) return this.answer(q, "Этот способ оплаты сейчас выключен", true);
     const o = await this.db.createOrder({ tg_id: tgId, kind: k ? "extend" : "new", period: p, devices, key: k?.key ?? null, method, amount });
-    if (method === "sbp") return this.edit(q, views.sbpOrder(this.cfg, o));
+    const title = k ? `Продление ODA: ${TARIFFS[p].title}` : `Ключ ODA: ${TARIFFS[p].title}`;
+    const about = k ? `Ключ ${k.key}: +${TARIFFS[p].title}. Ключ останется тем же.` : `Устройств: ${devices}. Срок пойдёт с ввода ключа в приложении.`;
+
+    if (method === "crypto") {
+      let inv: CpInvoice;
+      try {
+        inv = await this.cryptoPay().createInvoice(amount, `${title}. ${about} Заказ №${o.code}.`, `order:${o.id}`, `https://t.me/${this.cfg.botUsername}`);
+      } catch (e) {
+        console.error(`cryptopay createInvoice: ${e}`);
+        await this.db.moveOrder(o.id, ["new"], "cancelled");
+        return this.answer(q, "Не получилось выставить счёт. Попробуйте через минуту или оплатите звёздами", true);
+      }
+      await this.db.moveOrder(o.id, ["new"], "new", { charge_id: String(inv.invoice_id) });
+      return this.edit(q, views.cryptoOrder(o, inv.bot_invoice_url));
+    }
+
     const r = await this.tg.call("sendInvoice", {
       chat_id: q.message?.chat.id ?? tgId,
-      title: k ? `Продление ODA: ${TARIFFS[p].title}` : `Ключ ODA: ${TARIFFS[p].title}`,
-      description: k ? `Ключ ${k.key}: +${TARIFFS[p].title}. Ключ останется тем же.` : `Устройств: ${devices}. Срок пойдёт с ввода ключа в приложении.`,
+      title,
+      description: about,
       payload: `order:${o.id}`,
       currency: "XTR",
       prices: [{ label: TARIFFS[p].title, amount }],
     });
     if (!r.ok) {
       await this.db.moveOrder(o.id, ["new"], "cancelled");
-      return this.answer(q, "Не получилось выставить счёт. Попробуйте ещё раз или оплатите по СБП", true);
+      return this.answer(q, "Не получилось выставить счёт. Попробуйте ещё раз", true);
     }
     await this.answer(q, "Счёт — ниже: «Заплатить»");
   }
 
-  /** Кнопки заказа у покупателя: ord:paid (перевёл по СБП), ord:cancel. */
+  /** Кнопки заказа: ord:check — спросить CryptoBot (если webhook не дошёл), ord:cancel. */
   private async onOrder(q: TgCallback, tgId: number, action: string, id: number): Promise<void> {
     const o = id ? await this.db.getOrder(id) : null;
     if (!o || o.tg_id !== tgId) return this.answer(q, "Заказ не найден", true);
     if (action === "cancel") {
       if (await this.db.moveOrder(o.id, ["new"], "cancelled")) return this.edit(q, views.orderCancelled());
-      return this.answer(q, o.status === "claimed" ? "Платёж уже проверяется — отменить нельзя" : "Заказ уже закрыт", true);
+      return this.answer(q, o.status === "paid" ? "Заказ уже оплачен — ключ в чате" : "Заказ уже закрыт", true);
     }
-    if (action !== "paid") return this.answer(q);
-    if (o.status === "claimed") return this.edit(q, views.orderClaimed(o), "Уже проверяем");
-    if (o.status !== "new") return this.answer(q, "Заказ уже закрыт", true);
-    if (now() - o.created_at > ORDER_TTL) {
+    if (action !== "check") return this.answer(q);
+    if (o.status === "paid") return this.answer(q, "Оплачено — ключ уже в чате", true);
+    if (o.status !== "new" || o.method !== "crypto" || !o.charge_id) return this.answer(q, "Заказ закрыт — создайте новый", true);
+    let inv: CpInvoice | null = null;
+    try {
+      inv = await this.cryptoPay().getInvoice(Number(o.charge_id));
+    } catch (e) {
+      console.error(`cryptopay getInvoices: ${e}`);
+      return this.answer(q, "CryptoBot не отвечает — попробуйте через минуту", true);
+    }
+    if (inv?.status === "paid") {
+      await this.cryptoPaid(inv);
+      return this.answer(q, "Оплата найдена — ключ отправлен");
+    }
+    if (inv?.status === "expired") {
       await this.db.moveOrder(o.id, ["new"], "cancelled");
-      return this.edit(q, views.orderCancelled(), "Заказ устарел — создайте новый", true);
+      return this.edit(q, views.orderCancelled(), "Счёт истёк — создайте новый", true);
     }
-    if (!(await this.db.moveOrder(o.id, ["new"], "claimed"))) return this.answer(q, "Заказ уже закрыт", true);
-    const forAdmin = views.orderForAdmin(o, q.from);
-    let delivered = false;
-    for (const a of this.cfg.adminIds) delivered = (await this.sendTo(a, forAdmin)) || delivered;
-    if (!delivered) console.warn(`order ${o.id}: администраторам не доставлено`);
-    await this.edit(q, views.orderClaimed(o));
+    await this.edit(q, views.orderNotPaid(o));
   }
 
-  /** Администратор: ord:ok — перевод найден, ключ уходит покупателю; ord:no — не найден. */
-  private async onOrderAdmin(q: TgCallback, ok: boolean, id: number): Promise<void> {
+  /** Счёт CryptoBot оплачен (webhook invoice_paid или «Проверить оплату»): ключ сразу. */
+  async cryptoPaid(inv: CpInvoice): Promise<void> {
+    const id = Number((inv.payload ?? "").replace(/^order:/, ""));
     const o = id ? await this.db.getOrder(id) : null;
-    if (!o) return this.answer(q, "Заказ не найден", true);
-    const done = (title: string, line: string) => ({
-      text: `<b>${title}</b>
-
-Код <code>${o.code}</code>, ${o.amount} ₽, ID <code>${o.tg_id}</code>
-${line}`,
-      markup: { inline_keyboard: [[{ text: "‹ Оплаты", callback_data: "adm:ord" }]] },
-    });
-    if (!ok) {
-      if (!(await this.db.moveOrder(o.id, ["new", "claimed"], "rejected"))) return this.answer(q, `Заказ уже закрыт (${o.status})`, true);
-      await this.sendTo(o.tg_id, views.orderRejected(o));
-      return this.edit(q, done("Отклонено", "Покупателю отправлено: платёж не найден, написать в поддержку."));
+    if (!o || o.method !== "crypto" || o.charge_id !== String(inv.invoice_id)) {
+      console.error(`cryptopay: оплата без заказа ${inv.invoice_id} ${inv.payload}`);
+      for (const a of this.cfg.adminIds) {
+        await this.sendTo(a, { text: `<b>Оплата CryptoBot без заказа</b>\n\nСчёт ${inv.invoice_id}, ${views.escapeHtml(inv.amount)} ${views.escapeHtml(inv.fiat ?? "")}, ${views.escapeHtml(inv.payload ?? "")}\nПроверьте и выдайте ключ вручную.`, markup: { inline_keyboard: [] } });
+      }
+      return;
     }
-    if (!(await this.db.moveOrder(o.id, ["new", "claimed"], "paid"))) return this.answer(q, `Заказ уже закрыт (${o.status})`, true);
-    const k = await this.fulfill(o);
-    await this.edit(q, done("Оплачено", k ? `Ключ <code>${k.key}</code> отправлен покупателю.` : "Ключ для продления не найден — выдайте вручную."));
+    // Оплатили после отмены — всё равно выдаём: деньги пришли
+    if (!(await this.db.moveOrder(o.id, ["new", "cancelled"], "paid"))) return; // повтор webhook
+    await this.fulfill(o);
   }
 
   /** Перед оплатой звёздами Telegram спрашивает, действует ли заказ (ответ — за 10 с). */

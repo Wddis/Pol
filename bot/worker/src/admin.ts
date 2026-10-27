@@ -3,9 +3,10 @@
 // блокировки (1 день, неделя, месяц, навсегда) с причиной, ответы на обращения в поддержку.
 // Данные кнопок: adm:<действие>:… (≤ 64 байт). Цель блокировки t: «k<ключ>» или «u<Telegram ID>».
 import { EDITABLE, type Settings } from "./config";
-import { type Ban, Db, type Device, type DeviceRow, type Key, type Order, type User, isActive, isOnline, secondsLeft, tariffTitle } from "./db";
+import { type CpBalance, CryptoPay } from "./cryptopay";
+import { type Ban, Db, type Device, type DeviceRow, type Key, type User, isActive, isOnline, secondsLeft, tariffTitle } from "./db";
 import { FOREVER, MAX_DEVICES, UNITS, durationText, leftText, normalize, unitSeconds, unitText } from "./keys";
-import { type Button, type Screen, banUntil, escapeHtml, fmtDate, orderForAdmin, statusLine, supportAnswer } from "./views";
+import { type Button, type Screen, banUntil, escapeHtml, fmtDate, statusLine, supportAnswer } from "./views";
 
 const PAGE = 8;
 const MAX_COUNT = 10;
@@ -75,14 +76,14 @@ export function adminHome(s: Record<string, number>): Screen {
       `Ключей: ${s.keys} (действуют ${s.active}, не активированы ${s.fresh})\n` +
       `Устройств: ${s.devices}, сейчас в VPN: <b>${s.online}</b>\n` +
       `Блокировок: ${s.bans}\n` +
-      (s.orders ? `<b>Ждут проверки оплаты: ${s.orders}</b>\n` : "") +
+      `Оплаченных заказов: ${s.paid ?? 0}\n` +
       "\n" +
       "Найти: пришлите сюда ключ, @имя или Telegram ID.",
     markup: kb(
       [b("Создать ключ", "adm:new:d:7:1:1", "primary")],
       [b(`Сейчас в VPN (${s.online})`, "adm:on"), b("Устройства", "adm:dev:0")],
       [b("Ключи", "adm:keys:0"), b(`Блокировки (${s.bans})`, "adm:bans")],
-      [b(`Оплаты (${s.orders ?? 0})`, "adm:ord", s.orders ? "success" : undefined), b("Цены и оплата", "adm:set")],
+      [b("Баланс и вывод", "adm:bal"), b("Цены и оплата", "adm:set")],
       [b("‹ Меню", "nav:main")],
     ),
   };
@@ -278,41 +279,54 @@ export function bansList(bans: (Ban & { targets: string })[]): Screen {
 
 // ---------- оплата ----------
 
-export function ordersList(orders: Order[], now: number): Screen {
-  const lines = orders.map((o) => `• <code>${o.code}</code> — ${o.amount} ₽, ID <code>${o.tg_id}</code>, ${ago(o.updated_at, now)}`);
-  return {
-    text:
-      `<b>Оплаты по СБП: ждут проверки ${orders.length}</b>\n\n` +
-      (lines.join("\n") || "Нет — все переводы проверены.") +
-      "\n\nНажмите на код — карточка с «Подтвердить» и «Отклонить». Ищите в банке перевод с этим кодом в комментарии.",
-    markup: kb(...orders.map((o) => [b(`${o.code} · ${o.amount} ₽`, `adm:o:${o.id}`)]), home()),
-  };
-}
-
 const shown = (cfg: Settings, name: string) => {
   const e = EDITABLE[name];
   const v = cfg[e.field];
   if (e.kind === "bool") return v ? "да" : "нет";
   if (e.kind === "int") return String(v);
+  if (e.kind === "secret") return v ? "задан" : "—";
   return v ? escapeHtml(String(v)) : "—";
 };
 
 export function settingsScreen(cfg: Settings): Screen {
   const lines = Object.keys(EDITABLE).map((n) => `${EDITABLE[n].title}: <b>${shown(cfg, n)}</b>`);
-  const sbpReady = cfg.sbpPhone !== "" && (cfg.priceWeek > 0 || cfg.priceMonth > 0 || cfg.price3m > 0);
+  const cryptoReady = cfg.cpToken !== "" && (cfg.priceWeek > 0 || cfg.priceMonth > 0 || cfg.price3m > 0);
   const starsReady = cfg.starsWeek > 0 || cfg.starsMonth > 0 || cfg.stars3m > 0;
   const state = cfg.freeMode
-    ? "Сейчас ключи <b>выдаются бесплатно</b>. Задайте цены и реквизиты, затем выключите бесплатный режим."
-    : `Оплата включена: СБП — ${sbpReady ? "да" : "нет (нужны номер и цена в ₽)"}, звёзды — ${starsReady ? "да" : "нет (нужна цена в звёздах)"}.`;
+    ? "Сейчас ключи <b>выдаются бесплатно</b>. Задайте цены (и токен CryptoBot), затем «Включить оплату»."
+    : `Оплата включена: криптовалюта — ${cryptoReady ? "да" : "нет (нужны токен CryptoBot и цена в ₽)"}, звёзды — ${starsReady ? "да" : "нет (нужна цена в звёздах)"}.`;
   const edit = Object.keys(EDITABLE).filter((n) => EDITABLE[n].kind !== "bool");
   const rows: Button[][] = [[b(cfg.freeMode ? "Включить оплату" : "Выдавать бесплатно", "adm:free", cfg.freeMode ? "success" : "danger")]];
   for (let i = 0; i < edit.length; i += 2) rows.push(edit.slice(i, i + 2).map((n) => b(EDITABLE[n].title.replace(/^Цена /, ""), `adm:set:${n}`)));
-  rows.push(home());
+  rows.push([b(cfg.cpTestnet ? "CryptoBot: тестовая сеть → настоящая" : "CryptoBot: настоящая сеть → тестовая", "adm:cpnet")]);
+  rows.push([b("Баланс и вывод", "adm:bal")], home());
   return {
     text:
       "<b>Цены и оплата</b>\n\n" + lines.join("\n") + "\n\n" + state +
-      "\n\nЦена 0 — способ выключен для этого срока. Каждое устройство сверх первого — + наценка к цене.",
+      "\n\nЦена 0 — способ выключен для этого срока. Цена в ₽ — для оплаты криптовалютой (счёт в рублях, " +
+      "покупатель платит USDT, TON и др. по курсу). Каждое устройство сверх первого — + наценка." +
+      "\n\n<b>Как подключить CryptoBot</b> (один раз, анонимно):\n" +
+      "1. @CryptoBot → Crypto Pay → Create App → скопировать токен → «Токен CryptoBot» здесь.\n" +
+      `2. Там же: Webhooks → Enable → адрес <code>${cfg.origin || "https://<воркер>"}/cryptopay</code>.\n` +
+      "3. Security → Transfers → включить (вывод из «Баланс и вывод»).",
     markup: kb(...rows),
+  };
+}
+
+export function balanceScreen(cfg: Settings, bal: CpBalance[] | null, err?: string): Screen {
+  if (!cfg.cpToken) {
+    return { text: "<b>Баланс и вывод</b>\n\nCryptoBot не подключён — «Цены и оплата» → «Токен CryptoBot».", markup: kb([b("Цены и оплата", "adm:set")], home()) };
+  }
+  const has = (bal ?? []).filter((x) => parseFloat(x.available) > 0 || parseFloat(x.onhold) > 0);
+  const lines = has.map((x) => `• <b>${escapeHtml(x.available)} ${escapeHtml(x.currency_code)}</b>` + (parseFloat(x.onhold) > 0 ? ` (ещё ${escapeHtml(x.onhold)} в обработке)` : ""));
+  const rows = has.filter((x) => parseFloat(x.available) > 0).map((x) => [b(`Вывести ${x.available} ${x.currency_code}`, `adm:wd:${x.currency_code}`, "success")]);
+  return {
+    text:
+      `<b>Баланс CryptoBot</b>${cfg.cpTestnet ? " (тестовая сеть)" : ""}\n\n` +
+      (err ? `Не получилось: ${escapeHtml(err)}` : lines.join("\n") || "Пока пусто.") +
+      "\n\nВывод — перевод на ваш аккаунт в @CryptoBot (откройте его хотя бы раз). Дальше — продать за рубли " +
+      "(P2P), перевести на кошелёк или биржу. Покупатели вас не видят, вы — их.",
+    markup: kb(...rows, [b("Обновить", "adm:bal")], home()),
   };
 }
 
@@ -420,23 +434,43 @@ export class Admin {
         const page = Math.max(0, parseInt(a, 10) || 0);
         return { screen: devicesList(await this.db.allDevices(page * PAGE, PAGE + 1), page, now) };
       }
-      case "ord":
-        return { screen: ordersList(await this.db.claimedOrders(), now) };
-      case "o": {
-        const o = await this.db.getOrder(Number(a));
-        if (!o) return { toast: "Заказ не найден", alert: true };
-        if (o.status !== "claimed" && o.status !== "new") return { toast: `Заказ уже закрыт (${o.status})`, alert: true };
-        const u = await this.db.getUser(o.tg_id);
-        const s = orderForAdmin(o, { id: o.tg_id, username: u?.username });
-        s.markup.inline_keyboard.push([b("‹ Оплаты", "adm:ord")]);
-        return { screen: s };
-      }
       case "set": {
         const e = EDITABLE[a];
         if (!e || e.kind === "bool") return { screen: settingsScreen(this.cfg) };
         await this.db.setState(adminId, "set", a);
-        const hint = e.kind === "int" ? "Пришлите число (0 — выключить)." : "Пришлите значение одним сообщением («-» — очистить).";
+        const hint = e.kind === "int" ? "Пришлите число (0 — выключить)."
+          : e.kind === "secret" ? "Пришлите токен из @CryptoBot → Crypto Pay → My Apps → приложение → API Token. Сообщение с токеном бот сразу удалит. «-» — отключить."
+          : "Пришлите значение одним сообщением («-» — очистить).";
         return { screen: askText(e.title, `Сейчас: <b>${shown(this.cfg, a)}</b>\n\n${hint}`, "adm:set") };
+      }
+      case "cpnet": {
+        const v = !this.cfg.cpTestnet;
+        await this.db.setSetting("cp_testnet", v ? "1" : "0");
+        this.cfg.cpTestnet = v;
+        return { screen: settingsScreen(this.cfg), toast: v ? "Тестовая сеть: деньги ненастоящие" : "Настоящая сеть" };
+      }
+      case "bal": {
+        if (!this.cfg.cpToken) return { screen: balanceScreen(this.cfg, null) };
+        try {
+          return { screen: balanceScreen(this.cfg, await this.cp().getBalance()) };
+        } catch (e) {
+          return { screen: balanceScreen(this.cfg, null, String((e as Error).message)) };
+        }
+      }
+      case "wd": {
+        // Сумма — с баланса в момент нажатия: вывод всего доступного
+        try {
+          const x = (await this.cp().getBalance()).find((y) => y.currency_code === a);
+          if (!x || !(parseFloat(x.available) > 0)) return { toast: "Нечего выводить", alert: true };
+          const t = await this.cp().transfer(adminId, x.currency_code, x.available, `oda-${adminId}-${x.currency_code}-${x.available}-${Math.floor(now / 60)}`);
+          return { screen: balanceScreen(this.cfg, await this.cp().getBalance()), toast: `Выведено ${t.amount} ${t.asset} в @CryptoBot`, alert: true };
+        } catch (e) {
+          const m = String((e as Error).message);
+          const hint = /TRANSFER|DISABLED|FORBIDDEN/i.test(m) ? " — включите переводы: @CryptoBot → Crypto Pay → приложение → Security → Transfers"
+            : /USER|NOT_FOUND/i.test(m) ? " — откройте @CryptoBot и нажмите «Старт»"
+            : /AMOUNT|SMALL|MIN/i.test(m) ? " — сумма меньше минимальной для вывода" : "";
+          return { toast: `Не выведено: ${m}${hint}`.slice(0, 190), alert: true };
+        }
       }
       case "free": {
         const v = !this.cfg.freeMode;
@@ -463,7 +497,12 @@ export class Admin {
   }
 
   /** Текст от администратора: ожидаемый ввод (своя причина, ответ пользователю) или поиск. null — не админское. */
-  async text(adminId: number, text: string): Promise<Screen | null> {
+  private cp(): CryptoPay {
+    return new CryptoPay(this.cfg.cpToken, CryptoPay.endpoint(this.cfg.cpTestnet, this.cfg.cpApi || undefined));
+  }
+
+  /** forget — удалить сообщение администратора (в нём токен). */
+  async text(adminId: number, text: string, forget?: () => Promise<void>): Promise<Screen | null> {
     const st = await this.db.getState(adminId);
     if (st && st.state === "set" && EDITABLE[st.data]) {
       const e = EDITABLE[st.data];
@@ -473,6 +512,25 @@ export class Admin {
         if (!/^\d{1,7}$/.test(t)) return askText(e.title, "Нужно целое число, например 199. Пришлите ещё раз.", "adm:set");
         v = String(parseInt(t, 10));
         (this.cfg as unknown as Record<string, unknown>)[e.field] = Number(v);
+      } else if (e.kind === "secret") {
+        await forget?.();
+        v = t === "-" ? "" : t;
+        if (v) {
+          const prev = this.cfg.cpToken;
+          this.cfg.cpToken = v;
+          try {
+            const me = await this.cp().getMe();
+            await this.db.clearState(adminId);
+            await this.db.setSetting(st.data, v);
+            const s = settingsScreen(this.cfg);
+            s.text = `<b>CryptoBot подключён</b>: приложение «${escapeHtml(me.name)}»${this.cfg.cpTestnet ? " (тестовая сеть)" : ""}. Сообщение с токеном удалено.\n\n` + s.text;
+            return s;
+          } catch (err) {
+            this.cfg.cpToken = prev;
+            return askText(e.title, `CryptoBot не принял токен (${escapeHtml(String((err as Error).message))}). Проверьте и пришлите ещё раз. Тестовый токен — из @CryptoTestnetBot и «тестовая сеть».`, "adm:set");
+          }
+        }
+        this.cfg.cpToken = "";
       } else {
         v = t === "-" ? "" : t.slice(0, 100);
         (this.cfg as unknown as Record<string, unknown>)[e.field] = v;

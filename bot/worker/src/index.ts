@@ -1,6 +1,7 @@
 // Точка входа Cloudflare Worker: webhook Telegram (/tg), сервер ключей (/v1/*, /health) и настройка (/setup).
 import { KeyApi, json } from "./api";
 import { type Env, loadSettings, settings } from "./config";
+import { type CpInvoice, verifyWebhook } from "./cryptopay";
 import { Db } from "./db";
 import { ADMIN_COMMANDS, Bot, COMMANDS, DESCRIPTION, SHORT_DESCRIPTION } from "./handlers";
 import { Signer } from "./license";
@@ -40,10 +41,28 @@ export default {
         return new Response("ok");
       }
       try {
-        await new Bot(await loadSettings(env, env.DB), db, tg).handle(update);
+        await new Bot(await loadSettings(env, env.DB, url.origin), db, tg).handle(update);
       } catch (e) {
         // Ответ 200 и при ошибке: иначе Telegram будет присылать то же обновление снова и снова
         console.error("update:", e instanceof Error ? e.stack : e);
+      }
+      return new Response("ok");
+    }
+
+    if (url.pathname === "/cryptopay" && req.method === "POST") {
+      // Webhook Crypto Pay: счёт оплачен → ключ покупателю сразу. Подпись — от токена приложения CryptoBot
+      const cfg = await loadSettings(env, env.DB, url.origin);
+      const body = await req.text();
+      if (!(await verifyWebhook(cfg.cpToken, body, req.headers.get("crypto-pay-api-signature")))) {
+        return new Response("bad signature", { status: 401 });
+      }
+      try {
+        const u = JSON.parse(body) as { update_type?: string; payload?: CpInvoice };
+        if (u.update_type === "invoice_paid" && u.payload) await new Bot(cfg, db, tg).cryptoPaid(u.payload);
+      } catch (e) {
+        // 500 — CryptoBot повторит позже (до 3 дней); выдача ключа защищена от повтора
+        console.error("cryptopay:", e instanceof Error ? e.stack : e);
+        return new Response("error", { status: 500 });
       }
       return new Response("ok");
     }

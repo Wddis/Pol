@@ -100,7 +100,7 @@ export function tariffs(cfg: Settings, period: string, devices: number): Screen 
     "Срок начнётся, когда вы введёте ключ в приложении. " +
       `Каждое устройство сверх первого — +${cfg.extraDevicePct}% к цене.`,
   ];
-  lines.push("\nОплата: <b>СБП</b> (перевод с кодом) или <b>Telegram Stars</b>.");
+  lines.push("\nОплата: <b>криптовалютой</b> (@CryptoBot) или <b>Telegram Stars</b> — анонимно, ключ сразу.");
   if (cfg.freeMode) lines.push("<i>Сейчас ключ выдаётся без оплаты.</i>");
   const periods = Object.keys(TARIFFS).map((p) =>
     btn((p === period ? "● " : "") + TARIFFS[p].title, { cb: buy(p, devices) }),
@@ -133,18 +133,24 @@ export const payCb = (method: string, period: string, devices: number, key = "")
 
 export function payChoose(cfg: Settings, period: string, devices: number, key?: string): Screen {
   const { rub, stars } = amounts(cfg, period, devices);
-  const sbp = rub > 0 && cfg.sbpPhone !== "";
+  const crypto = rub > 0 && cfg.cpToken !== "";
   const lines = [
     "<b>Оплата</b>\n",
     key ? `Продление ключа <code>${key}</code>: <b>+${TARIFFS[period].title}</b>` : `Ключ: <b>${TARIFFS[period].title}</b>, устройств: ${devices}`,
   ];
-  if (sbp) lines.push(`\n<b>СБП</b> — ${rub} ₽: перевод по номеру телефона из приложения банка с кодом в комментарии. Ключ — после проверки платежа.`);
-  if (stars > 0) lines.push(`\n<b>Telegram Stars</b> — ${stars} ⭐: оплата в Telegram, ключ сразу.`);
-  if (!sbp && stars <= 0) lines.push("\nОплата пока не настроена — напишите в поддержку.");
+  if (crypto) {
+    lines.push(
+      `\n<b>Криптовалюта</b> — ${rub} ₽: счёт в @CryptoBot, оплата USDT, TON, BTC и др. по курсу. ` +
+        "Нет криптовалюты — её можно купить там же за рубли (P2P, в том числе по СБП).",
+    );
+  }
+  if (stars > 0) lines.push(`\n<b>Telegram Stars</b> — ${stars} ⭐: оплата прямо в Telegram.`);
+  if (crypto || stars > 0) lines.push("\nОплата анонимная, ключ приходит сразу после оплаты — ждать проверки не нужно.");
+  else lines.push("\nОплата пока не настроена — напишите в поддержку.");
   return {
     text: lines.join("\n"),
     markup: kb(
-      sbp ? [btn(`СБП — ${rub} ₽`, { cb: payCb("sbp", period, devices, key), style: "primary" })] : [],
+      crypto ? [btn(`Криптовалюта — ${rub} ₽`, { cb: payCb("crypto", period, devices, key), style: "primary" })] : [],
       stars > 0 ? [btn(`Telegram Stars — ${stars} ⭐`, { cb: payCb("stars", period, devices, key), style: "primary" })] : [],
       [btn("Поддержка", { cb: nav("support") })],
       [key ? btn("Профиль", { cb: keyAct("show", key), back: true }) : btn("Тарифы", { cb: buy(period, devices), back: true })],
@@ -156,66 +162,33 @@ const orderWhat = (o: Order) =>
   o.kind === "extend" && o.key ? `продление <code>${o.key}</code> на ${TARIFFS[o.period]?.title ?? o.period}`
     : `ключ на ${TARIFFS[o.period]?.title ?? o.period}, устройств: ${o.devices}`;
 
-/** Перевод по СБП: реквизиты, сумма и код для комментария. */
-export function sbpOrder(cfg: Settings, o: Order): Screen {
+/** Счёт CryptoBot выставлен: кнопка на оплату, ключ придёт сам. */
+export function cryptoOrder(o: Order, payUrl: string): Screen {
   return {
     text:
-      "<b>Оплата по СБП</b>\n\n" +
-      `За что: ${orderWhat(o)}\n` +
-      `Сумма: <b>${o.amount} ₽</b>\n\n` +
-      `Номер: <code>${escapeHtml(cfg.sbpPhone)}</code>\n` +
-      (cfg.sbpBank ? `Банк: ${escapeHtml(cfg.sbpBank)}\n` : "") +
-      (cfg.sbpName ? `Получатель: ${escapeHtml(cfg.sbpName)}\n` : "") +
-      `\n<b>Код платежа: <code>${o.code}</code></b> — обязательно укажите его в комментарии (сообщении получателю).\n\n` +
-      "1. Приложение банка → Платежи → «По номеру телефона» (СБП).\n" +
-      `2. Номер, банк получателя, сумма ${o.amount} ₽, в комментарий — код ${o.code}.\n` +
-      "3. После перевода нажмите «Я оплатил» — ключ придёт сюда после проверки.\n\n" +
-      "<i>Заказ действует сутки.</i>",
+      "<b>Счёт готов</b>\n\n" +
+      `Заказ №${o.code}: ${orderWhat(o)}\n` +
+      `Сумма: <b>${o.amount} ₽</b> (в криптовалюте по курсу)\n\n` +
+      "1. «Оплатить в CryptoBot» → выберите валюту → «Оплатить».\n" +
+      "2. Ключ придёт в этот чат <b>сразу после оплаты</b>.\n\n" +
+      "<i>Счёт действует 1 час. Не пришёл ключ за минуту — «Проверить оплату».</i>",
     markup: kb(
-      [btn("Копировать номер", { copy: cfg.sbpPhone }), btn("Копировать код", { copy: o.code })],
-      [btn("Я оплатил", { cb: `ord:paid:${o.id}`, style: "success" })],
+      [btn("Оплатить в CryptoBot", { url: payUrl, style: "primary" })],
+      [btn("Проверить оплату", { cb: `ord:check:${o.id}` })],
       [btn("Отменить", { cb: `ord:cancel:${o.id}`, back: true })],
     ),
   };
 }
 
-export function orderClaimed(o: Order): Screen {
+export function orderNotPaid(o: Order): Screen {
   return {
-    text:
-      "<b>Проверяем платёж</b>\n\n" +
-      `Код: <code>${o.code}</code>, сумма ${o.amount} ₽.\n` +
-      "Как только платёж найдётся, ключ придёт в этот чат. Обычно это занимает несколько минут.",
-    markup: kb([btn("Поддержка", { cb: nav("support") })], menuRow()),
-  };
-}
-
-export function orderRejected(o: Order): Screen {
-  return {
-    text:
-      "<b>Платёж не найден</b>\n\n" +
-      `Перевод с кодом <code>${o.code}</code> на ${o.amount} ₽ не нашёлся. Если вы переводили — напишите в поддержку, ` +
-      "приложите чек из приложения банка.",
-    markup: kb([btn("Написать в поддержку", { cb: "sup:write", style: "primary" })], menuRow()),
+    text: `<b>Оплата ещё не пришла</b>\n\nЗаказ №${o.code}. Оплатите счёт в CryptoBot — ключ придёт сюда сам. Оплатили, а ключа нет — напишите в поддержку, укажите номер заказа.`,
+    markup: kb([btn("Проверить ещё раз", { cb: `ord:check:${o.id}` })], [btn("Поддержка", { cb: nav("support") })], menuRow()),
   };
 }
 
 export function orderCancelled(): Screen {
   return { text: "<b>Заказ отменён</b>\n\nМожно выбрать тариф заново.", markup: kb([btn("Тарифы", { cb: buy("month", 1), style: "primary" })], menuRow()) };
-}
-
-/** Администратору: «Я оплатил» по СБП — проверить перевод с кодом в банке. */
-export function orderForAdmin(o: Order, from: { id: number; username?: string | null }): Screen {
-  const who = from.username ? `@${escapeHtml(from.username)}` : "без имени";
-  return {
-    text:
-      "<b>Оплата по СБП — проверьте перевод</b>\n\n" +
-      `Код: <b><code>${o.code}</code></b>\nСумма: <b>${o.amount} ₽</b>\n` +
-      `От: ${who} (ID <code>${o.tg_id}</code>)\nЗа что: ${orderWhat(o)}\n\n` +
-      "Найдите в банке перевод с этим кодом в комментарии и подтвердите — ключ уйдёт покупателю сам.",
-    markup: kb(
-      [btn("Подтвердить", { cb: `ord:ok:${o.id}`, style: "success" }), btn("Отклонить", { cb: `ord:no:${o.id}`, style: "danger" })],
-    ),
-  };
 }
 
 // ---------- ключ выдан ----------
@@ -475,10 +448,10 @@ export function payInfo(cfg: Settings): Screen {
     "<b>Как купить</b>\n\n" +
     "1. «Купить ключ» → выберите срок (1 неделя, 1 месяц, 3 месяца) и число устройств.\n" +
     "2. «Оплатить» → удобный способ:\n" +
-    "• <b>СБП</b> — перевод по номеру телефона из приложения банка; в комментарий — <b>код платежа</b> из бота, " +
-    "затем «Я оплатил». Ключ придёт после проверки перевода (обычно несколько минут)\n" +
-    "• <b>Telegram Stars</b> — прямо в Telegram, ключ сразу\n" +
-    "3. Ключ придёт в этот чат — нажмите на него, чтобы скопировать.\n" +
+    "• <b>Криптовалюта</b> — счёт в @CryptoBot в рублях, оплата USDT, TON, BTC и др. Нет криптовалюты — купите её " +
+    "там же за рубли (P2P, в том числе по СБП)\n" +
+    "• <b>Telegram Stars</b> — прямо в Telegram\n" +
+    "Оплата анонимная: ни вы, ни мы не видим данных друг друга.\n" +    "3. Ключ придёт в этот чат сразу после оплаты — нажмите на него, чтобы скопировать.\n" +
     "4. Откройте ODA и введите ключ. Срок пойдёт с этой минуты.\n\n" +
     "Продлить — «Профиль» → «Продлить»: ключ останется тем же, вводить заново не нужно.\n" +
     "Не уверены — начните с пробного дня.";
