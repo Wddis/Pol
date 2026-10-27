@@ -56,8 +56,9 @@ Docker: `docker build -t oda-bot bot && docker run -d --restart=always -e BOT_TO
 | `ODA_FREE_MODE` | `1` | 1 — ключи без оплаты (пока оплаты нет) |
 | `ODA_APK_URL` | — | Ссылка «Скачать ODA» |
 | `ODA_SUPPORT` | — | Контакт поддержки (например, @username) |
+| `ODA_TG_PROXY` (или `HTTPS_PROXY`) | — | HTTP-прокси до Telegram, если сервер ходит в интернет через него (нужен `pip install aiohttp-socks`) |
 
-Команды для BotFather (`/setcommands`):
+Меню команд бот выставляет сам при запуске; те же команды для BotFather (`/setcommands`), если нужно вручную:
 ```
 start - Главное меню
 buy - Купить ключ
