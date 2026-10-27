@@ -167,6 +167,7 @@ jobs:
         uses: reactivecircus/android-emulator-runner@v2
         env:
           TEST_KEY: ${{ inputs.test_key }}
+          TEST_KEY_SECONDS: '600'
         with:
           api-level: ${{ matrix.api }}
           target: google_apis

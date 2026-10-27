@@ -6,7 +6,7 @@
 по дереву элементов (uiautomator). Падения приложения ищутся в logcat. Итог — «UI: OK» или «UI: ОШИБКА».
 
 Запуск: python3 scripts/ui-test.py <app.apk> <тестовый ключ> [папка для скриншотов]
-Ключ — на несколько минут (создаётся в базе бота перед запуском): после активации тест ждёт конца срока
+Ключ — на 10 минут (TEST_KEY_SECONDS, по умолчанию 600) (создаётся в базе бота перед запуском): после активации тест ждёт конца срока
 и проверяет экран «Тариф закончился».
 """
 import base64
@@ -19,6 +19,8 @@ import time
 import xml.etree.ElementTree as ET
 
 PKG = "com.example.vpnapp"
+# Срок тестового ключа, секунды (TEST_KEY_SECONDS в workflow): весь сценарий до шага «Конец срока» — ~6 минут
+KEY_SECONDS = int(os.environ.get("TEST_KEY_SECONDS", "600"))
 APK, KEY = sys.argv[1], sys.argv[2]
 OUT = sys.argv[3] if len(sys.argv) > 3 else "ui-shots"
 os.makedirs(OUT, exist_ok=True)
@@ -124,9 +126,11 @@ def tap(timeout=15, **kw):
 
 
 def close_sheet():
-    """Лист снизу закрылся сам после выбора — иначе закрыть «назад»."""
+    """Лист снизу закрылся сам после выбора — иначе закрыть «назад». На экране ключа «назад» не жать:
+    он закрывает приложение (так и задумано)."""
     time.sleep(1)
-    if find(rid="powerButton") is None:
+    root = dump()
+    if find(rid="powerButton", root=root) is None and find(rid="primary", root=root) is None:
         back()
 
 
@@ -268,7 +272,10 @@ def main():
         ok(find(rid=rid) is not None, f"главная: виден {rid}")
     banner = find(text="Ключ: осталось", contains=True)
     bt = banner.get("text") if banner is not None else ""
-    ok(re.search(r"осталось (5 минут|4 минуты)$", bt) is not None, f"полоса ключа по-русски при английском Android: «{bt}»")
+    m = re.search(r"осталось (\d+) (минута|минуты|минут)$", bt)
+    n = int(m.group(1)) if m else -1
+    right = "минута" if n % 10 == 1 and n % 100 != 11 else "минуты" if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14 else "минут"
+    ok(m is not None and m.group(2) == right, f"полоса ключа по-русски при английском Android: «{bt}»")
 
     print("2) Способ подключения и приложения")
     tap(rid="modeRow")
@@ -372,7 +379,7 @@ def main():
     tap(text="Главная")
 
     print("6) Конец срока ключа")
-    left = 300 + 75 - (time.time() - activated)  # срок + минута на проверку KeyWatch
+    left = KEY_SECONDS + 75 - (time.time() - activated)  # срок + минута на проверку KeyWatch
     if left > 0:
         print(f"    жду конца срока ключа: {int(left)} с")
         time.sleep(left)
