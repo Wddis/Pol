@@ -247,7 +247,10 @@ public class KeyActivity extends AppCompatActivity {
                 if (g == KeyManager.Gate.BANNED) forceEnter = false;
                 render(g);
                 message.setTextColor(ContextCompat.getColor(this, R.color.danger));
-                message.setText(r.message);
+                // «Тариф закончился» и блокировку уже объясняет экран — красная строка повторяла бы его;
+                // остаются сообщения о сети и прочих ошибках
+                boolean said = !r.network && (g == KeyManager.Gate.EXPIRED || g == KeyManager.Gate.BANNED);
+                message.setText(said ? "" : r.message);
             });
         }, "oda-key").start();
     }

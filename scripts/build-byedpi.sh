@@ -43,5 +43,11 @@ build() {
     echo "$abi: $(du -h "$OUT/$abi/libbyedpi.so" | cut -f1)"
 }
 
-build arm64-v8a "aarch64-linux-android$API-clang"
-build armeabi-v7a "armv7a-linux-androideabi$API-clang"
+# ODA_ABIS — какие ABI собрать (по умолчанию ARM для телефонов; x86_64 — только для эмулятора в CI)
+for abi in ${ODA_ABIS:-arm64-v8a armeabi-v7a}; do
+    case "$abi" in
+        arm64-v8a) build arm64-v8a "aarch64-linux-android$API-clang" ;;
+        armeabi-v7a) build armeabi-v7a "armv7a-linux-androideabi$API-clang" ;;
+        x86_64) build x86_64 "x86_64-linux-android$API-clang" ;;
+    esac
+done

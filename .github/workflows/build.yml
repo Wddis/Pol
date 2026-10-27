@@ -106,6 +106,32 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
+      # Для эмулятора (job «ui») — отдельный APK x86_64: под трансляцией ARM→x86 в эмуляторе падает Go
+      # (Psiphon, IPtProxy), а на телефонах ARM её нет. Телефонный APK выше не меняется.
+      - name: Build emulator APK (x86_64)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_key != '' }}
+        env:
+          ODA_ABIS: x86_64
+        run: |
+          bash scripts/build-snowflake.sh
+          bash scripts/build-psiphon.sh
+          bash scripts/build-byedpi.sh
+          ./gradlew assembleDebug -PodaEmulator --stacktrace
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          for lib in libsnowflake.so libpsiphon.so libbyedpi.so libhev-socks5-tunnel.so libgojni.so; do
+            unzip -l "$APK" | grep -q "lib/x86_64/$lib" || { echo "нет lib/x86_64/$lib"; exit 1; }
+          done
+          if unzip -l "$APK" | grep -q 'lib/arm64-v8a/'; then echo "в APK эмулятора попал ARM"; exit 1; fi
+          cp "$APK" "$RUNNER_TEMP/app-emulator.apk"
+
+      - name: Upload emulator APK
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.test_key != '' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: vpn-app-emulator
+          path: ${{ runner.temp }}/app-emulator.apk
+          if-no-files-found: error
+
   # Интерфейс в эмуляторе Android (на раннерах GitHub есть KVM): APK из job «build», тестовый ключ из запуска
   # вручную; scripts/ui-test.py проходит экраны как человек, скриншоты — в журнале (@@SHOT) и артефакте
   ui:
@@ -121,7 +147,7 @@ jobs:
       - name: Download APK
         uses: actions/download-artifact@v7
         with:
-          name: vpn-app-debug
+          name: vpn-app-emulator
           path: apk
 
       - name: Enable KVM
@@ -142,7 +168,7 @@ jobs:
           profile: pixel_6
           disable-animations: false
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
-          script: python3 scripts/ui-test.py apk/app-debug.apk "$TEST_KEY" ui-shots
+          script: python3 scripts/ui-test.py apk/app-emulator.apk "$TEST_KEY" ui-shots
 
       - name: Upload screenshots
         if: always()
