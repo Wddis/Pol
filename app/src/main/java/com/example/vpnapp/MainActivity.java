@@ -66,6 +66,10 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private TextView appsValue;
     private TextView countryCodeView;
     private TextView countryNameView;
+    private TextView keyChip;
+    private TextView keyBanner;
+    private KeyManager keys;
+    private boolean keyChecking;
 
     // Системный диалог «Разрешить VPN»
     private final ActivityResultLauncher<Intent> vpnPermission = registerForActivityResult(
@@ -86,9 +90,16 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
                 SystemBarStyle.dark(Color.TRANSPARENT),
                 SystemBarStyle.dark(Color.TRANSPARENT));
         super.onCreate(savedInstanceState);
+        keys = KeyManager.get(this);
+        DiagLog.init(this);
+        // Без действующего ключа — сразу экран ключа (главный экран даже не строится)
+        if (keys.gate() != KeyManager.Gate.OK) {
+            startActivity(KeyActivity.intent(this));
+            finish();
+            return;
+        }
         setContentView(R.layout.activity_main);
         prefs = new Prefs(this);
-        DiagLog.init(this);
 
         ViewGroup root = findViewById(R.id.root);
         powerButton = findViewById(R.id.powerButton);
@@ -102,6 +113,11 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         appsValue = findViewById(R.id.appsValue);
         countryCodeView = findViewById(R.id.countryCode);
         countryNameView = findViewById(R.id.countryName);
+        keyChip = findViewById(R.id.keyChip);
+        keyBanner = findViewById(R.id.keyBanner);
+        keyChip.setOnClickListener(v -> OdaSheet.show(getSupportFragmentManager(), OdaSheet.KEY));
+        keyBanner.setOnClickListener(v -> OdaSheet.openBot(this, "renew"));
+        findViewById(R.id.menuButton).setOnClickListener(v -> OdaSheet.show(getSupportFragmentManager(), OdaSheet.MENU));
 
         applyInsets(root);
         // Появление/исчезновение секундомера, теста скорости и строки страны — плавно
@@ -165,6 +181,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private void handleConnectIntent(Intent intent) {
         if (intent == null || !intent.getBooleanExtra(EXTRA_CONNECT, false)) return;
         intent.removeExtra(EXTRA_CONNECT);
+        if (!keyAllowsMain()) return;
         ConnectionState now = StatusBus.current().state;
         if (now == ConnectionState.OFF || now == ConnectionState.ERROR) requestVpn();
     }
@@ -175,6 +192,49 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         started = true;
         firstStatus = true;
         StatusBus.addListener(this);
+        if (!keyAllowsMain()) return;
+        renderKey();
+        keys.maybeWarn();
+        if (keys.checkDue()) checkKeyInBackground();
+    }
+
+    /** Ключ изменился (проверка, смена ключа): нет доступа — экран ключа, иначе обновить срок. */
+    void onKeyChanged() {
+        if (keyAllowsMain()) renderKey();
+    }
+
+    /** Без действующего ключа главного экрана нет: открывается экран ключа. */
+    private boolean keyAllowsMain() {
+        if (isFinishing()) return false;
+        KeyManager.Gate g = keys.gate();
+        if (g == KeyManager.Gate.OK) return true;
+        startActivity(KeyActivity.intent(this));
+        finish();
+        overridePendingTransition(android.R.anim.fade_in, android.R.anim.fade_out);
+        return false;
+    }
+
+    /** Срок ключа вверху и полоса «заканчивается» за 2 дня. */
+    private void renderKey() {
+        String left = keys.leftText();
+        keyChip.setText(getString(R.string.key_chip, left.toUpperCase(Locale.getDefault())));
+        boolean soon = !keys.forever() && keys.secondsLeft() <= 2 * 86400L;
+        keyBanner.setText(getString(R.string.key_banner, left));
+        keyBanner.setVisibility(soon ? View.VISIBLE : View.GONE);
+    }
+
+    /** Проверка ключа при открытии, если давно не проверяли (продлили, заблокировали, удалили в боте). */
+    private void checkKeyInBackground() {
+        if (keyChecking) return;
+        keyChecking = true;
+        int port = StatusBus.current().socksPort;
+        new Thread(() -> {
+            keys.check(null, "", port);
+            main.post(() -> {
+                keyChecking = false;
+                if (!isDestroyed() && started) onKeyChanged();
+            });
+        }, "oda-key-check").start();
     }
 
     @Override
@@ -220,6 +280,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     }
 
     private void requestVpn() {
+        if (!keyAllowsMain()) return;
         Intent prepare;
         try {
             prepare = VpnService.prepare(this);

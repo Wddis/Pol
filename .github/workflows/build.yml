@@ -29,6 +29,11 @@ jobs:
       - name: Test DPI bypass strategies
         run: bash scripts/test-bypass.sh
 
+      # Лицензия ключа в приложении: Ed25519 на Java (векторы RFC 8032) против кода подписи сервера ключей,
+      # защита от подделки срока, чужого телефона, перевода часов назад
+      - name: Test key licenses (Ed25519, License.java)
+        run: bash scripts/test-license.sh
+
       # Telegram-бот и сервер ключей на Cloudflare Workers (bot/worker): имитация пользователей Telegram,
       # администратора и телефонов против локального воркера с D1
       - name: Test Telegram bot on Cloudflare Workers (simulation)

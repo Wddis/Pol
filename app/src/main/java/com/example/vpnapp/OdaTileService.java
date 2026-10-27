@@ -79,6 +79,13 @@ public class OdaTileService extends TileService implements StatusBus.Listener {
             prepare = new Intent();
         }
         String mode = getString(new Prefs(this).getMode().title);
+        KeyManager.Gate gate = KeyManager.get(this).gate();
+        if (gate != KeyManager.Gate.OK && gate != KeyManager.Gate.NEED_CHECK) {
+            // Нет действующего ключа — приложение покажет экран ключа (сервис всё равно не подключит)
+            DiagLog.add("Плитка в шторке: ключ — " + gate + ", открываю приложение");
+            openApp();
+            return;
+        }
         if (prepare != null) {
             // Разрешение на VPN спрашивает только экран приложения
             DiagLog.add("Плитка в шторке: нет разрешения на VPN — открываю приложение");

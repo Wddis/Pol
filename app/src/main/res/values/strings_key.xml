@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Ключ доступа, меню, справка (0.10). Бот: @oda_connect_vpn_bot -->
+<resources>
+    <!-- Экран ключа -->
+    <string name="key_title_enter">Ключ доступа</string>
+    <string name="key_text_enter">Введите ключ из Telegram-бота @oda_connect_vpn_bot. Срок тарифа начнётся с этой минуты.</string>
+    <string name="key_hint">ODA-XXXX-XXXX-XXXX</string>
+    <string name="key_activate">АКТИВИРОВАТЬ</string>
+    <string name="key_checking">ПРОВЕРЯЮ…</string>
+    <string name="key_get">ПОЛУЧИТЬ КЛЮЧ В TELEGRAM</string>
+    <string name="key_trial_hint">Нет ключа? В боте — пробный день бесплатно</string>
+    <string name="key_how_buy">КАК КУПИТЬ</string>
+    <string name="key_support">ПОДДЕРЖКА</string>
+    <string name="key_title_expired">Тариф закончился</string>
+    <string name="key_text_expired">Срок ключа %1$s вышел. Продлите его в Telegram-боте — ключ останется тем же — и нажмите «Проверить снова». Или введите новый ключ.</string>
+    <string name="key_renew">ПРОДЛИТЬ В TELEGRAM</string>
+    <string name="key_recheck">ПРОВЕРИТЬ СНОВА</string>
+    <string name="key_other">ВВЕСТИ ДРУГОЙ КЛЮЧ</string>
+    <string name="key_title_banned">Доступ заблокирован</string>
+    <string name="key_text_banned">Причина: %1$s\nСрок: %2$s\n\nПока действует блокировка, ODA не подключается — и с другим ключом на этом телефоне тоже. Если вы считаете, что это ошибка, напишите в поддержку.</string>
+    <string name="key_ban_forever">навсегда</string>
+    <string name="key_ban_until">до %1$s</string>
+    <string name="key_write_support">НАПИСАТЬ В ПОДДЕРЖКУ</string>
+    <string name="key_title_check">Нужна проверка ключа</string>
+    <string name="key_text_check">ODA давно не связывалась с сервером ключей. Подключитесь к интернету (Wi-Fi или мобильная сеть) и нажмите «Проверить снова».</string>
+    <string name="key_ok">Ключ активирован</string>
+    <string name="key_checked">Ключ проверен</string>
+    <string name="key_paste_found">Ключ вставлен из буфера обмена</string>
+
+    <string name="key_error_format">Ключ — это ODA и 12 букв и цифр, например ODA-7K2Q-M9XD-4TPA</string>
+    <string name="key_error_network">Нет связи с сервером ключей. Проверьте интернет и попробуйте ещё раз</string>
+    <string name="key_error_license">Ответ сервера не прошёл проверку. Попробуйте ещё раз или напишите в поддержку</string>
+    <string name="key_error_server">Сервер ключей не ответил. Попробуйте позже</string>
+
+    <string name="key_lock_banned">Доступ к ODA заблокирован: %1$s</string>
+    <string name="key_lock_expired">Тариф закончился — продлите ключ в Telegram-боте</string>
+    <string name="key_lock_check">Нужна проверка ключа: подключитесь к интернету и откройте ODA</string>
+    <string name="key_lock_none">Нужен ключ доступа — откройте ODA</string>
+
+    <string name="key_forever">бессрочно</string>
+    <plurals name="key_days">
+        <item quantity="one">%d день</item>
+        <item quantity="few">%d дня</item>
+        <item quantity="many">%d дней</item>
+        <item quantity="other">%d дня</item>
+    </plurals>
+    <plurals name="key_hours">
+        <item quantity="one">%d час</item>
+        <item quantity="few">%d часа</item>
+        <item quantity="many">%d часов</item>
+        <item quantity="other">%d часа</item>
+    </plurals>
+    <plurals name="key_minutes">
+        <item quantity="one">%d минута</item>
+        <item quantity="few">%d минуты</item>
+        <item quantity="many">%d минут</item>
+        <item quantity="other">%d минуты</item>
+    </plurals>
+
+    <string name="key_warn_title">Ключ ODA заканчивается через %1$s</string>
+    <string name="key_warn_text">Продлите в Telegram-боте: «Профиль» → «Продлить». Ключ останется тем же.</string>
+    <string name="key_locked_title">ODA: VPN отключён</string>
+    <string name="key_channel">Ключ доступа</string>
+
+    <!-- Главный экран -->
+    <string name="key_chip">КЛЮЧ · %1$s</string>
+    <string name="key_banner">Ключ заканчивается через %1$s · ПРОДЛИТЬ</string>
+    <string name="cd_menu">Меню</string>
+
+    <!-- Меню -->
+    <string name="menu_title">Меню</string>
+    <string name="menu_key">Информация о ключе</string>
+    <string name="menu_buy">Как купить</string>
+    <string name="menu_buy_sub">СБП или Telegram Stars, ключ — в боте</string>
+    <string name="menu_howto">Инструкция</string>
+    <string name="menu_howto_sub">Как подключиться и что делать, если не работает</string>
+    <string name="menu_faq">Частые вопросы</string>
+    <string name="menu_support">Поддержка</string>
+    <string name="menu_support_sub">Написать в Telegram-боте, ответ придёт туда же</string>
+    <string name="menu_bot">Бот ODA в Telegram</string>
+    <string name="menu_bot_sub">\@oda_connect_vpn_bot: ключи, продление, тарифы</string>
+    <string name="menu_privacy">Конфиденциальность</string>
+    <string name="menu_about">О приложении</string>
+
+    <!-- Информация о ключе -->
+    <string name="keyinfo_title">Ключ доступа</string>
+    <string name="keyinfo_key">Ключ</string>
+    <string name="keyinfo_tariff">Тариф</string>
+    <string name="keyinfo_left">Осталось</string>
+    <string name="keyinfo_until">Действует до</string>
+    <string name="keyinfo_devices">Устройства</string>
+    <string name="keyinfo_devices_value">%1$d из %2$d</string>
+    <string name="keyinfo_device">Это устройство</string>
+    <string name="keyinfo_checked">Проверен на сервере</string>
+    <string name="keyinfo_copy">КОПИРОВАТЬ</string>
+    <string name="keyinfo_copied">Ключ скопирован</string>
+    <string name="keyinfo_renew">ПРОДЛИТЬ В TELEGRAM</string>
+    <string name="keyinfo_refresh">ОБНОВИТЬ</string>
+    <string name="keyinfo_change">СМЕНИТЬ КЛЮЧ</string>
+    <string name="keyinfo_change_title">Сменить ключ?</string>
+    <string name="keyinfo_change_text">VPN отключится, ODA попросит ввести ключ. Этот ключ останется в боте (Профиль). Чтобы освободить место устройства на нём — в боте «Сменить устройство».</string>
+    <string name="keyinfo_change_ok">СМЕНИТЬ</string>
+    <string name="keyinfo_cancel">ОТМЕНА</string>
+
+    <!-- Справка -->
+    <string name="info_open_bot">ОТКРЫТЬ БОТА</string>
+    <string name="info_buy"><![CDATA[
+<b>1. Откройте бота</b> @oda_connect_vpn_bot — кнопка ниже — и нажмите «Купить ключ».<br><br>
+<b>2. Выберите срок</b> — 1 неделя, 1 месяц или 3 месяца — и число устройств (от 1 до 5).<br><br>
+<b>3. Оплатите</b> удобным способом:<br>
+• <b>СБП</b> — из приложения вашего банка по QR-коду или ссылке;<br>
+• <b>Telegram Stars</b> — прямо в Telegram.<br><br>
+<b>4. Ключ придёт в чат</b> с ботом — нажмите на него, чтобы скопировать.<br><br>
+<b>5. Вставьте ключ в ODA</b> и нажмите «Активировать». Срок пойдёт с этой минуты.<br><br>
+<b>Продление</b> — в боте: «Профиль» → «Продлить». Ключ остаётся тем же, вводить заново не нужно.<br>
+<b>Сначала попробовать</b> — «Пробный день» в боте, бесплатно, один раз.<br><br>
+<i>Оплата подключается — пока ключи выдаются без оплаты.</i>
+]]></string>
+    <string name="info_howto"><![CDATA[
+<b>1. Нажмите большую кнопку.</b> Android спросит «Подключение VPN» — нажмите «ОК» (один раз).<br><br>
+<b>2. Способ «Авто»</b> сам выберет лучший: обход DPI, Psiphon или Tor. Подключение — 10–30 секунд, в новой сети — до минуты.<br><br>
+<b>3. «Подключено»</b> и секундомер — всё работает. «ТЕСТ СКОРОСТИ» покажет пинг и скорость.<br><br>
+<b>Удобно</b><br>
+• <b>Плитка в шторке</b>: шторка → карандаш «Изменить» → перетащите ODA.<br>
+• <b>Приложения через VPN</b>: банки и госсервисы можно пустить мимо VPN.<br>
+• <b>KILL SWITCH</b>: «Постоянная VPN» и «Блокировать соединения без VPN» — без VPN трафик не пойдёт.<br>
+• <b>Батарея</b>: если VPN отключается сам — Настройки → Приложения → ODA → Батарея → «Без ограничений».<br><br>
+<b>Если не подключается</b><br>
+• Отключите и включите снова; в «СПОСОБ» выберите «Авто».<br>
+• Переключитесь с мобильной сети на Wi-Fi или наоборот.<br>
+• Отключите другой VPN (Настройки → Сеть → VPN).<br>
+• Не помогло — «ЖУРНАЛ» → «КОПИРОВАТЬ» и пришлите в поддержку.
+]]></string>
+    <string name="info_faq"><![CDATA[
+<b>Когда начинается срок?</b><br>С ввода ключа в ODA, не с покупки.<br><br>
+<b>Сколько устройств?</b><br>Сколько выбрано при покупке — от 1 до 5. Каждый телефон, где введён ключ, занимает место.<br><br>
+<b>Новый телефон?</b><br>В боте: «Профиль» → «Сменить устройство», затем введите ключ на новом.<br><br>
+<b>Срок заканчивается?</b><br>ODA напомнит за 2 дня и за 1 день. Продлите в боте, затем в ODA «Проверить снова» — ключ тот же.<br><br>
+<b>Нужен ли интернет для ключа?</b><br>Ключ проверяется подписью прямо на телефоне. Связь с сервером ключей нужна при вводе ключа и хотя бы раз в 7 дней.<br><br>
+<b>За что блокируют?</b><br>За передачу и перепродажу ключа, попытки обойти защиту, нарушение правил. Причину и срок ODA покажет на экране; ошиблись — напишите в поддержку.<br><br>
+<b>Как написать в поддержку?</b><br>«Меню» → «Поддержка»: откроется бот, нажмите «Написать в поддержку». Ответ придёт в бота.
+]]></string>
+    <string name="info_privacy"><![CDATA[
+<b>Что ODA отправляет на сервер ключей</b><br>
+• ключ и отпечаток телефона — не IMEI и не номер, а хэш, вычисленный из идентификатора Android для ODA;<br>
+• модель телефона и версию ODA;<br>
+• включён ли VPN и каким способом — при подключении, отключении и раз в 15 минут.<br><br>
+<b>Что не отправляет</b><br>
+• какие сайты и приложения вы открываете, ваш трафик и его содержимое;<br>
+• IP-адрес не хранится: после неудачного ввода ключа он учитывается 10 минут для защиты от подбора и стирается.<br><br>
+<b>Как идёт трафик</b><br>
+Трафик не проходит через серверы ODA. «Обход DPI» соединяет телефон с сайтом напрямую, Psiphon и Tor — через свои сети.<br><br>
+Удалить данные — напишите в поддержку.
+]]></string>
+    <string name="info_about">ODA %1$s\n\nОдна кнопка — и телефон подключён: обход DPI, Psiphon или Tor, способ ODA выбирает сама.\n\nКлючи, продление и поддержка — Telegram-бот @oda_connect_vpn_bot.</string>
+</resources>

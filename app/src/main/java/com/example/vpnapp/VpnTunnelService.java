@@ -105,6 +105,8 @@ public class VpnTunnelService extends VpnService
     private List<BridgeSet> plan = new ArrayList<>();
     private int attempt;
     @Nullable private String lastReason;
+    // Ключ доступа, пока VPN включён: сигналы серверу ключей, отключение при блокировке
+    private KeyWatch keyWatch;
     // Чем подключены (StatusBus.ENGINE_*); пока не подключены — null
     @Nullable private String engine;
     private boolean torActive;      // Tor пробует способы или подключён
@@ -158,6 +160,7 @@ public class VpnTunnelService extends VpnService
         for (int i = 0; i < bypass.length; i++) bypass[i] = new BypassController(this, worker, i);
         pt = new PtController(this);
         relay = new HelperRelay(HelperRelay.PORT);
+        keyWatch = new KeyWatch(this, worker, this::lockByKey);
         VpnNotification.ensureChannel(this);
     }
 
@@ -213,6 +216,8 @@ public class VpnTunnelService extends VpnService
 
     private void connect() {
         if (active) return;
+        // Ключ проверяется здесь, а не только на экране: плитка в шторке и «Постоянная VPN» его не обойдут
+        if (!keyAllows()) return;
         active = true;
         int id = ++connection;
         netCountry = networkCountry();
@@ -1348,6 +1353,31 @@ public class VpnTunnelService extends VpnService
         return fd;
     }
 
+    /** Можно ли подключаться по ключу; нет — ошибка с причиной (экран ODA покажет экран ключа). */
+    private boolean keyAllows() {
+        KeyManager keys = KeyManager.get(this);
+        KeyManager.Gate g = keys.gate();
+        if (g == KeyManager.Gate.NEED_CHECK) {
+            // Давно не было связи с сервером ключей — спросить сейчас, пока VPN не поднят (напрямую)
+            keys.check(null, "", 0);
+            g = keys.gate();
+        }
+        if (g == KeyManager.Gate.OK) return true;
+        String text = keys.lockText(g);
+        DiagLog.add("Ключ: подключение запрещено — " + text);
+        publish(ConnectionState.ERROR, "", text);
+        finish();
+        return false;
+    }
+
+    /** Ключ заблокирован, удалён или закончился, пока VPN включён. */
+    private void lockByKey(String message) {
+        DiagLog.add("Ключ: VPN отключён — " + message);
+        teardown();
+        publish(ConnectionState.ERROR, "", message);
+        finish();
+    }
+
     private void fail(int messageRes) {
         teardown();
         publish(ConnectionState.ERROR, "", getString(messageRes));
@@ -1361,6 +1391,7 @@ public class VpnTunnelService extends VpnService
     }
 
     private void teardown() {
+        keyWatch.stopped();
         active = false;
         generation++;
         bypassWatch++;
@@ -1410,6 +1441,7 @@ public class VpnTunnelService extends VpnService
     private void publish(ConnectionState state, String detail, String error) {
         boolean on = state == ConnectionState.ON;
         StatusBus.post(state, detail, error, on ? socksPort : 0, on && engine != null ? engine : "");
+        if (on && active && engine != null) keyWatch.connected(engine, socksPort);
         if (active) {
             String title = getString(on ? R.string.status_on : R.string.status_connecting);
             VpnNotification.update(this, title + " · " + getString(prefs.getMode().title), detail,

@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Экран ключа: ввод ключа, «Тариф закончился», «Доступ заблокирован», «Нужна проверка» -->
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg"
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:id="@+id/content"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingStart="@dimen/space_3"
+        android:paddingEnd="@dimen/space_3">
+
+        <TextView
+            style="@style/Text.Oda.Title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginTop="@dimen/space_3"
+            android:text="@string/title" />
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:minHeight="@dimen/space_4" />
+
+        <TextView
+            android:id="@+id/headline"
+            style="@style/Text.Oda.Status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:gravity="center" />
+
+        <TextView
+            android:id="@+id/body"
+            style="@style/Text.Oda.Body"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_2"
+            android:gravity="center"
+            android:lineSpacingExtra="4dp"
+            android:textColor="@color/text_secondary"
+            android:textSize="14sp" />
+
+        <EditText
+            android:id="@+id/keyInput"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/row_height"
+            android:layout_marginTop="@dimen/space_3"
+            android:autofillHints=""
+            android:background="@drawable/bg_input"
+            android:fontFamily="monospace"
+            android:gravity="center"
+            android:hint="@string/key_hint"
+            android:imeOptions="actionDone"
+            android:importantForAutofill="no"
+            android:inputType="textCapCharacters|textNoSuggestions|textVisiblePassword"
+            android:maxLength="24"
+            android:paddingStart="@dimen/space_2"
+            android:paddingEnd="@dimen/space_2"
+            android:singleLine="true"
+            android:textColor="@color/text"
+            android:textColorHint="@color/line"
+            android:textSize="18sp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/primary"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/row_height"
+            android:layout_marginTop="@dimen/space_2"
+            android:backgroundTint="@color/text"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.1"
+            android:textColor="@color/bg"
+            app:cornerRadius="@dimen/corner" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/secondary"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="match_parent"
+            android:layout_height="@dimen/row_height"
+            android:layout_marginTop="@dimen/space_1"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.1"
+            android:textColor="@color/text"
+            app:cornerRadius="@dimen/corner"
+            app:strokeColor="@color/line" />
+
+        <!-- Ошибка или результат -->
+        <TextView
+            android:id="@+id/message"
+            style="@style/Text.Oda.Small"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="@dimen/space_2"
+            android:accessibilityLiveRegion="polite"
+            android:gravity="center"
+            android:minHeight="@dimen/space_4"
+            android:textColor="@color/text" />
+
+        <Space
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1"
+            android:minHeight="@dimen/space_2" />
+
+        <TextView
+            android:id="@+id/trialHint"
+            style="@style/Text.Oda.Small"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="@string/key_trial_hint" />
+
+        <TextView
+            android:id="@+id/getKey"
+            style="@style/Text.Oda.Link"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="@string/key_get"
+            android:textColor="@color/text" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:layout_marginBottom="@dimen/space_2"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/howBuy"
+                style="@style/Text.Oda.Link"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/key_how_buy" />
+
+            <TextView
+                android:id="@+id/support"
+                style="@style/Text.Oda.Link"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/key_support" />
+
+            <TextView
+                android:id="@+id/logLink"
+                style="@style/Text.Oda.Link"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="@string/link_log" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

@@ -8,21 +8,57 @@
     android:paddingStart="@dimen/space_3"
     android:paddingEnd="@dimen/space_3">
 
+    <!-- Верх: срок ключа (лист «Ключ доступа»), название, меню -->
+    <FrameLayout
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/space_6"
+        android:layout_marginTop="@dimen/space_1">
+
+        <TextView
+            android:id="@+id/keyChip"
+            style="@style/Text.Oda.Link"
+            android:layout_width="wrap_content"
+            android:layout_height="match_parent"
+            android:layout_gravity="start|center_vertical"
+            android:paddingStart="0dp"
+            android:paddingEnd="@dimen/space_1" />
+
+        <TextView
+            android:id="@+id/title"
+            style="@style/Text.Oda.Title"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:text="@string/title" />
+
+        <ImageView
+            android:id="@+id/menuButton"
+            android:layout_width="@dimen/space_6"
+            android:layout_height="@dimen/space_6"
+            android:layout_gravity="end|center_vertical"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="@string/cd_menu"
+            android:padding="12dp"
+            android:src="@drawable/ic_menu" />
+    </FrameLayout>
+
+    <!-- Ключ заканчивается (за 2 дня) — продлить в боте -->
     <TextView
-        android:id="@+id/title"
-        style="@style/Text.Oda.Title"
-        android:layout_width="wrap_content"
+        android:id="@+id/keyBanner"
+        style="@style/Text.Oda.Link"
+        android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:layout_gravity="center_horizontal"
-        android:layout_marginTop="@dimen/space_3"
-        android:text="@string/title" />
+        android:layout_marginTop="@dimen/space_1"
+        android:background="@drawable/bg_row"
+        android:textColor="@color/text"
+        android:visibility="gone" />
 
     <!-- Строка выбора страны -->
     <LinearLayout
         android:id="@+id/countryRow"
         android:layout_width="match_parent"
         android:layout_height="@dimen/row_height"
-        android:layout_marginTop="@dimen/space_4"
+        android:layout_marginTop="@dimen/space_3"
         android:background="@drawable/bg_row"
         android:clickable="true"
         android:focusable="true"

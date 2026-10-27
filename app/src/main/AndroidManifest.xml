@@ -34,6 +34,13 @@
             </intent-filter>
         </activity>
 
+        <!-- Ключ доступа: ввод, «закончился», «заблокирован» (без ключа дальше не пройти) -->
+        <activity
+            android:name=".KeyActivity"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- VPN: весь трафик телефона через Tor -->
         <service
             android:name=".VpnTunnelService"
