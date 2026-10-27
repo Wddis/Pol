@@ -84,6 +84,13 @@ PHONE() {
 }
 # Программа «внутри ODA»: uid приложения, мимо VPN
 APP() { NS phone setpriv --reuid "$APP_UID" --regid "$APP_UID" --clear-groups "$@"; }
+# ByeDPI — тоже от uid приложения; имена (SOCKS с именем сайта — так ходит тест скорости) он разрешает
+# системным DNS телефона, у стенда это DNS «оператора» 77.88.8.8 (не закрыт ни в одном профиле)
+APPDNS() {
+    NS phone unshare -m sh -c 'mount --bind "$0/resolv-app.conf" /etc/resolv.conf &&
+        mount --bind "$0/nsswitch.conf" /etc/nsswitch.conf && shift && uid=$1 && shift &&
+        exec setpriv --reuid "$uid" --regid "$uid" --clear-groups "$@"' "$TMP" x "$APP_UID" "$@"
+}
 # «Psiphon»: свой uid, ходит мимо оператора (туннель за границу)
 TUNNEL() { NS phone setpriv --reuid "$TUNNEL_UID" --regid "$TUNNEL_UID" --clear-groups "$@"; }
 
@@ -104,6 +111,7 @@ echo 'package com.example.vpnapp; final class DiagLog { static void add(String s
 javac -nowarn -encoding UTF-8 -d "$TMP/classes" "$TMP/stub/androidx/annotation/Nullable.java" \
     "$TMP/stub/com/example/vpnapp/DiagLog.java" "$SRC/NetProbe.java" "$SRC/BypassSearch.java" \
     "$SRC/BypassProfile.java" "$SRC/Tun2SocksConfig.java" "$SRC/ByeDpiStats.java" "$SRC/HelperRelay.java" \
+    "$SRC/SpeedTest.java" \
     "$ROOT/app/src/test/java/com/example/vpnapp/TunLab.java"
 # Программы стенда работают и от чужих uid: домашняя папка раннера CI им закрыта — копии в $TMP
 cp "$LAB/lab.py" "$LAB/tspu.py" "$TMP/"
@@ -139,6 +147,7 @@ chmod 644 "$TMP"/*.pem "$TMP"/*.key
 phone_dns() { echo "nameserver $1" > "$TMP/resolv.conf"; }
 phone_dns 1.1.1.1
 echo "hosts: files dns" > "$TMP/nsswitch.conf"
+echo "nameserver 77.88.8.8" > "$TMP/resolv-app.conf"
 
 TUNLAB config "$PORT" > "$TMP/hev-new.yml"
 TUNLAB config "$PSIPHON_PORT" psiphon > "$TMP/hev-psiphon.yml"
@@ -193,7 +202,7 @@ start_phone() {  # $1 — конфиг hev, дальше — аргументы 
     local yml="$1"
     shift
     : > "$TMP/byedpi.log"
-    APP "$TMP/ciadpi" "$@" > "$TMP/byedpi.log" 2>&1 &
+    APPDNS "$TMP/ciadpi" "$@" > "$TMP/byedpi.log" 2>&1 &
     PIDS+=($!)
     cp "$yml" "$TMP/hev.yml"
     if [ "$IPV6" = 0 ]; then sed -i "/ipv6:/d" "$TMP/hev.yml"; fi
@@ -395,6 +404,9 @@ for PROFILE in $PROFILES; do
         for t in "${FIRST[@]}"; do fast "$t" 0.1 || ok=0; done
         # До 0.8.9 hev придерживал приветствие SOCKS (MSG_MORE): +0,2 с на DNS и +0,2 с на соединение
         check "$ok" "первый байт через обход быстрее 0,1 с (без задержки hev 0,2 с): ${FIRST[*]}"
+        if APPLAB speedtest "$PORT" "$TMP/ca.pem" > "$TMP/speedtest.txt" 2>&1; then st_ok=1; else st_ok=0; fi
+        echo "    кнопка «ТЕСТ СКОРОСТИ» (SpeedTest через SOCKS ByeDPI): $(grep -v JAVA_TOOL "$TMP/speedtest.txt")"
+        check "$st_ok" "тест скорости приложения измеряет пинг и загрузку"
         echo "   то же через «Psiphon» (подключение через Psiphon, как в журнале 0.8.8):"
         stop_phone
         # Фиктивный DNS (mapdns у hev, Tun2SocksConfig.FAKE_DNS): имена резолвит «Psiphon»

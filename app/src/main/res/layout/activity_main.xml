@@ -55,6 +55,45 @@
             android:src="@drawable/ic_expand" />
     </LinearLayout>
 
+    <!-- Раздельное туннелирование: какие приложения идут через VPN -->
+    <LinearLayout
+        android:id="@+id/appsRow"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/row_height"
+        android:layout_marginTop="@dimen/space_1"
+        android:background="@drawable/bg_row"
+        android:clickable="true"
+        android:focusable="true"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingStart="@dimen/space_2"
+        android:paddingEnd="@dimen/space_2">
+
+        <TextView
+            style="@style/Text.Oda.Body"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:maxLines="1"
+            android:text="@string/apps_row" />
+
+        <TextView
+            android:id="@+id/appsValue"
+            style="@style/Text.Oda.Small"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="@dimen/space_1"
+            android:layout_marginEnd="@dimen/space_1"
+            android:maxLines="1" />
+
+        <ImageView
+            android:layout_width="@dimen/space_3"
+            android:layout_height="@dimen/space_3"
+            android:importantForAccessibility="no"
+            android:src="@drawable/ic_expand" />
+    </LinearLayout>
+
     <Space
         android:layout_width="match_parent"
         android:layout_height="0dp"
@@ -85,15 +124,52 @@
         android:layout_marginTop="@dimen/space_1"
         android:gravity="center" />
 
-    <!-- Проверка IP во встроенном браузере через Tor -->
+    <!-- Секундомер: сколько прошло с подключения (только когда подключено) -->
     <TextView
-        android:id="@+id/checkLink"
-        style="@style/Text.Oda.Link"
+        android:id="@+id/timer"
+        style="@style/Text.Oda.Timer"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/space_2"
+        android:contentDescription="@string/cd_timer"
+        android:visibility="gone" />
+
+    <!-- Журнал — всегда; тест скорости — после подключения -->
+    <LinearLayout
+        android:id="@+id/links"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:layout_gravity="center_horizontal"
         android:layout_marginTop="@dimen/space_1"
-        android:text="@string/link_log" />
+        android:orientation="horizontal">
+
+        <TextView
+            android:id="@+id/logLink"
+            style="@style/Text.Oda.Link"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/link_log" />
+
+        <TextView
+            android:id="@+id/speedLink"
+            style="@style/Text.Oda.Link"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/link_speed"
+            android:visibility="gone" />
+    </LinearLayout>
+
+    <!-- Итог теста скорости -->
+    <TextView
+        android:id="@+id/speedResult"
+        style="@style/Text.Oda.Small"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:accessibilityLiveRegion="polite"
+        android:gravity="center"
+        android:visibility="gone" />
 
     <Space
         android:layout_width="match_parent"

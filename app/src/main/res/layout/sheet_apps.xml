@@ -1,0 +1,90 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/sheet"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@drawable/bg_sheet"
+    android:orientation="vertical"
+    android:paddingBottom="@dimen/space_2">
+
+    <View
+        android:layout_width="@dimen/space_4"
+        android:layout_height="4dp"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/space_2"
+        android:background="@drawable/bg_handle" />
+
+    <TextView
+        style="@style/Text.Oda.Title"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center_horizontal"
+        android:layout_marginTop="@dimen/space_3"
+        android:text="@string/apps_title"
+        android:textColor="@color/text_secondary" />
+
+    <TextView
+        style="@style/Text.Oda.Small"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_1"
+        android:gravity="center"
+        android:paddingStart="@dimen/space_3"
+        android:paddingEnd="@dimen/space_3"
+        android:text="@string/apps_hint" />
+
+    <EditText
+        android:id="@+id/search"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/row_height"
+        android:layout_marginStart="@dimen/space_3"
+        android:layout_marginTop="@dimen/space_2"
+        android:layout_marginEnd="@dimen/space_3"
+        android:autofillHints=""
+        android:background="@drawable/bg_input"
+        android:hint="@string/apps_search"
+        android:importantForAutofill="no"
+        android:inputType="text"
+        android:paddingStart="@dimen/space_2"
+        android:paddingEnd="@dimen/space_2"
+        android:textColor="@color/text"
+        android:textColorHint="@color/text_secondary"
+        android:textSize="14sp" />
+
+    <com.google.android.material.button.MaterialButton
+        android:id="@+id/all"
+        style="@style/Widget.Material3.Button.OutlinedButton"
+        android:layout_width="match_parent"
+        android:layout_height="@dimen/row_height"
+        android:layout_marginStart="@dimen/space_3"
+        android:layout_marginTop="@dimen/space_1"
+        android:layout_marginEnd="@dimen/space_3"
+        android:fontFamily="sans-serif-medium"
+        android:letterSpacing="0.1"
+        android:text="@string/apps_all"
+        android:textColor="@color/text"
+        app:cornerRadius="@dimen/corner"
+        app:strokeColor="@color/line" />
+
+    <TextView
+        android:id="@+id/loading"
+        style="@style/Text.Oda.Small"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="@dimen/space_2"
+        android:gravity="center"
+        android:text="@string/apps_loading" />
+
+    <androidx.core.widget.NestedScrollView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content">
+
+        <LinearLayout
+            android:id="@+id/list"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical" />
+    </androidx.core.widget.NestedScrollView>
+
+</LinearLayout>

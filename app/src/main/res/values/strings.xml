@@ -43,15 +43,42 @@
     <string name="hint_offline">Нет доступа в интернет</string>
 
     <!-- Ссылки -->
-    <string name="link_check">ПРОВЕРИТЬ В БРАУЗЕРЕ</string>
     <string name="link_kill_switch">KILL SWITCH</string>
     <string name="link_bridges">СПОСОБ: %1$s</string>
     <string name="link_log">ЖУРНАЛ</string>
+    <string name="link_speed">ТЕСТ СКОРОСТИ</string>
+    <string name="link_speed_running">ТЕСТ…</string>
+
+    <!-- Тест скорости -->
+    <string name="speed_running">Измеряю пинг и загрузку (до 7 с)…</string>
+    <string name="speed_failed">Тест не прошёл: сервер проверки не ответил. Подробности в ЖУРНАЛЕ</string>
+
+    <!-- Приложения через VPN (раздельное туннелирование) -->
+    <string name="apps_row">Приложения через VPN</string>
+    <string name="apps_value_all">Все</string>
+    <plurals name="apps_value_except">
+        <item quantity="one">Все, кроме %1$d</item>
+        <item quantity="few">Все, кроме %1$d</item>
+        <item quantity="many">Все, кроме %1$d</item>
+        <item quantity="other">Все, кроме %1$d</item>
+    </plurals>
+    <string name="apps_title">Приложения через VPN</string>
+    <string name="apps_hint">Отмеченные идут через ODA. Снимите отметку — приложение будет работать через обычную сеть, мимо VPN</string>
+    <string name="apps_search">Поиск приложения</string>
+    <string name="apps_all">ВСЕ ЧЕРЕЗ VPN</string>
+    <string name="apps_loading">Загружаю список приложений…</string>
+    <string name="apps_via_vpn">Через VPN</string>
+    <string name="apps_direct">Обычная сеть, мимо VPN</string>
+
+    <!-- Плитка в шторке -->
+    <string name="tile_on">Подключено · %1$s</string>
 
     <!-- Журнал -->
     <string name="log_title">Журнал</string>
     <string name="log_copy">КОПИРОВАТЬ</string>
     <string name="log_copied">Журнал скопирован</string>
+    <string name="log_clear">ОЧИСТИТЬ</string>
+    <string name="log_cleared">Журнал очищен, новые записи появятся здесь</string>
     <string name="log_empty">Журнал пуст. Нажмите кнопку подключения, затем откройте журнал снова</string>
 
     <!-- Причины от Tor -->
@@ -120,14 +147,11 @@
     <string name="notif_channel">VPN</string>
     <string name="notif_stop">Отключить</string>
 
-    <!-- Встроенный браузер -->
-    <string name="browser_no_proxy">WebView не поддерживает прокси. Обновите «Android System WebView»</string>
-    <string name="browser_not_connected">Сначала подключитесь</string>
-
     <string name="cd_power_off">Включить</string>
     <string name="cd_power_connecting">Подключение, нажмите для отмены</string>
     <string name="cd_power_on">Отключить</string>
     <string name="cd_selected">Выбрано</string>
+    <string name="cd_timer">Время с подключения</string>
 
     <!-- Коды и названия стран, порядок совпадает -->
     <string-array name="country_codes" translatable="false">

@@ -24,6 +24,13 @@
         <item name="bottomSheetStyle">@style/Widget.Oda.BottomSheet</item>
         <item name="android:backgroundDimAmount">0.7</item>
         <item name="android:navigationBarColor">@color/bg</item>
+        <!-- Листы (способ, журнал, страна, приложения) выезжают и уходят плавно -->
+        <item name="android:windowAnimationStyle">@style/Animation.Oda.Sheet</item>
+    </style>
+
+    <style name="Animation.Oda.Sheet" parent="@android:style/Animation.Dialog">
+        <item name="android:windowEnterAnimation">@anim/sheet_enter</item>
+        <item name="android:windowExitAnimation">@anim/sheet_exit</item>
     </style>
 
     <!-- Фон рисует сам контент листа (с обводкой), контейнер прозрачный -->
@@ -71,6 +78,14 @@
         <item name="android:paddingStart">16dp</item>
         <item name="android:paddingEnd">16dp</item>
         <item name="android:background">?android:attr/selectableItemBackground</item>
+    </style>
+
+    <!-- Секундомер подключения: цифры одной ширины, чтобы не «прыгали» -->
+    <style name="Text.Oda.Timer">
+        <item name="android:fontFamily">sans-serif-light</item>
+        <item name="android:textSize">20sp</item>
+        <item name="android:letterSpacing">0.08</item>
+        <item name="android:fontFeatureSettings">tnum</item>
     </style>
 
     <style name="Text.Oda.Small">

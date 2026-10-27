@@ -24,21 +24,44 @@
         android:text="@string/log_title"
         android:textColor="@color/text_secondary" />
 
-    <com.google.android.material.button.MaterialButton
-        android:id="@+id/copy"
+    <!-- Копировать и очистить: журнал после очистки пишется заново, подключение не трогается -->
+    <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="@dimen/row_height"
+        android:layout_height="wrap_content"
         android:layout_marginStart="@dimen/space_3"
         android:layout_marginEnd="@dimen/space_3"
         android:layout_marginBottom="@dimen/space_2"
-        android:backgroundTint="@color/text"
-        android:fontFamily="sans-serif-medium"
-        android:letterSpacing="0.1"
-        android:text="@string/log_copy"
-        android:textColor="@color/bg"
-        app:cornerRadius="@dimen/corner" />
+        android:orientation="horizontal">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/copy"
+            android:layout_width="0dp"
+            android:layout_height="@dimen/row_height"
+            android:layout_weight="1"
+            android:backgroundTint="@color/text"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.1"
+            android:text="@string/log_copy"
+            android:textColor="@color/bg"
+            app:cornerRadius="@dimen/corner" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/clear"
+            style="@style/Widget.Material3.Button.OutlinedButton"
+            android:layout_width="0dp"
+            android:layout_height="@dimen/row_height"
+            android:layout_marginStart="@dimen/space_1"
+            android:layout_weight="1"
+            android:fontFamily="sans-serif-medium"
+            android:letterSpacing="0.1"
+            android:text="@string/log_clear"
+            android:textColor="@color/text"
+            app:cornerRadius="@dimen/corner"
+            app:strokeColor="@color/line" />
+    </LinearLayout>
 
     <androidx.core.widget.NestedScrollView
+        android:id="@+id/scroll"
         android:layout_width="match_parent"
         android:layout_height="wrap_content">
 

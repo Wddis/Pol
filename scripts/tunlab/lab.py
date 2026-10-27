@@ -45,6 +45,8 @@ SITES = {  # все сайты NetProbe; IPv4 — как в журналах п�
     "rutracker.org": "104.21.32.39",
     "www.google.com": "142.250.74.46",
     "www.cloudflare.com": "104.16.123.96",
+    # Сервер загрузки для кнопки «ТЕСТ СКОРОСТИ» (SpeedTest): /__down?bytes=N
+    "speed.cloudflare.com": "104.16.124.96",
     "www.wikipedia.org": "185.15.59.224",
     "ya.ru": "77.88.55.242",
     "vk.com": "87.240.132.72",
@@ -207,10 +209,14 @@ def serve(cert, key):
             path = data.split(b" ", 2)[1]
             if path == b"/generate_204":
                 t.sendall(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
-            elif path == b"/big":
-                t.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % BIG)
-                for _ in range(BIG // len(body)):
+            elif path == b"/big" or path.startswith(b"/__down"):
+                size = BIG
+                if b"bytes=" in path:
+                    size = min(BIG, int(path.split(b"bytes=")[1].split(b"&")[0]))
+                t.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % size)
+                for _ in range(size // len(body)):
                     t.sendall(body)
+                t.sendall(body[:size % len(body)])
             else:
                 t.sendall(b"HTTP/1.1 200 OK\r\nContent-Length: %d\r\nConnection: close\r\n\r\n" % len(body) + body)
             t.close()

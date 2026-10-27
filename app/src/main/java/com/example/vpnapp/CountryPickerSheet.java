@@ -62,6 +62,7 @@ public class CountryPickerSheet extends BottomSheetDialogFragment {
                     basePadding + bars.bottom);
             return insets;
         });
+        Motion.reveal((ViewGroup) root);
         return root;
     }
 

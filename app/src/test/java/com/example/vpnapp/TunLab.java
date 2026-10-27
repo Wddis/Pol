@@ -33,6 +33,8 @@ import javax.net.ssl.TrustManagerFactory;
  * <li>{@code stats <журнал ByeDPI> <файл стратегии> <порт запасного пути|0>} — сводка ByeDpiStats
  * по выводу ByeDPI (как в журнале приложения); файл стратегии — file.profile от search;</li>
  * <li>{@code why <ip>} — NetProbe.whyUnreachable: по адресу режут или по имени (DPI);</li>
+ * <li>{@code speedtest <порт SOCKS> <ca.pem>} — SpeedTest (кнопка «ТЕСТ СКОРОСТИ»): пинг и загрузка
+ * через SOCKS; код выхода 0, если оба измерены;</li>
  * <li>{@code search <ciadpi> <ca.pem> <порт запасного пути|0> <файл>} — выбор стратегии как в
  * приложении: прямая проверка (эталон), затем BypassSearch пачками по 3 — у каждой стратегии свой
  * процесс ByeDPI (аргументы процесса и маршрут BypassProfile.route) и проверка NetProbe; журнал —
@@ -95,6 +97,15 @@ public final class TunLab {
             case "why":
                 System.out.println(NetProbe.whyUnreachable(args[1], 443));
                 return;
+            case "speedtest": {
+                // Кнопка «ТЕСТ СКОРОСТИ»: тот же SpeedTest через SOCKS способа (здесь — ByeDPI)
+                setupTls(args[2]);
+                SpeedTest.Result r = SpeedTest.run(Integer.parseInt(args[1]));
+                System.out.println(r.summary() + " · принято " + r.bytes / 1024 + " КБ"
+                        + (r.error != null ? " · не прошло: " + r.error : ""));
+                System.exit(r.pingMs >= 0 && r.mbps > 0 && r.error == null ? 0 : 1);
+                return;
+            }
             case "search":
                 setupTls(args[2]);
                 System.exit(search(args[1], Integer.parseInt(args[3]), args[4]) ? 0 : 1);

@@ -46,6 +46,8 @@ public class VpnTunnelService extends VpnService
     public static final String ACTION_STOP = "com.example.vpnapp.action.STOP";
     public static final String ACTION_COUNTRY = "com.example.vpnapp.action.COUNTRY";
     public static final String ACTION_RECONNECT = "com.example.vpnapp.action.RECONNECT";
+    /** Изменился список приложений мимо VPN: пересоздать VPN-интерфейс, способ не переподключать. */
+    public static final String ACTION_APPS = "com.example.vpnapp.action.APPS";
 
     private static final String TAG = "VpnTunnelService";
     private static final int IP_CHECK_ATTEMPTS = 2;
@@ -176,6 +178,8 @@ public class VpnTunnelService extends VpnService
             worker.post(this::changeCountry);
         } else if (ACTION_RECONNECT.equals(action)) {
             worker.post(this::reconnect);
+        } else if (ACTION_APPS.equals(action)) {
+            worker.post(this::applyApps);
         } else {
             // ACTION_START или запуск системой («Постоянная VPN»)
             worker.post(this::connect);
@@ -243,6 +247,7 @@ public class VpnTunnelService extends VpnService
                 + ", режим " + mode + ", страна " + prefs.getCountry()
                 + ", сеть " + networkId.split("-")[0] + " " + netCountry
                 + (underlyingIpv6 ? ", IPv6 есть" : ", IPv6 нет"));
+        logExcludedApps();
         // Интерфейс поднимаем сразу: пока туннель не готов, трафик блокируется, а не уходит мимо
         try {
             tun = establishTun(false);
@@ -985,13 +990,21 @@ public class VpnTunnelService extends VpnService
     // ---------- Туннель и проверка IP ----------
 
     private boolean startTunnel() {
+        return startTunnel(false);
+    }
+
+    /** @param fresh пересоздать VPN-интерфейс, даже если он подходит (изменился список приложений) */
+    private boolean startTunnel(boolean fresh) {
         // Обходу DPI нужен реальный DNS без mapdns: при необходимости переустанавливаем tun
         boolean direct = StatusBus.ENGINE_BYPASS.equals(engine);
-        if (tun == null || !Objects.equals(direct ? bypassDns : null, tunDns)) {
-            stopTunnel();
+        if (fresh || tun == null || !Objects.equals(direct ? bypassDns : null, tunDns)) {
             try {
+                // Новый интерфейс — до закрытия старого: система переключает VPN без окна,
+                // когда трафик шёл бы мимо
+                ParcelFileDescriptor next = establishTun(direct);
+                stopTunnel();
                 if (tun != null) tun.close();
-                tun = establishTun(direct);
+                tun = next;
             } catch (IOException | RuntimeException e) {
                 Log.e(TAG, "re-establish tun", e);
                 fail(R.string.error_tun);
@@ -1017,6 +1030,32 @@ public class VpnTunnelService extends VpnService
         }
         tunnelRunning = true;
         return true;
+    }
+
+    /** Список «мимо VPN» изменился при подключённом VPN: новый интерфейс, способ остаётся тем же. */
+    private void applyApps() {
+        logExcludedApps();
+        if (!active || tun == null) return;
+        DiagLog.add("Приложения мимо VPN изменились: VPN-интерфейс пересоздаётся, способ не переподключается");
+        if (tunnelRunning) {
+            startTunnel(true);
+            return;
+        }
+        // Ещё подключаемся: интерфейс пока только держит трафик — заменить его на новый
+        try {
+            ParcelFileDescriptor next = establishTun(tunDns != null);
+            tun.close();
+            tun = next;
+        } catch (IOException | RuntimeException e) {
+            Log.e(TAG, "apps: re-establish tun", e);
+            fail(R.string.error_tun);
+        }
+    }
+
+    private void logExcludedApps() {
+        java.util.Set<String> apps = prefs.getExcludedApps();
+        DiagLog.add(apps.isEmpty() ? "Приложения: все через VPN"
+                : "Приложения мимо VPN (обычная сеть): " + apps.size() + " — " + TextUtils.join(", ", apps));
     }
 
     private void stopTunnel() {
@@ -1292,6 +1331,15 @@ public class VpnTunnelService extends VpnService
         } catch (PackageManager.NameNotFoundException e) {
             throw new IOException(e);
         }
+        // Раздельное туннелирование: выбранные пользователем приложения — через обычную сеть
+        for (String pkg : prefs.getExcludedApps()) {
+            if (pkg.equals(getPackageName())) continue;
+            try {
+                b.addDisallowedApplication(pkg);
+            } catch (PackageManager.NameNotFoundException ignored) {
+                // приложение удалили — пропускаем
+            }
+        }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             b.setMetered(false);
         }
@@ -1364,12 +1412,14 @@ public class VpnTunnelService extends VpnService
         StatusBus.post(state, detail, error, on ? socksPort : 0, on && engine != null ? engine : "");
         if (active) {
             String title = getString(on ? R.string.status_on : R.string.status_connecting);
-            VpnNotification.update(this, title + " · " + prefs.getCountry(), detail);
+            VpnNotification.update(this, title + " · " + getString(prefs.getMode().title), detail,
+                    StatusBus.current().connectedAt);
         }
+        OdaTileService.refresh(this);
     }
 
     private boolean goForeground(String title) {
-        Notification n = VpnNotification.build(this, title, prefs.getCountry());
+        Notification n = VpnNotification.build(this, title, getString(prefs.getMode().title), 0);
         int type = Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE
                 ? ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED : 0;
         try {

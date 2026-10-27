@@ -10,9 +10,11 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 
-/** Настройки: страна, режим мостов, свои мосты, последний рабочий способ. */
+/** Настройки: страна, режим мостов, свои мосты, последний рабочий способ, приложения мимо VPN. */
 public final class Prefs {
 
     private static final String FILE = "oda_prefs";
@@ -27,6 +29,8 @@ public final class Prefs {
     private static final String KEY_MOAT = "moat_cache";
     private static final String KEY_DIRECT_FAILED = "direct_failed";
     private static final String KEY_OBFS4_FAILED = "obfs4_failed";
+    private static final String KEY_EXCLUDED_APPS = "excluded_apps";
+    private static final String KEY_TILE_OFFERED = "tile_offered";
     private static final String DEFAULT_COUNTRY = Country.ANY;
 
     private final SharedPreferences sp;
@@ -136,6 +140,27 @@ public final class Prefs {
 
     void setObfs4Failed(boolean failed) {
         sp.edit().putBoolean(KEY_OBFS4_FAILED, failed).apply();
+    }
+
+    /**
+     * Приложения, которые идут мимо VPN (обычная сеть). Пусто — через VPN все (по умолчанию).
+     * Копия: набор из SharedPreferences менять нельзя.
+     */
+    Set<String> getExcludedApps() {
+        return new HashSet<>(sp.getStringSet(KEY_EXCLUDED_APPS, new HashSet<>()));
+    }
+
+    void setExcludedApps(Set<String> packages) {
+        sp.edit().putStringSet(KEY_EXCLUDED_APPS, new HashSet<>(packages)).apply();
+    }
+
+    /** Добавить плитку в шторку уже предлагали (Android 13+, один раз). */
+    boolean isTileOffered() {
+        return sp.getBoolean(KEY_TILE_OFFERED, false);
+    }
+
+    void setTileOffered() {
+        sp.edit().putBoolean(KEY_TILE_OFFERED, true).apply();
     }
 
     /** Мосты, полученные от Moat в прошлый раз (на случай, если Moat недоступен). */

@@ -2,6 +2,7 @@ package com.example.vpnapp;
 
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 
 import androidx.annotation.MainThread;
 import androidx.annotation.NonNull;
@@ -20,13 +21,21 @@ public final class StatusBus {
         public final int socksPort;
         /** Чем подключены: ENGINE_TOR, ENGINE_PSIPHON или "" (пока не подключены). */
         public final String engine;
+        /**
+         * Когда подключились ({@link SystemClock#elapsedRealtime}), 0 — не подключены. Не сбрасывается
+         * короткими «Подключение…» после подключения (переход Psiphon → обход DPI, перезапуск Psiphon):
+         * секундомер считает время с первого подключения до отключения.
+         */
+        public final long connectedAt;
 
-        public Status(ConnectionState state, String detail, String error, int socksPort, String engine) {
+        public Status(ConnectionState state, String detail, String error, int socksPort, String engine,
+                      long connectedAt) {
             this.state = state;
             this.detail = detail != null ? detail : "";
             this.error = error != null ? error : "";
             this.socksPort = socksPort;
             this.engine = engine != null ? engine : "";
+            this.connectedAt = connectedAt;
         }
     }
 
@@ -40,7 +49,7 @@ public final class StatusBus {
 
     private static final Handler MAIN = new Handler(Looper.getMainLooper());
     private static final List<Listener> LISTENERS = new CopyOnWriteArrayList<>();
-    private static volatile Status current = new Status(ConnectionState.OFF, "", "", 0, "");
+    private static volatile Status current = new Status(ConnectionState.OFF, "", "", 0, "", 0);
 
     private StatusBus() {
     }
@@ -50,9 +59,15 @@ public final class StatusBus {
     }
 
     /** Можно вызывать из любого потока; слушатели получат событие в UI-потоке. */
-    public static void post(ConnectionState state, String detail, String error, int socksPort,
-                            String engine) {
-        Status status = new Status(state, detail, error, socksPort, engine);
+    public static synchronized void post(ConnectionState state, String detail, String error, int socksPort,
+                                         String engine) {
+        long since = current.connectedAt;
+        if (state == ConnectionState.ON) {
+            if (since == 0) since = SystemClock.elapsedRealtime();
+        } else if (state != ConnectionState.CONNECTING) {
+            since = 0;
+        }
+        Status status = new Status(state, detail, error, socksPort, engine, since);
         current = status;
         MAIN.post(() -> {
             for (Listener l : LISTENERS) l.onStatus(status);

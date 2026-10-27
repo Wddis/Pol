@@ -101,6 +101,9 @@ public class BridgesSheet extends BottomSheetDialogFragment {
                     basePadding + bars.bottom);
             return insets;
         });
+        // Поля «свои мосты» и «свои аргументы ByeDPI» раскрываются плавно, лист выезжает с содержимым
+        Motion.animateLayout((ViewGroup) customBox.getParent());
+        Motion.reveal((ViewGroup) root);
         return root;
     }
 

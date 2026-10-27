@@ -1,17 +1,24 @@
 package com.example.vpnapp;
 
 import android.Manifest;
+import android.app.StatusBarManager;
 import android.content.ActivityNotFoundException;
+import android.content.ComponentName;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
+import android.graphics.drawable.Icon;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
+import android.os.SystemClock;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.animation.DecelerateInterpolator;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -32,19 +39,31 @@ import java.util.Locale;
 /** Единственный экран: выбор страны, кнопка, статус. Состояние приходит из StatusBus. */
 public class MainActivity extends AppCompatActivity implements StatusBus.Listener {
 
+    /** Открыть экран и сразу подключиться (плитка в шторке, когда сама подключить не может). */
+    public static final String EXTRA_CONNECT = "com.example.vpnapp.extra.CONNECT";
+
     private static final long SCREEN_FADE_MS = 500;
     private static final long TEXT_FADE_MS = 150;
 
+    private final Handler main = new Handler(Looper.getMainLooper());
+    private final Runnable ticker = this::tick;
+
     private Prefs prefs;
     private ConnectionState state = ConnectionState.OFF;
+    private long connectedAt;
     private boolean firstStatus = true;
+    private boolean started;
+    private boolean speedRunning;
 
     private PowerButtonView powerButton;
     private TextView statusView;
     private TextView detailsView;
     private TextView errorView;
-    private TextView checkLink;
+    private TextView timerView;
+    private TextView speedLink;
+    private TextView speedResult;
     private TextView bridgesLink;
+    private TextView appsValue;
     private TextView countryCodeView;
     private TextView countryNameView;
 
@@ -71,33 +90,36 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         prefs = new Prefs(this);
         DiagLog.init(this);
 
-        View root = findViewById(R.id.root);
+        ViewGroup root = findViewById(R.id.root);
         powerButton = findViewById(R.id.powerButton);
         statusView = findViewById(R.id.status);
         detailsView = findViewById(R.id.details);
         errorView = findViewById(R.id.error);
-        checkLink = findViewById(R.id.checkLink);
+        timerView = findViewById(R.id.timer);
+        speedLink = findViewById(R.id.speedLink);
+        speedResult = findViewById(R.id.speedResult);
         bridgesLink = findViewById(R.id.bridgesLink);
+        appsValue = findViewById(R.id.appsValue);
         countryCodeView = findViewById(R.id.countryCode);
         countryNameView = findViewById(R.id.countryName);
 
         applyInsets(root);
+        // Появление/исчезновение секундомера, теста скорости и строки страны — плавно
+        Motion.animateLayout(root);
+        Motion.animateLayout(findViewById(R.id.links));
         showCountry();
         showBridgeMode();
+        showApps();
 
         findViewById(R.id.countryRow).setOnClickListener(v -> openPicker());
+        findViewById(R.id.appsRow).setOnClickListener(v -> openApps());
         powerButton.setOnClickListener(v -> {
             haptic(v);
             onPowerClick();
         });
-        // Под статусом: «Проверить в браузере» при подключении, иначе «Журнал»
-        checkLink.setOnClickListener(v -> {
-            if (state == ConnectionState.ON) {
-                startActivity(new Intent(this, BrowserActivity.class));
-            } else {
-                openLog();
-            }
-        });
+        // Журнал доступен всегда: и до, и после подключения
+        findViewById(R.id.logLink).setOnClickListener(v -> openLog());
+        speedLink.setOnClickListener(v -> runSpeedTest());
         findViewById(R.id.killSwitch).setOnClickListener(v -> openKillSwitchSettings());
         bridgesLink.setOnClickListener(v -> openBridges());
 
@@ -115,24 +137,50 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
                         sendToService(VpnTunnelService.ACTION_RECONNECT);
                     }
                 });
+        getSupportFragmentManager().setFragmentResultListener(
+                AppsSheet.REQUEST_KEY, this, (key, result) -> {
+                    showApps();
+                    // При включённом VPN список применяется сразу: пересоздаётся только интерфейс
+                    if (state == ConnectionState.ON || state == ConnectionState.CONNECTING) {
+                        sendToService(VpnTunnelService.ACTION_APPS);
+                    }
+                });
 
         if (savedInstanceState == null) {
             // Плавное появление экрана
             root.setAlpha(0f);
             root.animate().alpha(1f).setDuration(SCREEN_FADE_MS)
                     .setInterpolator(new DecelerateInterpolator()).start();
+            handleConnectIntent(getIntent());
         }
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        handleConnectIntent(intent);
+    }
+
+    /** Плитка в шторке попросила подключиться (нет разрешения на VPN или сервис не запустился). */
+    private void handleConnectIntent(Intent intent) {
+        if (intent == null || !intent.getBooleanExtra(EXTRA_CONNECT, false)) return;
+        intent.removeExtra(EXTRA_CONNECT);
+        ConnectionState now = StatusBus.current().state;
+        if (now == ConnectionState.OFF || now == ConnectionState.ERROR) requestVpn();
     }
 
     @Override
     protected void onStart() {
         super.onStart();
+        started = true;
         firstStatus = true;
         StatusBus.addListener(this);
     }
 
     @Override
     protected void onStop() {
+        started = false;
+        main.removeCallbacks(ticker);
         StatusBus.removeListener(this);
         super.onStop();
     }
@@ -142,6 +190,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         // Первый снимок после открытия экрана — без анимации
         boolean animate = !firstStatus;
         firstStatus = false;
+        connectedAt = status.connectedAt;
         render(status.state, status.detail, status.error, animate);
     }
 
@@ -154,6 +203,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
             case CONNECTING:
             case ON:
                 sendToService(VpnTunnelService.ACTION_STOP);
+                connectedAt = 0;
                 render(ConnectionState.OFF, "", "", true);
                 break;
         }
@@ -230,6 +280,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     }
 
     private void render(ConnectionState newState, String detail, String error, boolean animate) {
+        boolean becameOn = newState == ConnectionState.ON && state != ConnectionState.ON;
         state = newState;
         powerButton.setState(newState, animate);
 
@@ -247,7 +298,78 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         setText(statusView, getString(status), animate);
         setText(detailsView, detail, animate);
         setText(errorView, newState == ConnectionState.ERROR ? error : "", animate);
-        checkLink.setText(newState == ConnectionState.ON ? R.string.link_check : R.string.link_log);
+
+        boolean on = newState == ConnectionState.ON;
+        speedLink.setVisibility(on ? View.VISIBLE : View.GONE);
+        if (!on) speedResult.setVisibility(View.GONE);
+        // Секундомер — и в коротком «Подключение…» после подключения (переход способа), с прежнего времени
+        timerView.setVisibility(connectedAt > 0 ? View.VISIBLE : View.GONE);
+        main.removeCallbacks(ticker);
+        if (connectedAt > 0 && started) tick();
+        if (becameOn && animate) offerTile();
+    }
+
+    /** Секундомер: обновление ровно на смене секунды. */
+    private void tick() {
+        if (connectedAt <= 0) return;
+        long ms = SystemClock.elapsedRealtime() - connectedAt;
+        timerView.setText(formatElapsed(ms / 1000));
+        main.postDelayed(ticker, 1000 - ms % 1000);
+    }
+
+    /** «05:42», после часа — «1:05:42». */
+    static String formatElapsed(long seconds) {
+        long h = seconds / 3600;
+        long m = seconds / 60 % 60;
+        long s = seconds % 60;
+        return h > 0 ? String.format(Locale.ROOT, "%d:%02d:%02d", h, m, s)
+                : String.format(Locale.ROOT, "%02d:%02d", m, s);
+    }
+
+    /**
+     * Тест скорости через тот способ, которым подключены (его SOCKS) — см. {@link SpeedTest}.
+     * Итог — под кнопкой и в журнале.
+     */
+    private void runSpeedTest() {
+        StatusBus.Status s = StatusBus.current();
+        if (speedRunning || s.state != ConnectionState.ON || s.socksPort <= 0) return;
+        speedRunning = true;
+        speedLink.setText(R.string.link_speed_running);
+        speedLink.setEnabled(false);
+        speedResult.setVisibility(View.VISIBLE);
+        setText(speedResult, getString(R.string.speed_running), true);
+        String engine = s.engine;
+        int port = s.socksPort;
+        new Thread(() -> {
+            SpeedTest.Result r = SpeedTest.run(port);
+            DiagLog.add("Тест скорости (" + engine + "): " + r.summary() + ", принято "
+                    + r.bytes / 1024 + " КБ" + (r.error != null ? " · не прошло: " + r.error : ""));
+            main.post(() -> {
+                speedRunning = false;
+                if (isDestroyed()) return;
+                speedLink.setText(R.string.link_speed);
+                speedLink.setEnabled(true);
+                if (state != ConnectionState.ON) return;
+                String text = r.pingMs < 0 && r.mbps < 0
+                        ? getString(R.string.speed_failed) : r.summary();
+                setText(speedResult, text, true);
+            });
+        }, "oda-speed").start();
+    }
+
+    /** Android 13+: один раз после первого подключения предложить плитку в шторку. */
+    private void offerTile() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || prefs.isTileOffered()) return;
+        StatusBarManager sbm = getSystemService(StatusBarManager.class);
+        if (sbm == null) return;
+        prefs.setTileOffered();
+        try {
+            sbm.requestAddTileService(new ComponentName(this, OdaTileService.class),
+                    getString(R.string.app_name), Icon.createWithResource(this, R.drawable.ic_power),
+                    getMainExecutor(), result -> { });
+        } catch (RuntimeException ignored) {
+            // оболочка производителя не поддерживает — плитку можно добавить вручную
+        }
     }
 
     private void showCountry() {
@@ -264,6 +386,12 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         findViewById(R.id.countryRow).setVisibility(hasCountry ? View.VISIBLE : View.GONE);
     }
 
+    private void showApps() {
+        int n = prefs.getExcludedApps().size();
+        appsValue.setText(n == 0 ? getString(R.string.apps_value_all)
+                : getResources().getQuantityString(R.plurals.apps_value_except, n, n));
+    }
+
     private void openLog() {
         if (getSupportFragmentManager().findFragmentByTag(LogSheet.TAG) != null) return;
         new LogSheet().show(getSupportFragmentManager(), LogSheet.TAG);
@@ -272,6 +400,11 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private void openBridges() {
         if (getSupportFragmentManager().findFragmentByTag(BridgesSheet.TAG) != null) return;
         new BridgesSheet().show(getSupportFragmentManager(), BridgesSheet.TAG);
+    }
+
+    private void openApps() {
+        if (getSupportFragmentManager().findFragmentByTag(AppsSheet.TAG) != null) return;
+        new AppsSheet().show(getSupportFragmentManager(), AppsSheet.TAG);
     }
 
     private void openPicker() {

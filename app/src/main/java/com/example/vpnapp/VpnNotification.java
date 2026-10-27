@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
+import android.os.SystemClock;
 
 import androidx.core.app.NotificationCompat;
 
@@ -32,7 +33,10 @@ final class VpnNotification {
         nm.createNotificationChannel(ch);
     }
 
-    static Notification build(Context context, String title, String text) {
+    /** @param connectedAt момент подключения (elapsedRealtime) — секундомер в уведомлении; 0 — без него */
+    static Notification build(Context context, String title, String text, long connectedAt) {
+        boolean timer = connectedAt > 0;
+        long when = timer ? System.currentTimeMillis() - (SystemClock.elapsedRealtime() - connectedAt) : 0;
         return new NotificationCompat.Builder(context, CHANNEL)
                 .setSmallIcon(R.drawable.ic_power)
                 .setContentTitle(title)
@@ -42,17 +46,19 @@ final class VpnNotification {
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
                 .setSilent(true)
-                .setShowWhen(false)
+                .setShowWhen(timer)
+                .setWhen(when)
+                .setUsesChronometer(timer)
                 .setCategory(NotificationCompat.CATEGORY_SERVICE)
                 .setPriority(NotificationCompat.PRIORITY_LOW)
                 .build();
     }
 
-    static void update(Context context, String title, String text) {
+    static void update(Context context, String title, String text, long connectedAt) {
         NotificationManager nm = (NotificationManager) context.getSystemService(Context.NOTIFICATION_SERVICE);
         if (nm == null) return;
         try {
-            nm.notify(ID, build(context, title, text));
+            nm.notify(ID, build(context, title, text, connectedAt));
         } catch (SecurityException ignored) {
             // нет разрешения на уведомления: сервис всё равно работает
         }

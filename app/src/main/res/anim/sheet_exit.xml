@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Лист уходит вниз: короче появления, с разгоном -->
+<set xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shareInterpolator="false">
+    <translate
+        android:duration="260"
+        android:fromYDelta="0"
+        android:interpolator="@anim/ease_in"
+        android:toYDelta="100%" />
+    <alpha
+        android:duration="260"
+        android:fromAlpha="1"
+        android:interpolator="@anim/ease_in"
+        android:toAlpha="0" />
+</set>
