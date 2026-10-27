@@ -42,12 +42,14 @@ public class BridgesSheet extends BottomSheetDialogFragment {
     private TextView parseResult;
     private View byedpiBox;
     private EditText byedpiInput;
+    private Prefs prefs;
+    private boolean saved;
 
     @Nullable
     @Override
     public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup container,
                              @Nullable Bundle savedInstanceState) {
-        Prefs prefs = new Prefs(requireContext());
+        prefs = new Prefs(requireContext());
         View root = inflater.inflate(R.layout.sheet_bridges, container, false);
         LinearLayout list = root.findViewById(R.id.list);
         customBox = root.findViewById(R.id.customBox);
@@ -90,7 +92,7 @@ public class BridgesSheet extends BottomSheetDialogFragment {
         }
         updateSelection();
 
-        root.findViewById(R.id.save).setOnClickListener(v -> save(prefs));
+        root.findViewById(R.id.save).setOnClickListener(v -> save());
 
         // Отступ под системную панель навигации
         final int basePadding = root.getPaddingBottom();
@@ -142,10 +144,22 @@ public class BridgesSheet extends BottomSheetDialogFragment {
         parseResult.setText(msg);
     }
 
+    /**
+     * Другой способ применяется сразу и лист закрывается (галочка успевает переехать) — без лишнего «Сохранить».
+     * «Свои мосты» ждут ввода; поля «Авто» и «Обход DPI» правятся, когда способ уже выбран, — тогда «Сохранить».
+     */
     private void select(BridgeMode mode) {
+        boolean same = mode == selected;
         selected = mode;
         updateSelection();
-        if (mode == BridgeMode.CUSTOM) customInput.requestFocus();
+        if (mode == BridgeMode.CUSTOM) {
+            customInput.requestFocus();
+            return;
+        }
+        View root = getView();
+        if (!same && root != null) root.postDelayed(() -> {
+            if (isAdded()) save();
+        }, 220);
     }
 
     private void updateSelection() {
@@ -162,7 +176,9 @@ public class BridgesSheet extends BottomSheetDialogFragment {
         byedpiBox.setVisibility(showByedpi ? View.VISIBLE : View.GONE);
     }
 
-    private void save(Prefs prefs) {
+    private void save() {
+        if (saved) return;
+        saved = true;
         String text = customInput.getText().toString().trim();
         String byedpi = byedpiInput.getText().toString().trim();
         boolean changed = prefs.getMode() != selected || !text.equals(prefs.getCustomBridges())

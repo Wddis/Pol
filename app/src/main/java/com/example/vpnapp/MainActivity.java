@@ -473,7 +473,6 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         timerView.setVisibility(connectedAt > 0 ? View.VISIBLE : View.INVISIBLE);
         main.removeCallbacks(ticker);
         if (connectedAt > 0 && started) tick();
-        if (becameOn && animate) offerTile();
     }
 
     /**
@@ -615,21 +614,6 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         }, "oda-speed").start();
     }
 
-    /** Android 13+: один раз после первого подключения предложить плитку в шторку. */
-    private void offerTile() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || prefs.isTileOffered()) return;
-        StatusBarManager sbm = getSystemService(StatusBarManager.class);
-        if (sbm == null) return;
-        prefs.setTileOffered();
-        try {
-            sbm.requestAddTileService(new ComponentName(this, OdaTileService.class),
-                    getString(R.string.app_name), Icon.createWithResource(this, R.drawable.ic_power),
-                    getMainExecutor(), result -> { });
-        } catch (RuntimeException ignored) {
-            // оболочка производителя не поддерживает — плитку можно добавить вручную
-        }
-    }
-
     // ---------- строки главной ----------
 
     private void showRows() {
@@ -649,7 +633,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private String appsText() {
         int n = prefs.getExcludedApps().size();
         return n == 0 ? getString(R.string.apps_row_sub_all)
-                : getResources().getQuantityString(R.plurals.apps_value_except, n, n);
+                : Ui.plural(this, R.plurals.apps_value_except, n);
     }
 
     /** Заполнить строку-карточку (item_row). accent — зелёная иконка на зелёной подложке. */

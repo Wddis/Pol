@@ -452,14 +452,14 @@ final class KeyManager {
         long s = secondsLeft();
         if (s >= 86400) {
             int n = (int) ((s + 86399) / 86400);
-            return ctx.getResources().getQuantityString(R.plurals.key_days, n, n);
+            return Ui.plural(ctx, R.plurals.key_days, n);
         }
         if (s >= 3600) {
             int n = (int) ((s + 3599) / 3600);
-            return ctx.getResources().getQuantityString(R.plurals.key_hours, n, n);
+            return Ui.plural(ctx, R.plurals.key_hours, n);
         }
         int n = (int) Math.max(1, (s + 59) / 60);
-        return ctx.getResources().getQuantityString(R.plurals.key_minutes, n, n);
+        return Ui.plural(ctx, R.plurals.key_minutes, n);
     }
 
     // ---------- уведомления ----------

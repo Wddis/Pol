@@ -30,7 +30,6 @@ public final class Prefs {
     private static final String KEY_DIRECT_FAILED = "direct_failed";
     private static final String KEY_OBFS4_FAILED = "obfs4_failed";
     private static final String KEY_EXCLUDED_APPS = "excluded_apps";
-    private static final String KEY_TILE_OFFERED = "tile_offered";
     private static final String KEY_KILL_SWITCH = "kill_switch";
     private static final String KEY_TAB = "tab";
     private static final String DEFAULT_COUNTRY = Country.ANY;
@@ -154,15 +153,6 @@ public final class Prefs {
 
     void setExcludedApps(Set<String> packages) {
         sp.edit().putStringSet(KEY_EXCLUDED_APPS, new HashSet<>(packages)).apply();
-    }
-
-    /** Добавить плитку в шторку уже предлагали (Android 13+, один раз). */
-    boolean isTileOffered() {
-        return sp.getBoolean(KEY_TILE_OFFERED, false);
-    }
-
-    void setTileOffered() {
-        sp.edit().putBoolean(KEY_TILE_OFFERED, true).apply();
     }
 
     /** Мосты, полученные от Moat в прошлый раз (на случай, если Moat недоступен). */

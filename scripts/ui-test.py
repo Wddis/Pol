@@ -165,6 +165,31 @@ def crashed():
     return [l for l in log.splitlines() if PKG in l or "FATAL EXCEPTION" in l]
 
 
+def crash_report():
+    """Полный отчёт о падении: буфер crash и последний tombstone (бэктрейс нативного кода)."""
+    print("---- logcat -b crash ----")
+    print(adb("logcat -d -b crash", timeout=30).decode(errors="replace")[-12000:])
+    adb("root", timeout=30)
+    time.sleep(2)
+    names = adb("shell ls -t /data/tombstones", timeout=30).decode(errors="replace").split()
+    txt = [n for n in names if n.startswith("tombstone_") and not n.endswith(".pb")]
+    if txt:
+        print(f"---- /data/tombstones/{txt[0]} ----")
+        print(adb(f"shell head -c 9000 /data/tombstones/{txt[0]}", timeout=30).decode(errors="replace"))
+    print("---- конец отчёта ----", flush=True)
+
+
+def foreground():
+    """ODA на экране: после падения или системного окна — запустить снова."""
+    if find(rid="nav") is None and find(rid="powerButton") is None:
+        for label in ("Do not add tile", "Не добавлять"):
+            n = find(text=label)
+            if n is not None:
+                tap_node(n)
+        adb(f"shell am start -n {PKG}/.MainActivity")
+        time.sleep(3)
+
+
 # ---------- сценарий ----------
 
 def main():
@@ -193,11 +218,17 @@ def main():
     ok(not bad, "главная: тексты не налезают друг на друга" + (": " + ", ".join(bad) if bad else ""))
     for rid in ("modeRow", "appsRow", "powerButton", "status", "speedCard", "toolsCard", "nav"):
         ok(find(rid=rid) is not None, f"главная: виден {rid}")
+    banner = find(text="Ключ: осталось", contains=True)
+    bt = banner.get("text") if banner is not None else ""
+    ok(re.search(r"осталось (5 минут|4 минуты)$", bt) is not None, f"полоса ключа по-русски при английском Android: «{bt}»")
 
     print("2) Способ подключения и приложения")
     tap(rid="modeRow")
+    time.sleep(1.5)  # лист выезжает
     shot("способ")
-    tap(text="Psiphon")
+    tap(text="Psiphon")  # другой способ применяется сразу, лист закрывается сам
+    time.sleep(1.5)
+    ok(find(rid="powerButton") is not None, "лист способа закрылся сам после выбора")
     close_sheet()
     shot("главная-после-смены-способа")
     ok(find(text="Psiphon", rid="title") is not None, "способ сменился на Psiphon")
@@ -205,8 +236,11 @@ def main():
         ok(find(rid=rid) is not None, f"после смены способа виден {rid} (баг 0.11.1: нижние карточки пропадали)")
     ok(not overlaps(), "после смены способа ничего не налезает")
     tap(rid="modeRow")
+    time.sleep(1.5)
     tap(text="Авто")
+    time.sleep(1.5)
     close_sheet()
+    ok(find(text="Авто", rid="title") is not None, "способ вернулся на «Авто»")
     tap(rid="appsRow")
     time.sleep(3)
     shot("приложения")
@@ -255,11 +289,18 @@ def main():
         time.sleep(12)
         shot("тест-скорости")
         tap(rid="modeRow")
+        time.sleep(1.5)
         tap(text="Обход DPI")
+        time.sleep(1.5)
         close_sheet()
         time.sleep(3)
         shot("подключено-смена-способа")
         ok(find(rid="toolsCard") is not None and not overlaps(), "смена способа при подключении: всё на месте")
+    c = crashed()
+    ok(not c, "подключение: приложение не упало")
+    if c:
+        crash_report()
+    foreground()
     tap(text="История")
     shot("история-после")
     tap(text="Главная")
@@ -276,7 +317,9 @@ def main():
 
     print("7) Падения")
     c = crashed()
-    ok(not c, "приложение ни разу не упало" + ("" if not c else ":\n" + "\n".join(c[:30])))
+    ok(not c, "приложение ни разу не упало")
+    if c:
+        crash_report()
 
 
 try:

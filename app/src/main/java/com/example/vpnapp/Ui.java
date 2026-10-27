@@ -2,7 +2,10 @@ package com.example.vpnapp;
 
 import android.content.Context;
 import android.content.res.Configuration;
+import android.content.res.Resources;
 import android.util.DisplayMetrics;
+
+import java.util.Locale;
 
 /**
  * Размеры экрана ODA не зависят от «Размера шрифта» и «Масштаба экрана» в настройках Android: шрифт — не
@@ -12,6 +15,7 @@ import android.util.DisplayMetrics;
 final class Ui {
 
     private static final float MAX_FONT_SCALE = 1.0f;
+    private static volatile Resources ru;
 
     private Ui() {
     }
@@ -30,5 +34,21 @@ final class Ui {
             changed = true;
         }
         return changed ? base.createConfigurationContext(c) : base;
+    }
+
+    /**
+     * «5 минут», «2 дня» по правилам русского языка при любом языке телефона: Android выбирает форму plurals
+     * по языку системы, и на английском было «5 минуты» (тексты ODA — только русские).
+     */
+    static String plural(Context ctx, int id, int n) {
+        Resources r = ru;
+        if (r == null) {
+            Context app = ctx.getApplicationContext() != null ? ctx.getApplicationContext() : ctx;
+            Configuration c = new Configuration(app.getResources().getConfiguration());
+            c.setLocale(Locale.forLanguageTag("ru"));
+            r = app.createConfigurationContext(c).getResources();
+            ru = r;
+        }
+        return r.getQuantityString(id, n, n);
     }
 }
