@@ -80,10 +80,28 @@ def find(text=None, rid=None, desc=None, contains=False, root=None):
     return None
 
 
+SYSTEM_DIALOGS = (("isn't responding", "Wait"), ("не отвечает", "Подождать"), ("wants to add the following tile", "Do not add tile"))
+
+
+def system_dialog(root):
+    """Окна системы поверх ODA (зависший рабочий стол эмулятора и т. п.) — закрыть, ODA не трогать."""
+    for title, button in SYSTEM_DIALOGS:
+        if find(text=title, contains=True, root=root) is not None:
+            b = find(text=button, root=root)
+            if b is not None:
+                print(f"    системное окно «{title}» → «{button}»", flush=True)
+                tap_node(b)
+                return True
+    return False
+
+
 def wait(timeout=20, **kw):
     end = time.time() + timeout
     while time.time() < end:
-        n = find(**kw)
+        root = dump()
+        if system_dialog(root):
+            continue
+        n = find(root=root, **kw)
         if n is not None:
             return n
         time.sleep(1)
@@ -182,10 +200,7 @@ def crash_report():
 def foreground():
     """ODA на экране: после падения или системного окна — запустить снова."""
     if find(rid="nav") is None and find(rid="powerButton") is None:
-        for label in ("Do not add tile", "Не добавлять"):
-            n = find(text=label)
-            if n is not None:
-                tap_node(n)
+        system_dialog(dump())
         adb(f"shell am start -n {PKG}/.MainActivity")
         time.sleep(3)
 
@@ -195,6 +210,16 @@ def foreground():
 def main():
     print(f"Эмулятор: {adb('shell getprop ro.build.version.release').decode().strip()} "
           f"({adb('shell getprop ro.product.cpu.abilist').decode().strip()}), экран {adb('shell wm size').decode().strip()}")
+    # Эмулятор догружается: дождаться конца загрузки, разблокировать экран, убрать системные окна
+    for _ in range(60):
+        if adb("shell getprop sys.boot_completed").decode().strip() == "1":
+            break
+        time.sleep(2)
+    adb("shell input keyevent 82")
+    time.sleep(10)
+    for _ in range(3):
+        if not system_dialog(dump()):
+            break
     adb("logcat -c -b all")
     adb(f"install -r -g {APK}", check=True, timeout=300)
     adb(f"shell am start -n {PKG}/.MainActivity")
