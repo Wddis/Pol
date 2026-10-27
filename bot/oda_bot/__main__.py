@@ -14,6 +14,7 @@ from aiohttp import web
 from .api import KeyApi
 from .config import Settings
 from .db import Db
+from . import icons
 from .handlers import make_router
 from .license import Signer
 
@@ -31,6 +32,7 @@ COMMANDS = [
 async def run(cfg: Settings) -> None:
     db = Db(cfg.db_path)
     signer = Signer.load_or_create(cfg.signing_key_path)
+    icons.ICONS = icons.Icons(cfg.data_dir / "icons.json")
     log.info("Открытый ключ лицензий (вшить в приложение): %s", signer.public_b64())
 
     runner = web.AppRunner(KeyApi(db, signer).app())

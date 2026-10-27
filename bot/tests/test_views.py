@@ -49,3 +49,26 @@ def test_price_placeholder_and_value():
     assert "[ЦЕНА]" in views.tariffs(Settings(), "month", 1).text
     s = views.tariffs(Settings(price_month=300, extra_device_pct=50), "month", 3)
     assert "600 ₽" in s.text
+
+
+def test_icons_and_styles(tmp_path):
+    from oda_bot import icons
+    old = icons.ICONS
+    try:
+        icons.ICONS = icons.Icons(tmp_path / "icons.json")
+        s = views.main(Settings())
+        buy = buttons(s)[0]
+        assert buy.style == "primary" and buy.icon_custom_emoji_id is None
+        back = buttons(views.support(Settings()))[0]
+        assert back.text == "‹ Меню"  # без иконки — стрелка в тексте
+        icons.ICONS.set("key", "5409357944619802453")
+        icons.ICONS.set("back", "5409357944619802454")
+        assert buttons(views.main(Settings()))[0].icon_custom_emoji_id == "5409357944619802453"
+        back = buttons(views.support(Settings()))[0]
+        assert back.text == "Меню" and back.icon_custom_emoji_id == "5409357944619802454"
+        stripped = views.without_icons(views.main(Settings()).markup)
+        assert all(b.icon_custom_emoji_id is None for row in stripped.inline_keyboard for b in row)
+        # Сохранено в файл — после перезапуска те же иконки
+        assert icons.Icons(tmp_path / "icons.json").get("key") == "5409357944619802453"
+    finally:
+        icons.ICONS = old

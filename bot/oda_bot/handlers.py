@@ -1,4 +1,5 @@
 """Обработчики бота: команды и нажатия кнопок. Экраны — в views.py; кнопки меняют сообщение на месте."""
+import logging
 import time
 
 from aiogram import F, Router
@@ -6,11 +7,13 @@ from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandStart
 from aiogram.types import CallbackQuery, Message
 
-from . import views
+from . import icons, views
 from .config import Settings
 from .db import Db
 from .keys import MAX_DEVICES, TARIFFS, TRIAL
 from .views import Buy, KeyAct, Nav, Screen
+
+log = logging.getLogger(__name__)
 
 
 def make_router(cfg: Settings, db: Db) -> Router:
@@ -18,15 +21,27 @@ def make_router(cfg: Settings, db: Db) -> Router:
 
     async def show(target: Message | CallbackQuery, screen: Screen) -> None:
         """Команда — новое сообщение; кнопка — то же сообщение меняется (без ленты из меню)."""
-        if isinstance(target, CallbackQuery):
+        for attempt in range(2):
             try:
-                await target.message.edit_text(screen.text, reply_markup=screen.markup)
-            except TelegramBadRequest:
-                # «message is not modified» (нажали то же самое) или сообщение слишком старое
-                pass
+                if isinstance(target, CallbackQuery):
+                    await target.message.edit_text(screen.text, reply_markup=screen.markup)
+                else:
+                    await target.answer(screen.text, reply_markup=screen.markup)
+                break
+            except TelegramBadRequest as e:
+                if "not modified" in str(e):
+                    break  # нажали то же самое
+                if attempt == 0 and icons.ICONS.enabled and icons.ICONS.ids:
+                    # Telegram не принял иконки (нет Premium у владельца?) — дальше без них
+                    log.warning("Иконки на кнопках не приняты (%s): выключаю", e)
+                    icons.ICONS.enabled = False
+                    screen = Screen(screen.text, views.without_icons(screen.markup))
+                    continue
+                if isinstance(target, CallbackQuery):
+                    break  # сообщение слишком старое для правки
+                raise
+        if isinstance(target, CallbackQuery):
             await target.answer()
-        else:
-            await target.answer(screen.text, reply_markup=screen.markup)
 
     def user(event: Message | CallbackQuery) -> int:
         u = event.from_user
@@ -140,6 +155,46 @@ def make_router(cfg: Settings, db: Db) -> Router:
             await show(q, profile_screen(tg_id, k.key))
         else:
             await show(q, profile_screen(tg_id, k.key))
+
+    # ---------- владелец: иконки кнопок ----------
+
+    def is_admin(m: Message) -> bool:
+        return m.from_user is not None and m.from_user.id in cfg.admin_ids
+
+    def has_custom_emoji(m: Message) -> bool:
+        return any(e.type == "custom_emoji" for e in (m.entities or []))
+
+    @r.message(Command("icons"))
+    async def icons_cmd(m: Message):
+        user(m)
+        if not is_admin(m):
+            await show(m, views.main(cfg))
+            return
+        lines = ["<b>Иконки кнопок</b>\n",
+                 "Отправьте мне имя и эмодзи из набора custom emoji, например <code>extend ⏱</code> — "
+                 "иконка встанет на кнопки сразу. Эмодзи без имени — покажу их id.\n"]
+        for name, where in icons.NAMES.items():
+            lines.append(("✓ " if name in icons.ICONS.ids else "— ") + f"<code>{name}</code> — {where}")
+        if not icons.ICONS.enabled:
+            lines.append("\nИконки выключены: Telegram их не принял (нужен Premium у владельца бота).")
+        await m.answer("\n".join(lines))
+
+    @r.message(has_custom_emoji)
+    async def icon_set(m: Message):
+        user(m)
+        if not is_admin(m):
+            await show(m, views.main(cfg))
+            return
+        ids = [e.custom_emoji_id for e in m.entities if e.type == "custom_emoji"]
+        words = (m.text or "").split()
+        name = words[0].lower() if words else ""
+        if name in icons.NAMES:
+            icons.ICONS.set(name, ids[0])
+            await m.answer(f"Иконка <code>{name}</code> сохранена ({icons.NAMES[name]}). Как выглядит:")
+            await show(m, views.main(cfg))
+            return
+        await m.answer("id эмодзи:\n" + "\n".join(f"<code>{i}</code>" for i in ids)
+                       + "\n\nЧтобы поставить на кнопку: <code>имя эмодзи</code>, имена — /icons")
 
     @r.message(F.text)
     async def fallback(m: Message):

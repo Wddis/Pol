@@ -8,6 +8,7 @@ from aiogram.filters.callback_data import CallbackData
 from aiogram.types import CopyTextButton, InlineKeyboardButton, InlineKeyboardMarkup
 
 from .config import Settings
+from . import icons
 from .db import DAY, Device, Key
 from .keys import MAX_DEVICES, MIN_DEVICES, TARIFFS, TRIAL, plural, price
 
@@ -37,12 +38,23 @@ class Screen:
 
 
 def _btn(text: str, cb: CallbackData | None = None, url: str | None = None,
-         copy: str | None = None) -> InlineKeyboardButton:
+         copy: str | None = None, icon: str | None = None, style: str | None = None) -> InlineKeyboardButton:
+    """Кнопка; icon — имя иконки из icons.NAMES, style — primary (синяя), success (зелёная), danger (красная)."""
+    emoji_id = icons.ICONS.get(icon)
+    if icon and not emoji_id:
+        text = icons.FALLBACK.get(icon, "") + text
+    extra = {"icon_custom_emoji_id": emoji_id, "style": style}
     if url:
-        return InlineKeyboardButton(text=text, url=url)
+        return InlineKeyboardButton(text=text, url=url, **extra)
     if copy:
-        return InlineKeyboardButton(text=text, copy_text=CopyTextButton(text=copy))
-    return InlineKeyboardButton(text=text, callback_data=cb.pack())
+        return InlineKeyboardButton(text=text, copy_text=CopyTextButton(text=copy), **extra)
+    return InlineKeyboardButton(text=text, callback_data=cb.pack(), **extra)
+
+
+def without_icons(markup: InlineKeyboardMarkup) -> InlineKeyboardMarkup:
+    """Те же кнопки без иконок — если Telegram их не принял."""
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [b.model_copy(update={"icon_custom_emoji_id": None}) for b in row] for row in markup.inline_keyboard])
 
 
 def _kb(*rows: list[InlineKeyboardButton]) -> InlineKeyboardMarkup:
@@ -50,7 +62,7 @@ def _kb(*rows: list[InlineKeyboardButton]) -> InlineKeyboardMarkup:
 
 
 def _menu_row() -> list[InlineKeyboardButton]:
-    return [_btn("‹ Меню", Nav(to="main"))]
+    return [_btn("Меню", Nav(to="main"), icon="back")]
 
 
 def _date(ts: int) -> str:
@@ -78,10 +90,11 @@ def main(cfg: Settings) -> Screen:
         "• первый день — бесплатно"
     )
     return Screen(text, _kb(
-        [_btn("Купить ключ", Buy(period="month", devices=1))],
-        [_btn("Пробный день", Nav(to="trial")), _btn("Профиль", Nav(to="profile"))],
-        [_btn("Приложение", Nav(to="app")), _btn("О VPN", Nav(to="about"))],
-        [_btn("Поддержка", Nav(to="support"))],
+        [_btn("Купить ключ", Buy(period="month", devices=1), icon="key", style="primary")],
+        [_btn("Пробный день", Nav(to="trial"), icon="trial", style="success"),
+         _btn("Профиль", Nav(to="profile"), icon="profile")],
+        [_btn("Приложение", Nav(to="app"), icon="app"), _btn("О VPN", Nav(to="about"), icon="about")],
+        [_btn("Поддержка", Nav(to="support"), icon="support")],
     ))
 
 
@@ -109,7 +122,7 @@ def tariffs(cfg: Settings, period: str, devices: int) -> Screen:
         [_btn("−", Buy(period=period, devices=max(MIN_DEVICES, devices - 1))),
          _btn(_devices(devices), Buy(period=period, devices=devices)),
          _btn("+", Buy(period=period, devices=min(MAX_DEVICES, devices + 1)))],
-        [_btn("Получить ключ", Buy(period=period, devices=devices, get=True))],
+        [_btn("Получить ключ", Buy(period=period, devices=devices, get=True), icon="key", style="primary")],
         _menu_row(),
     ))
 
@@ -130,9 +143,10 @@ def key_issued(cfg: Settings, k: Key) -> Screen:
         f"3. Отсчёт {_days(k.days)} начнётся с активации"
     )
     return Screen(text, _kb(
-        [_btn("Копировать ключ", copy=k.key)] + ([_btn("Скачать ODA", url=cfg.apk_url)] if cfg.apk_url
-                                                 else [_btn("Скачать ODA", Nav(to="app"))]),
-        [_btn("Мой профиль", Nav(to="profile"))],
+        [_btn("Копировать ключ", copy=k.key, icon="copy", style="primary")],
+        [_btn("Скачать ODA", url=cfg.apk_url, icon="download") if cfg.apk_url
+         else _btn("Скачать ODA", Nav(to="app"), icon="download"),
+         _btn("Мой профиль", Nav(to="profile"), icon="profile")],
         _menu_row(),
     ))
 
@@ -140,7 +154,7 @@ def key_issued(cfg: Settings, k: Key) -> Screen:
 def trial_used() -> Screen:
     return Screen(
         "<b>Пробный день уже использован</b>\n\nПробный ключ выдаётся один раз. Выберите тариф — от недели.",
-        _kb([_btn("Тарифы", Buy(period="week", devices=1))], _menu_row()))
+        _kb([_btn("Тарифы", Buy(period="week", devices=1), icon="key", style="primary")], _menu_row()))
 
 
 # ---------- профиль ----------
@@ -159,7 +173,8 @@ def profile(cfg: Settings, tg_id: int, k: Key | None, devices: list[Device], now
         return Screen(
             "<b>Профиль</b>\n\n"
             f"ID {tg_id}\n\nКлючей пока нет. Возьмите пробный день или выберите тариф.",
-            _kb([_btn("Пробный день", Nav(to="trial")), _btn("Тарифы", Buy(period="month", devices=1))],
+            _kb([_btn("Пробный день", Nav(to="trial"), icon="trial", style="success"),
+                 _btn("Тарифы", Buy(period="month", devices=1), icon="key", style="primary")],
                 _menu_row()))
     lines = ["<b>Профиль</b>", f"ID {tg_id}\n", f"<code>{k.key}</code> — {status_line(k, now)}"]
     if k.activated_at is None:
@@ -180,13 +195,14 @@ def profile(cfg: Settings, tg_id: int, k: Key | None, devices: list[Device], now
         free = k.devices_max - len(devices)
         lines.append(f"• свободно: {free}")
     rows = [
-        [_btn("Продлить", KeyAct(action="extend", key=k.key)),
-         _btn("Сменить устройство", KeyAct(action="reset", key=k.key))],
-        [_btn("Копировать ключ", copy=k.key)],
+        [_btn("Продлить", KeyAct(action="extend", key=k.key), icon="extend", style="success")],
+        [_btn("Сменить устройство", KeyAct(action="reset", key=k.key), icon="devices")],
+        [_btn("Копировать ключ", copy=k.key, icon="copy")],
     ]
     if keys_count > 1:
-        rows.append([_btn(f"Мои ключи ({keys_count})", Nav(to="keys"))])
-    rows.append([_btn("Поддержка", Nav(to="support"))] + _menu_row())
+        rows.append([_btn(f"Мои ключи ({keys_count})", Nav(to="keys"), icon="keys")])
+    rows.append([_btn("Поддержка", Nav(to="support"), icon="support")])
+    rows.append(_menu_row())
     return Screen("\n".join(lines), _kb(*rows))
 
 
@@ -204,7 +220,7 @@ def extend_choose(cfg: Settings, k: Key) -> Screen:
         text += "\n\n<i>Оплата подключается позже — сейчас продление без оплаты.</i>"
     return Screen(text, _kb(
         [_btn(TARIFFS[p].title, KeyAct(action="extend", key=k.key, period=p)) for p in TARIFFS],
-        [_btn("‹ Профиль", KeyAct(action="show", key=k.key))],
+        [_btn("Профиль", KeyAct(action="show", key=k.key), icon="back")],
     ))
 
 
@@ -214,8 +230,8 @@ def reset_confirm(k: Key, devices: list[Device]) -> Screen:
         "<b>Сменить устройство</b>\n\n"
         f"Все устройства ключа <code>{k.key}</code> будут отвязаны:\n{names}\n\n"
         "На них ODA попросит ввести ключ заново. Срок не меняется.",
-        _kb([_btn("Отвязать все", KeyAct(action="reset_ok", key=k.key)),
-             _btn("Отмена", KeyAct(action="show", key=k.key))]))
+        _kb([_btn("Отвязать все", KeyAct(action="reset_ok", key=k.key), icon="devices", style="danger")],
+            [_btn("Отмена", KeyAct(action="show", key=k.key), icon="back")]))
 
 
 # ---------- о приложении ----------
@@ -233,8 +249,9 @@ def app_info(cfg: Settings) -> Screen:
     if not cfg.apk_url:
         text += "\n\n<i>Ссылка на скачивание появится здесь.</i>"
     return Screen(text, _kb(
-        [_btn("Скачать ODA (APK)", url=cfg.apk_url)] if cfg.apk_url else [],
-        [_btn("Тарифы", Buy(period="month", devices=1)), _btn("Пробный день", Nav(to="trial"))],
+        [_btn("Скачать ODA (APK)", url=cfg.apk_url, icon="download", style="primary")] if cfg.apk_url else [],
+        [_btn("Тарифы", Buy(period="month", devices=1), icon="key"),
+         _btn("Пробный день", Nav(to="trial"), icon="trial", style="success")],
         _menu_row(),
     ))
 
@@ -251,7 +268,7 @@ def about(cfg: Settings) -> Screen:
         "<b>Сколько устройств?</b>\nОт 1 до 5 — выбирается при покупке."
     )
     return Screen(text, _kb(
-        [_btn("Приложение", Nav(to="app")), _btn("Тарифы", Buy(period="month", devices=1))],
+        [_btn("Приложение", Nav(to="app"), icon="app"), _btn("Тарифы", Buy(period="month", devices=1), icon="key")],
         _menu_row(),
     ))
 
