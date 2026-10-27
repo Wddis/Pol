@@ -29,6 +29,13 @@ jobs:
       - name: Test DPI bypass strategies
         run: bash scripts/test-bypass.sh
 
+      # Telegram-бот и сервер ключей (bot/): ключи, срок с активации, устройства, подпись лицензий, экраны
+      - name: Test Telegram bot and key server
+        run: |
+          python3 -m venv "$RUNNER_TEMP/botenv"
+          "$RUNNER_TEMP/botenv/bin/pip" install -q -r bot/requirements-dev.txt
+          cd bot && "$RUNNER_TEMP/botenv/bin/python" -m pytest -q
+
       # Имитация телефона: VPN-интерфейс → tun2socks → ByeDPI → «оператор» с DPI → «интернет»,
       # с нагрузкой DNS как у телефона (ошибка 0.8.5: «подключено», а интернета нет)
       - name: Simulate phone traffic through tun2socks and ByeDPI

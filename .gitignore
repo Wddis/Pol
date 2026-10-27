@@ -12,3 +12,6 @@ captures/
 /app/src/main/jniLibs/
 /app/src/main/assets/psiphon/
 __pycache__/
+# Бот: база ключей и закрытый ключ подписи лицензий — только на сервере
+/bot/data/
+.pytest_cache/
