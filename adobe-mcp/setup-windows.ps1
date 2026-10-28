@@ -33,10 +33,13 @@ Step 'Adobe applications'
 $aeExe = Get-ChildItem "$env:ProgramFiles\Adobe\Adobe After Effects*\Support Files\AfterFX.exe" -ErrorAction SilentlyContinue |
     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
 if (-not $aeExe) {
-    # Nonstandard install location: search fixed drives.
+    # Nonstandard install location: probe the usual layouts on every drive
+    # (a full recursive scan takes far too long on large disks).
     $aeExe = Get-PSDrive -PSProvider FileSystem | ForEach-Object {
-        Get-ChildItem -Path $_.Root -Filter AfterFX.exe -Recurse -ErrorAction SilentlyContinue | Select-Object -First 1
-    } | Select-Object -First 1 -ExpandProperty FullName
+        foreach ($pattern in 'Program Files\Adobe', 'Adobe', '*\Adobe') {
+            Get-ChildItem (Join-Path $_.Root "$pattern\Adobe After Effects*\Support Files\AfterFX.exe") -ErrorAction SilentlyContinue
+        }
+    } | Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
 }
 $prExe = Get-ChildItem "$env:ProgramFiles\Adobe\Adobe Premiere Pro*\Adobe Premiere Pro.exe" -ErrorAction SilentlyContinue |
     Sort-Object FullName -Descending | Select-Object -First 1 -ExpandProperty FullName
