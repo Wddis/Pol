@@ -487,6 +487,14 @@ export class Db {
 
   // ---------- настройки и оплата ----------
 
+  async getSetting(name: string): Promise<string | null> {
+    try {
+      return (await this.d1.prepare("SELECT value FROM settings WHERE name=?").bind(name).first<string>("value")) ?? null;
+    } catch {
+      return null; // до миграции 0003
+    }
+  }
+
   async setSetting(name: string, value: string): Promise<void> {
     await this.d1
       .prepare("INSERT INTO settings(name, value) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET value=excluded.value")

@@ -2,6 +2,7 @@
 import { KeyApi, json } from "./api";
 import { type Env, loadSettings, settings } from "./config";
 import { type CsPayout, type CsTransaction, verifyCashera } from "./cashera";
+import { type ApkRelease, downloadPage, validRelease, verifyGithubOidc } from "./ci";
 import { Db } from "./db";
 import { ADMIN_COMMANDS, Bot, COMMANDS, DESCRIPTION, SHORT_DESCRIPTION } from "./handlers";
 import { Signer } from "./license";
@@ -47,6 +48,56 @@ export default {
         console.error("update:", e instanceof Error ? e.stack : e);
       }
       return new Response("ok");
+    }
+
+    // ---------- APK: страница загрузки и файл (из GitHub Releases, через воркер — один адрес для всех) ----------
+    if (url.pathname === "/download" || url.pathname === "/download/") {
+      const raw = await db.getSetting("apk_release");
+      const rel = raw ? (JSON.parse(raw) as ApkRelease) : null;
+      return new Response(downloadPage(rel, settings(env).botUsername), {
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-cache" },
+      });
+    }
+    if (url.pathname.startsWith("/download/") && url.pathname.endsWith(".apk") && (req.method === "GET" || req.method === "HEAD")) {
+      const raw = await db.getSetting("apk_release");
+      if (!raw) return new Response("APK ещё не выпущен", { status: 404 });
+      const rel = JSON.parse(raw) as ApkRelease;
+      const up = await fetch(rel.url, { method: req.method, redirect: "follow" });
+      if (!up.ok) {
+        console.error(`apk: GitHub ${up.status}`);
+        return Response.redirect(rel.url, 302); // запасной путь — прямо с GitHub
+      }
+      return new Response(up.body, {
+        headers: {
+          "content-type": "application/vnd.android.package-archive",
+          "content-disposition": `attachment; filename="ODA-${rel.version}.apk"`,
+          "content-length": String(rel.size),
+          "cache-control": "public, max-age=300",
+        },
+      });
+    }
+
+    // ---------- сборка в GitHub Actions (токен OIDC вместо секретов в публичном репозитории) ----------
+    if ((url.pathname === "/ci/signing-key" || url.pathname === "/ci/release") && req.method === "POST") {
+      const v = await verifyGithubOidc(env, req.headers.get("authorization"));
+      if (!v.ok) {
+        console.warn(`ci: отказ — ${v.why}`);
+        return json({ status: "forbidden", message: v.why }, 403);
+      }
+      if (url.pathname === "/ci/signing-key") {
+        if (!env.ODA_KEYSTORE_B64 || !env.ODA_KEYSTORE_PASS) return json({ status: "error", message: "ключ подписи не задан" }, 500);
+        return json({ keystore: env.ODA_KEYSTORE_B64, password: env.ODA_KEYSTORE_PASS, alias: "oda" });
+      }
+      let rel: Partial<ApkRelease>;
+      try {
+        rel = (await req.json()) as Partial<ApkRelease>;
+      } catch {
+        return json({ status: "error", message: "не JSON" }, 400);
+      }
+      rel.at = Math.floor(Date.now() / 1000);
+      if (!validRelease(rel)) return json({ status: "error", message: "неверные данные выпуска" }, 400);
+      await db.setSetting("apk_release", JSON.stringify(rel));
+      return json({ status: "ok", download: `${url.origin}/download` });
     }
 
     if (url.pathname === "/cashera" && req.method === "POST") {

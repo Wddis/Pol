@@ -40,6 +40,27 @@ android {
         }
     }
 
+    // Постоянная подпись ODA: новая версия ставится поверх старой. Ключ — не в репозитории (он публичный):
+    // сборка в GitHub получает его у сервера бота по токену OIDC (шаг «ODA signing key» в build.yml).
+    // Без ODA_KEYSTORE (сборка на своём компьютере, форк) — обычный отладочный ключ.
+    def odaKeystore = System.getenv('ODA_KEYSTORE')
+    signingConfigs {
+        if (odaKeystore) {
+            oda {
+                storeFile = file(odaKeystore)
+                storeType = 'pkcs12'
+                storePassword = System.getenv('ODA_KEYSTORE_PASS')
+                keyAlias = System.getenv('ODA_KEY_ALIAS') ?: 'oda'
+                keyPassword = System.getenv('ODA_KEYSTORE_PASS')
+            }
+        }
+    }
+    buildTypes {
+        debug {
+            if (odaKeystore) signingConfig = signingConfigs.oda
+        }
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17

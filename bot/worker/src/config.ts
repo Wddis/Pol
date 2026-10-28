@@ -1,6 +1,8 @@
+import type { CiEnv } from "./ci";
+
 // Настройки из wrangler.toml [vars] и секретов — как bot/oda_bot/config.py.
 
-export interface Env {
+export interface Env extends CiEnv {
   DB: D1Database;
   BOT_TOKEN: string;
   LICENSE_KEY: string;

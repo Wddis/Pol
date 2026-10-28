@@ -209,8 +209,10 @@ export function orderCancelled(): Screen {
 
 // ---------- ключ выдан ----------
 
+/** Страница загрузки APK (воркер /download) или APK_URL из wrangler.toml. */
+export const apkLink = (cfg: Settings) => cfg.apkUrl || (cfg.origin ? `${cfg.origin}/download` : "");
 const download = (cfg: Settings, style?: Style) =>
-  cfg.apkUrl ? btn("Скачать ODA", { url: cfg.apkUrl, style }) : btn("Скачать ODA", { cb: nav("app"), style });
+  apkLink(cfg) ? btn("Скачать ODA", { url: apkLink(cfg), style }) : btn("Скачать ODA", { cb: nav("app"), style });
 
 export function keyIssued(cfg: Settings, k: Key): Screen {
   const text =
@@ -349,11 +351,13 @@ export function appInfo(cfg: Settings): Screen {
     "• <b>Приложения через VPN</b> — выберите, какие идут мимо (например, банк)\n" +
     "• <b>Плитка в шторке</b> — включение без захода в приложение\n\n" +
     "Android 7 и новее.";
-  if (!cfg.apkUrl) text += "\n\n<i>Ссылка на скачивание появится здесь.</i>";
+  text += apkLink(cfg)
+    ? "\n\n«Скачать ODA» — страница загрузки с инструкцией. Новая версия ставится поверх старой, ключ сохраняется."
+    : "\n\n<i>Ссылка на скачивание появится здесь.</i>";
   return {
     text,
     markup: kb(
-      cfg.apkUrl ? [btn("Скачать ODA (APK)", { url: cfg.apkUrl, style: "primary" })] : [],
+      apkLink(cfg) ? [btn("Скачать ODA (APK)", { url: apkLink(cfg), style: "primary" })] : [],
       [btn("Тарифы", { cb: buy("month", 1) }), btn("Пробный день", { cb: nav("trial"), style: "success" })],
       menuRow(),
     ),

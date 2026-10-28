@@ -9,11 +9,22 @@ on:
         description: "Тестовый ключ ODA (на несколько минут) — проверка интерфейса в эмуляторе Android (job «ui»)"
         required: false
         default: ""
+      release:
+        description: "Выпустить APK: GitHub Release vX.Y.Z и страница загрузки бота (…/download)"
+        type: boolean
+        required: false
+        default: false
 
 jobs:
   build:
     runs-on: ubuntu-latest
     timeout-minutes: 45
+    # id-token — токен OIDC для сервера бота (ключ подписи, выпуск); contents — GitHub Release
+    permissions:
+      contents: write
+      id-token: write
+    env:
+      ODA_SERVER: https://oda-vpn-bot.dimazoltinsky.workers.dev
 
     steps:
       - name: Checkout
@@ -74,6 +85,29 @@ jobs:
       - name: Build ByeDPI (DPI bypass)
         run: bash scripts/build-byedpi.sh
 
+      # Постоянный ключ подписи: APK ставится поверх старой версии. В публичном репозитории ключа нет —
+      # сервер бота отдаёт его только по токену OIDC, который GitHub выдаёт workflow этого репозитория
+      - name: ODA signing key
+        run: |
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::warning::Нет токена OIDC (форк или pull request) — APK с отладочным ключом"; exit 0
+          fi
+          TOKEN=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=oda-ci" | jq -r .value)
+          if ! curl -sSf -X POST -H "Authorization: Bearer $TOKEN" "$ODA_SERVER/ci/signing-key" -o "$RUNNER_TEMP/k.json"; then
+            echo "::warning::Сервер не выдал ключ подписи — APK с отладочным ключом"; exit 0
+          fi
+          PASS=$(jq -r .password "$RUNNER_TEMP/k.json")
+          ALIAS=$(jq -r .alias "$RUNNER_TEMP/k.json")
+          echo "::add-mask::$PASS"
+          jq -r .keystore "$RUNNER_TEMP/k.json" | base64 -d > "$RUNNER_TEMP/oda.p12"
+          rm -f "$RUNNER_TEMP/k.json"
+          {
+            echo "ODA_KEYSTORE=$RUNNER_TEMP/oda.p12"
+            echo "ODA_KEYSTORE_PASS=$PASS"
+            echo "ODA_KEY_ALIAS=$ALIAS"
+          } >> "$GITHUB_ENV"
+          echo "ключ подписи ODA получен"
+
       - name: Build debug APK
         run: |
           chmod +x gradlew
@@ -99,12 +133,30 @@ jobs:
             echo "$abi: JNI-класс и oda-hev.h на месте"
           done
 
+      # Подпись: ключ ODA (сертификат CN=ODA) — иначе обновление поверх старой версии не встанет
+      - name: Check APK signature
+        run: |
+          APK=app/build/outputs/apk/debug/app-debug.apk
+          SIGNER=$(ls -d "$ANDROID_HOME"/build-tools/*/ | sort -V | tail -1)apksigner
+          "$SIGNER" verify --print-certs "$APK" | tee "$RUNNER_TEMP/certs.txt"
+          if grep -q 'CN=ODA' "$RUNNER_TEMP/certs.txt"; then
+            echo "подпись ODA (постоянная): $(grep -m1 'SHA-256' "$RUNNER_TEMP/certs.txt")"
+          elif [ "${{ inputs.release }}" = "true" ]; then
+            echo "::error::Выпуск только с подписью ODA"; exit 1
+          else
+            echo "::warning::APK с отладочным ключом — поверх версии с подписью ODA не встанет"
+          fi
+
       - name: Upload APK
         uses: actions/upload-artifact@v7
         with:
           name: vpn-app-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      # Телефонный APK — в сторону: сборка для эмулятора ниже перезапишет app-debug.apk
+      - name: Keep phone APK
+        run: cp app/build/outputs/apk/debug/app-debug.apk "$RUNNER_TEMP/phone.apk"
 
       # Для эмулятора (job «ui») — отдельный APK x86_64: под трансляцией ARM→x86 в эмуляторе падает Go
       # (Psiphon, IPtProxy), а на телефонах ARM её нет. Телефонный APK выше не меняется.
@@ -131,6 +183,33 @@ jobs:
           name: vpn-app-emulator
           path: ${{ runner.temp }}/app-emulator.apk
           if-no-files-found: error
+
+      # Выпуск: телефонный APK (ARM 32 и 64 бит) → GitHub Release vX.Y.Z → страница загрузки бота
+      - name: Release APK (GitHub Release + bot download page)
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.release }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          V=$(grep -oP "versionName = '\K[^']+" app/build.gradle)
+          CODE=$(grep -oP 'versionCode = \K[0-9]+' app/build.gradle)
+          APK="$RUNNER_TEMP/ODA-$V.apk"
+          cp "$RUNNER_TEMP/phone.apk" "$APK"
+          NOTES="ODA $V для Android 7+ (32 и 64 бит). Установка и обновление — $ODA_SERVER/download (ставится поверх старой версии)."
+          if gh release view "v$V" >/dev/null 2>&1; then
+            gh release upload "v$V" "$APK" --clobber
+          else
+            gh release create "v$V" "$APK" --target "$GITHUB_SHA" --title "ODA $V" --notes "$NOTES"
+          fi
+          SIZE=$(stat -c %s "$APK")
+          SHA=$(sha256sum "$APK" | cut -d' ' -f1)
+          URL="https://github.com/$GITHUB_REPOSITORY/releases/download/v$V/ODA-$V.apk"
+          TOKEN=$(curl -sSf -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=oda-ci" | jq -r .value)
+          curl -sSf -X POST -H "Authorization: Bearer $TOKEN" -H 'content-type: application/json' \
+            -d "{\"version\":\"$V\",\"code\":$CODE,\"url\":\"$URL\",\"size\":$SIZE,\"sha256\":\"$SHA\"}" "$ODA_SERVER/ci/release"
+          echo
+          # Страница отдаёт тот же файл
+          test "$(curl -sSfL "$ODA_SERVER/download/ODA-$V.apk" | sha256sum | cut -d' ' -f1)" = "$SHA"
+          echo "выпущено: ODA $V — $ODA_SERVER/download"
 
   # Интерфейс в эмуляторе Android (на раннерах GitHub есть KVM): APK из job «build», тестовый ключ из запуска
   # вручную; scripts/ui-test.py проходит экраны как человек, скриншоты — в журнале (@@SHOT) и артефакте

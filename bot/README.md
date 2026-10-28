@@ -15,6 +15,8 @@ Telegram-бот **[@oda_connect_vpn_bot](https://t.me/oda_connect_vpn_bot)** («
 | Секреты | Токен бота, `LICENSE_KEY`, `WEBHOOK_SECRET` — в Cloudflare (Workers → oda-vpn-bot → Settings → Variables and Secrets). Токены Cloudflare API и бота — у владельца, **в репозитории их нет** |
 | Обновить бота | `cd bot/worker && npm ci && CLOUDFLARE_ACCOUNT_ID=3cc3b8392c90e87c7bc726e6b2c5fb9b CLOUDFLARE_API_TOKEN=<у владельца> BOT_TOKEN=<у владельца> bash deploy.sh` — код, таблицы (миграции), webhook, меню, описание; данные и ключ подписи остаются |
 | Проверить, что жив | `curl https://oda-vpn-bot.dimazoltinsky.workers.dev/health`; webhook — `getWebhookInfo` (url `…/tg`, `pending_update_count` 0) |
+| Скачать ODA | Страница `https://oda-vpn-bot.dimazoltinsky.workers.dev/download` (воркер, `src/ci.ts`): кнопка, размер, инструкция, обновление поверх, предупреждение Google Play Защиты, SHA-256. Файл — GitHub Release `vX.Y.Z` (`ODA-X.Y.Z.apk`, ARM 32 и 64 бит), воркер отдаёт его со своего адреса (`/download/ODA-X.Y.Z.apk`). Выпуск — workflow «Build APK» вручную с галкой `release` |
+| Подпись APK | Постоянный ключ ODA (PKCS12, RSA 4096, alias `oda`, CN=ODA) — секреты Cloudflare `ODA_KEYSTORE_B64`, `ODA_KEYSTORE_PASS`; резервная копия — у владельца. Сборка GitHub получает ключ у воркера `POST /ci/signing-key` по токену OIDC (только `Wddis/Pol`, id 1225983165, `build.yml`, не pull request). Потерять ключ = обновления поверх больше не встанут |
 | Аватарка | `assets/oda-avatar.png` (1024×1024) — иконка ODA; ставит владелец: BotFather → `/setuserpic` |
 | Описание бота | Ставится само при `deploy.sh` (`/setup`): `DESCRIPTION`, `SHORT_DESCRIPTION` в `worker/src/handlers.ts` |
 | Оплата | **Сделана, но выключена**, пока владелец не подключит Cashera (картой / СБП) и не задаст цены: `/admin` → «Цены и оплата» (см. «Оплата» ниже). Сейчас ключи бесплатно |
@@ -217,6 +219,7 @@ Webhook Telegram получает `message`, `callback_query`, `pre_checkout_que
 | Файл | Что делает |
 |---|---|
 | `worker/src/index.ts` | Воркер: webhook `/tg` (проверка секрета), `/cashera` (уведомления Cashera: оплата, вывод), `/setup` (webhook, меню, описание), сервер ключей |
+| `worker/src/ci.ts` | Сборка GitHub по OIDC: ключ подписи APK, выпуск; страница загрузки `/download` |
 | `worker/src/cashera.ts` | API Cashera: платёж, статус, баланс, расчёт и вывод на карту (подпись), проверка уведомлений |
 | `worker/src/handlers.ts` | Команды, кнопки, ссылки `/start …`, поддержка в чате, блокировка в боте, оплата (заказы, Stars) |
 | `worker/src/admin.ts` | Меню администратора: экраны и действия |

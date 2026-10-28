@@ -4,7 +4,7 @@
 // Запуск: npm test (нужны npm install; сеть не нужна).
 import { spawn, execFileSync } from "node:child_process";
 import { createServer } from "node:http";
-import { generateKeyPairSync, createPublicKey, verify as edVerify, createHash, createHmac } from "node:crypto";
+import { generateKeyPairSync, createPublicKey, verify as edVerify, createHash, createHmac, sign as rsaSign } from "node:crypto";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
@@ -80,6 +80,10 @@ const tgServer = createServer((req, res) => {
   req.on("data", (c) => (body += c));
   req.on("end", () => {
     if (req.url.startsWith("/cs/")) return cashera(req, res, body);
+    if (req.url === "/oidc/.well-known/jwks") {
+      res.setHeader("content-type", "application/json");
+      return res.end(JSON.stringify({ keys: [oidcJwk] }));
+    }
     const m = req.url.match(/^\/bot([^/]+)\/(\w+)$/);
     const params = body ? JSON.parse(body) : {};
     calls.push({ token: m?.[1], method: m?.[2], params });
@@ -109,6 +113,9 @@ const TG_PORT = tgServer.address().port;
 // ---------- воркер ----------
 
 const { privateKey } = generateKeyPairSync("ed25519");
+// «GitHub OIDC»: свой ключ RS256 и адрес ключей на поддельном сервере
+const oidc = generateKeyPairSync("rsa", { modulusLength: 2048 });
+const oidcJwk = { ...oidc.publicKey.export({ format: "jwk" }), kid: "k1", alg: "RS256", use: "sig" };
 const seed = privateKey.export({ format: "der", type: "pkcs8" }).subarray(-32);
 const expectedPub = b64url(createPublicKey(privateKey).export({ format: "der", type: "spki" }).subarray(-32));
 
@@ -123,6 +130,9 @@ writeFileSync(
     `TG_API=http://127.0.0.1:${TG_PORT}`,
     "SUPPORT=@oda_support_test",
     "ADMIN_IDS=1999",
+    `OIDC_ISSUER=http://127.0.0.1:${TG_PORT}/oidc`,
+    "ODA_KEYSTORE_B64=S0VZU1RPUkU=",
+    "ODA_KEYSTORE_PASS=test-pass",
     `CASHERA_API=http://127.0.0.1:${TG_PORT}/cs/api/v1`,
     "",
   ].join("\n"),
@@ -593,7 +603,8 @@ try {
     const sup = await bob.press("nav:support");
     assert.ok(sup.text.includes("Ещё можно написать: @oda_support_test"));
     const app_ = await bob.press("nav:app");
-    assert.ok(app_.text.includes("Ссылка на скачивание появится здесь"));
+    assert.ok(app_.text.includes("страница загрузки с инструкцией"), app_.text);
+    assert.equal(bob.button("Скачать ODA (APK)").url, `${BASE}/download`);
     const priv = await bob.press("nav:privacy");
     assert.ok(priv.text.includes("Трафик не проходит через наши серверы"));
   });
@@ -1080,6 +1091,55 @@ try {
     assert.equal(s.toast, "Ключи выдаются бесплатно");
     const t = await carol.say("/buy");
     assert.ok(t.text.includes("Итого: <b>бесплатно</b>"));
+  });
+
+  // ---------- APK: ключ подписи для сборки (OIDC) и страница загрузки ----------
+  const jwt = (claims, key = oidc.privateKey, kid = "k1") => {
+    const enc = (o) => Buffer.from(JSON.stringify(o)).toString("base64url");
+    const now = Math.floor(Date.now() / 1000);
+    const body = { iss: `http://127.0.0.1:${TG_PORT}/oidc`, aud: "oda-ci", exp: now + 300, nbf: now - 5, repository: "Wddis/Pol",
+      repository_id: "1225983165", event_name: "workflow_dispatch", workflow_ref: "Wddis/Pol/.github/workflows/build.yml@refs/heads/x", ...claims };
+    const data = `${enc({ alg: "RS256", typ: "JWT", kid })}.${enc(body)}`;
+    return `${data}.${rsaSign("sha256", Buffer.from(data), key).toString("base64url")}`;
+  };
+  const ci = (path, token, body) => fetch(`${BASE}${path}`, { method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined });
+
+  await step("сборка GitHub: ключ подписи APK только по токену OIDC этого репозитория", async () => {
+    let r = await ci("/ci/signing-key", jwt({}));
+    assert.equal(r.status, 200);
+    assert.deepEqual(await r.json(), { keystore: "S0VZU1RPUkU=", password: "test-pass", alias: "oda" });
+    const other = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKey;
+    for (const [what, tok] of [
+      ["чужой ключ подписи", jwt({}, other)],
+      ["чужой репозиторий", jwt({ repository: "evil/Pol", repository_id: "1" })],
+      ["форк с тем же именем", jwt({ repository_id: "999" })],
+      ["другая аудитория", jwt({ aud: "other" })],
+      ["истёк", jwt({ exp: Math.floor(Date.now() / 1000) - 600 })],
+      ["pull request", jwt({ event_name: "pull_request" })],
+      ["другой workflow", jwt({ workflow_ref: "Wddis/Pol/.github/workflows/evil.yml@refs/heads/x" })],
+      ["мусор", "abc.def.ghi"],
+    ]) {
+      r = await ci("/ci/signing-key", tok);
+      assert.equal(r.status, 403, what);
+    }
+    assert.equal((await fetch(`${BASE}/ci/signing-key`, { method: "POST" })).status, 403, "без токена");
+  });
+
+  await step("выпуск APK: страница /download с инструкцией и предупреждением Play Защиты, бот ведёт на неё", async () => {
+    let page = await (await fetch(`${BASE}/download`)).text();
+    assert.ok(page.includes("Файл скоро появится здесь"));
+    assert.equal((await fetch(`${BASE}/download/ODA-0.12.3.apk`)).status, 404);
+    const rel = { version: "0.12.3", code: 27, url: "https://github.com/Wddis/Pol/releases/download/v0.12.3/ODA-0.12.3.apk", size: 69488856, sha256: "a".repeat(64) };
+    assert.equal((await ci("/ci/release", jwt({}), { ...rel, url: "https://evil.example/oda.apk" })).status, 400, "ссылка не с GitHub ODA");
+    assert.equal((await ci("/ci/release", jwt({ repository_id: "999" }), rel)).status, 403);
+    const r = await ci("/ci/release", jwt({}), rel);
+    assert.equal(r.status, 200);
+    page = await (await fetch(`${BASE}/download`)).text();
+    for (const t of ["Скачать ODA 0.12.3", 'href="/download/ODA-0.12.3.apk"', "66 МБ", "32 и 64 бит", "Как установить", "@oda_connect_vpn_bot",
+      "Google Play Защита может предупредить", "Всё равно установить", "ставится поверх старой", "a".repeat(64)]) {
+      assert.ok(page.includes(t), t);
+    }
   });
 
   await step("база: пользователи и ключи на месте (D1)", async () => {
