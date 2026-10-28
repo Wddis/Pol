@@ -1,0 +1,31 @@
+name: adobe-mcp-windows
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'adobe-mcp/**'
+      - '.github/workflows/adobe-mcp-windows.yml'
+
+jobs:
+  setup-script:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Run setup-windows.ps1
+        shell: powershell
+        run: .\adobe-mcp\setup-windows.ps1
+      - name: Show merged Claude Desktop config
+        shell: powershell
+        run: Get-Content "$env:APPDATA\Claude\claude_desktop_config.json"
+      - name: MCP smoke test
+        shell: powershell
+        run: |
+          $root = npm root -g
+          node adobe-mcp\mcp-smoke.mjs (Get-Command node).Source "$root\@higgsfield_org\premiere-mcp\dist\index.js" pr_status
+          node adobe-mcp\mcp-smoke.mjs (Get-Command node).Source "$root\@higgsfield_org\premiere-mcp\dist\index.js" pr_document_info
+          node adobe-mcp\mcp-smoke.mjs (Get-Command node).Source "$root\fnf-after-effects-mcp\dist\index.js" ae_project_info
