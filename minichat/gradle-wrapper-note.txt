@@ -1,0 +1,1 @@
+Собиралось Gradle 8.9 + Android Gradle Plugin 8.5.2, compileSdk 34, build-tools 34.0.0.
