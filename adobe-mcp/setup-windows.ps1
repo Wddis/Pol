@@ -9,7 +9,9 @@ $ErrorActionPreference = 'Stop'
 function Step($msg) { Write-Host "`n=== $msg" -ForegroundColor Cyan }
 
 function Refresh-Path {
-    $env:Path = [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
+    # Append newly registered entries; keep the current PATH first so an already
+    # selected Node 24 (nvm, fnm, setup-node) is not shadowed by an older system one.
+    $env:Path = $env:Path + ';' + [Environment]::GetEnvironmentVariable('Path', 'Machine') + ';' +
                 [Environment]::GetEnvironmentVariable('Path', 'User')
 }
 
@@ -65,6 +67,15 @@ $aeConfig = (fnf-after-effects config | Out-String | ConvertFrom-Json).mcpServer
 if ($aeExe) {
     foreach ($p in $aeConfig.PSObject.Properties) {
         $p.Value | Add-Member -NotePropertyName env -NotePropertyValue ([pscustomobject]@{ AE_MCP_EXE = $aeExe }) -Force
+    }
+}
+
+foreach ($src in @($prConfig, $aeConfig)) {
+    foreach ($p in $src.PSObject.Properties) {
+        $v = & $p.Value.command -v
+        if ([int]$v.TrimStart('v').Split('.')[0] -lt 24) {
+            throw "$($p.Name) would run on Node $v ($($p.Value.command)); Node 24+ is required. Put Node 24 first in PATH and re-run."
+        }
     }
 }
 
