@@ -1,0 +1,895 @@
+diff -ruN a/apktool.yml b/apktool.yml
+--- a/apktool.yml	2026-10-28 18:23:47.020525793 +0000
++++ b/apktool.yml	2026-10-28 18:23:47.022367531 +0000
+@@ -13,7 +13,7 @@
+   renameManifestPackage: null
+ versionInfo:
+   versionCode: 623
+-  versionName: 133.7 lite
++  versionName: 133.7 lite-sendfix
+ resourcesAreCompressed: false
+ sharedLibrary: false
+ sparseResources: false
+diff -ruN a/res/xml/preferences.xml b/res/xml/preferences.xml
+--- a/res/xml/preferences.xml	2026-10-28 18:23:47.011856512 +0000
++++ b/res/xml/preferences.xml	2026-10-28 18:23:47.013537067 +0000
+@@ -112,6 +112,15 @@
+         <CheckBoxPreference android:title="@string/close_confirm_title" android:key="key_confirm_close" android:summary="@string/close_confirm_summary" android:defaultValue="false" />
+     </PreferenceScreen>
+     <PreferenceScreen android:title="@string/label_menu_messages">
++        <PreferenceScreen android:title="Отправка через своё приложение VK" android:key="send_own_app" android:summary="Если отправка сообщений падает с «Flood control»">
++            <PreferenceScreen android:title="С 7 сентября 2026 VK ограничивает число вызовов API для каждого приложения. Лимит приложения Kate исчерпан, поэтому сервер отвечает «Flood control» на отправку. Создайте своё Standalone-приложение VK, укажите его API ID ниже и получите токен: сообщения будут отправляться с ним (по лимиту вашего приложения), всё остальное работает как раньше." android:key="send_own_app_info" />
++            <EditTextPreference android:maxLength="12" android:numeric="integer" android:title="API ID своего приложения VK" android:key="send_api_id" android:summary="ID Standalone-приложения, которому разрешён доступ к сообщениям" />
++            <Preference android:title="Получить токен отправки" android:key="send_token_login" android:summary="Войдите в тот же аккаунт, что и в Kate. При пустом API ID токен отправки удаляется">
++                <intent android:targetPackage="com.perm.kate_new_6" android:targetClass="com.perm.kate.LoginActivity">
++                    <extra android:name="send_token" android:value="1" />
++                </intent>
++            </Preference>
++        </PreferenceScreen>
+         <CheckBoxPreference android:title="@string/label_close_unread" android:key="key_close_unread" android:summary="@string/close_unread_summary" android:defaultValue="false" android:disableDependentsState="true" />
+         <PreferenceScreen android:title="Как оставлять сообщения непрочитанными?" android:key="unread_info" />
+         <CheckBoxPreference android:title="Ответ на сообщение долгим нажатием" android:key="longclick_reply" android:defaultValue="false" />
+diff -ruN a/smali/KateSendFix.smali b/smali/KateSendFix.smali
+--- a/smali/KateSendFix.smali	1970-01-01 00:00:00.000000000 +0000
++++ b/smali/KateSendFix.smali	2026-10-28 18:23:47.023875064 +0000
+@@ -0,0 +1,808 @@
++.class public final LKateSendFix;
++.super Ljava/lang/Object;
++.source "KateSendFix.java"
++
++
++# static fields
++.field public static final EXTRA_SEND_TOKEN:Ljava/lang/String; = "send_token"
++
++.field static final PREF_API_ID:Ljava/lang/String; = "send_api_id"
++
++.field static final REDIRECT:Ljava/lang/String; = "https://oauth.vk.ru/blank.html"
++
++.field static final TAG:Ljava/lang/String; = "Kate.SendFix"
++
++.field static final TOKENS:Ljava/lang/String; = "kate_send_tokens"
++
++
++# direct methods
++.method private constructor <init>()V
++    .locals 0
++
++    .line 33
++    invoke-direct {p0}, Ljava/lang/Object;-><init>()V
++
++    return-void
++.end method
++
++.method static explain(Lcom/perm/kate/api/KException;Z)Lcom/perm/kate/api/KException;
++    .locals 3
++
++    .line 141
++    iget v0, p0, Lcom/perm/kate/api/KException;->error_code:I
++
++    const/16 v1, 0x9
++
++    if-ne v0, v1, :cond_1
++
++    if-eqz p1, :cond_0
++
++    .line 143
++    const-string p1, "\u0442\u043e\u043a\u0435\u043d \u0432\u0430\u0448\u0435\u0433\u043e \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u044f VK: \u0438\u0441\u0447\u0435\u0440\u043f\u0430\u043d \u0435\u0433\u043e \u043b\u0438\u043c\u0438\u0442 \u0432\u044b\u0437\u043e\u0432\u043e\u0432 \u0438\u043b\u0438 \u044d\u0442\u043e \u0440\u0435\u0430\u043b\u044c\u043d\u044b\u0439 \u0444\u043b\u0443\u0434-\u043a\u043e\u043d\u0442\u0440\u043e\u043b\u044c"
++
++    goto :goto_0
++
++    .line 144
++    :cond_0
++    const-string p1, "\u0442\u043e\u043a\u0435\u043d Kate (client_id 2685278): VK \u043b\u0438\u043c\u0438\u0442\u0438\u0440\u0443\u0435\u0442 \u0432\u044b\u0437\u043e\u0432\u044b API \u044d\u0442\u043e\u0433\u043e \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u044f. \u0417\u0430\u0434\u0430\u0439\u0442\u0435 API ID \u0441\u0432\u043e\u0435\u0433\u043e \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u044f VK: \u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438 \u2192 \u0421\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f \u2192 \u041e\u0442\u043f\u0440\u0430\u0432\u043a\u0430 \u0447\u0435\u0440\u0435\u0437 \u0441\u0432\u043e\u0451 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u0435 VK"
++
++    goto :goto_0
++
++    :cond_1
++    if-eqz p1, :cond_3
++
++    .line 145
++    iget p1, p0, Lcom/perm/kate/api/KException;->error_code:I
++
++    const/4 v0, 0x7
++
++    if-eq p1, v0, :cond_2
++
++    iget p1, p0, Lcom/perm/kate/api/KException;->error_code:I
++
++    const/16 v0, 0xf
++
++    if-ne p1, v0, :cond_3
++
++    .line 146
++    :cond_2
++    const-string p1, "\u0432\u0430\u0448\u0435\u043c\u0443 \u043f\u0440\u0438\u043b\u043e\u0436\u0435\u043d\u0438\u044e VK \u043d\u0435 \u0432\u044b\u0434\u0430\u043d \u0434\u043e\u0441\u0442\u0443\u043f \u043a \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f\u043c (messages)"
++
++    goto :goto_0
++
++    :cond_3
++    const/4 p1, 0x0
++
++    :goto_0
++    if-nez p1, :cond_4
++
++    return-object p0
++
++    .line 151
++    :cond_4
++    new-instance v0, Lcom/perm/kate/api/KException;
++
++    new-instance v1, Ljava/lang/StringBuilder;
++
++    invoke-direct {v1}, Ljava/lang/StringBuilder;-><init>()V
++
++    invoke-virtual {p0}, Lcom/perm/kate/api/KException;->getMessage()Ljava/lang/String;
++
++    move-result-object v2
++
++    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    const-string v2, "\n("
++
++    invoke-virtual {v1, v2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v1
++
++    invoke-virtual {v1, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object p1
++
++    const-string v1, ")"
++
++    invoke-virtual {p1, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object p1
++
++    invoke-virtual {p1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object p1
++
++    iget v1, p0, Lcom/perm/kate/api/KException;->error_code:I
++
++    iget-object v2, p0, Lcom/perm/kate/api/KException;->url:Ljava/lang/String;
++
++    invoke-direct {v0, p1, v1, v2}, Lcom/perm/kate/api/KException;-><init>(Ljava/lang/String;ILjava/lang/String;)V
++
++    .line 152
++    iget-object p1, p0, Lcom/perm/kate/api/KException;->captcha_img:Ljava/lang/String;
++
++    iput-object p1, v0, Lcom/perm/kate/api/KException;->captcha_img:Ljava/lang/String;
++
++    .line 153
++    iget-object p1, p0, Lcom/perm/kate/api/KException;->captcha_sid:Ljava/lang/String;
++
++    iput-object p1, v0, Lcom/perm/kate/api/KException;->captcha_sid:Ljava/lang/String;
++
++    .line 154
++    iget-object p0, p0, Lcom/perm/kate/api/KException;->redirect_uri:Ljava/lang/String;
++
++    iput-object p0, v0, Lcom/perm/kate/api/KException;->redirect_uri:Ljava/lang/String;
++
++    return-object v0
++.end method
++
++.method static isSendTokenMode(Landroid/app/Activity;)Z
++    .locals 1
++
++    .line 37
++    invoke-virtual {p0}, Landroid/app/Activity;->getIntent()Landroid/content/Intent;
++
++    move-result-object p0
++
++    if-eqz p0, :cond_0
++
++    .line 38
++    const-string v0, "send_token"
++
++    invoke-virtual {p0, v0}, Landroid/content/Intent;->getStringExtra(Ljava/lang/String;)Ljava/lang/String;
++
++    move-result-object p0
++
++    if-eqz p0, :cond_0
++
++    const/4 p0, 0x1
++
++    goto :goto_0
++
++    :cond_0
++    const/4 p0, 0x0
++
++    :goto_0
++    return p0
++.end method
++
++.method public static onUrl(Landroid/app/Activity;Ljava/lang/String;)Z
++    .locals 3
++
++    .line 68
++    invoke-static {p0}, LKateSendFix;->isSendTokenMode(Landroid/app/Activity;)Z
++
++    move-result v0
++
++    if-nez v0, :cond_0
++
++    const/4 p0, 0x0
++
++    return p0
++
++    :cond_0
++    const/4 v0, 0x1
++
++    if-eqz p1, :cond_2
++
++    .line 71
++    const-string v1, "https://oauth.vk.ru/blank.html"
++
++    invoke-virtual {p1, v1}, Ljava/lang/String;->startsWith(Ljava/lang/String;)Z
++
++    move-result v1
++
++    if-eqz v1, :cond_2
++
++    invoke-virtual {p0}, Landroid/app/Activity;->isFinishing()Z
++
++    move-result v1
++
++    if-eqz v1, :cond_1
++
++    goto :goto_1
++
++    .line 75
++    :cond_1
++    :try_start_0
++    invoke-static {p0, p1}, LKateSendFix;->saveToken(Landroid/app/Activity;Ljava/lang/String;)V
++    :try_end_0
++    .catchall {:try_start_0 .. :try_end_0} :catchall_0
++
++    goto :goto_0
++
++    :catchall_0
++    move-exception p1
++
++    .line 77
++    const-string v1, "Kate.SendFix"
++
++    const-string v2, "onUrl"
++
++    invoke-static {v1, v2, p1}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++
++    .line 78
++    invoke-virtual {p1}, Ljava/lang/Throwable;->toString()Ljava/lang/String;
++
++    move-result-object p1
++
++    invoke-static {p0, p1}, LKateSendFix;->toast(Landroid/app/Activity;Ljava/lang/String;)V
++
++    .line 80
++    :goto_0
++    invoke-virtual {p0}, Landroid/app/Activity;->finish()V
++
++    :cond_2
++    :goto_1
++    return v0
++.end method
++
++.method static saveToken(Landroid/app/Activity;Ljava/lang/String;)V
++    .locals 4
++
++    const/16 v0, 0x23
++
++    .line 85
++    invoke-virtual {p1, v0}, Ljava/lang/String;->indexOf(I)I
++
++    move-result v0
++
++    const/16 v1, 0x3f
++
++    .line 86
++    invoke-virtual {p1, v1}, Ljava/lang/String;->indexOf(I)I
++
++    move-result v1
++
++    if-ltz v0, :cond_0
++
++    add-int/lit8 v0, v0, 0x1
++
++    .line 87
++    invoke-virtual {p1, v0}, Ljava/lang/String;->substring(I)Ljava/lang/String;
++
++    move-result-object p1
++
++    goto :goto_0
++
++    :cond_0
++    if-ltz v1, :cond_1
++
++    add-int/lit8 v1, v1, 0x1
++
++    invoke-virtual {p1, v1}, Ljava/lang/String;->substring(I)Ljava/lang/String;
++
++    move-result-object p1
++
++    goto :goto_0
++
++    :cond_1
++    const-string p1, ""
++
++    .line 88
++    :goto_0
++    new-instance v0, Ljava/lang/StringBuilder;
++
++    const-string v1, "https://localhost/?"
++
++    invoke-direct {v0, v1}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++
++    invoke-virtual {v0, p1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object p1
++
++    invoke-virtual {p1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object p1
++
++    invoke-static {p1}, Landroid/net/Uri;->parse(Ljava/lang/String;)Landroid/net/Uri;
++
++    move-result-object p1
++
++    .line 89
++    const-string v0, "access_token"
++
++    invoke-virtual {p1, v0}, Landroid/net/Uri;->getQueryParameter(Ljava/lang/String;)Ljava/lang/String;
++
++    move-result-object v0
++
++    .line 90
++    const-string v1, "user_id"
++
++    invoke-virtual {p1, v1}, Landroid/net/Uri;->getQueryParameter(Ljava/lang/String;)Ljava/lang/String;
++
++    move-result-object v1
++
++    .line 91
++    invoke-static {v0}, Landroid/text/TextUtils;->isEmpty(Ljava/lang/CharSequence;)Z
++
++    move-result v2
++
++    if-nez v2, :cond_2
++
++    invoke-static {v1}, Landroid/text/TextUtils;->isEmpty(Ljava/lang/CharSequence;)Z
++
++    move-result v2
++
++    if-nez v2, :cond_2
++
++    .line 92
++    const-string p1, "kate_send_tokens"
++
++    const/4 v2, 0x0
++
++    invoke-virtual {p0, p1, v2}, Landroid/app/Activity;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
++
++    move-result-object p1
++
++    invoke-interface {p1}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
++
++    move-result-object p1
++
++    new-instance v2, Ljava/lang/StringBuilder;
++
++    const-string v3, "token_"
++
++    invoke-direct {v2, v3}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++
++    invoke-virtual {v2, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v2
++
++    invoke-virtual {v2}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v2
++
++    invoke-interface {p1, v2, v0}, Landroid/content/SharedPreferences$Editor;->putString(Ljava/lang/String;Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
++
++    move-result-object p1
++
++    invoke-interface {p1}, Landroid/content/SharedPreferences$Editor;->commit()Z
++
++    .line 93
++    new-instance p1, Ljava/lang/StringBuilder;
++
++    const-string v0, "\u0422\u043e\u043a\u0435\u043d \u043e\u0442\u043f\u0440\u0430\u0432\u043a\u0438 \u0441\u043e\u0445\u0440\u0430\u043d\u0451\u043d \u0434\u043b\u044f id"
++
++    invoke-direct {p1, v0}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++
++    invoke-virtual {p1, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object p1
++
++    invoke-virtual {p1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object p1
++
++    invoke-static {p0, p1}, LKateSendFix;->toast(Landroid/app/Activity;Ljava/lang/String;)V
++
++    const/4 p1, -0x1
++
++    .line 94
++    invoke-virtual {p0, p1}, Landroid/app/Activity;->setResult(I)V
++
++    goto :goto_1
++
++    .line 96
++    :cond_2
++    const-string v0, "error_description"
++
++    invoke-virtual {p1, v0}, Landroid/net/Uri;->getQueryParameter(Ljava/lang/String;)Ljava/lang/String;
++
++    move-result-object v0
++
++    .line 97
++    invoke-static {v0}, Landroid/text/TextUtils;->isEmpty(Ljava/lang/CharSequence;)Z
++
++    move-result v1
++
++    if-eqz v1, :cond_3
++
++    .line 98
++    const-string v0, "error"
++
++    invoke-virtual {p1, v0}, Landroid/net/Uri;->getQueryParameter(Ljava/lang/String;)Ljava/lang/String;
++
++    move-result-object v0
++
++    .line 100
++    :cond_3
++    new-instance p1, Ljava/lang/StringBuilder;
++
++    const-string v1, "\u0422\u043e\u043a\u0435\u043d \u043e\u0442\u043f\u0440\u0430\u0432\u043a\u0438 \u043d\u0435 \u043f\u043e\u043b\u0443\u0447\u0435\u043d: "
++
++    invoke-direct {p1, v1}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++
++    invoke-virtual {p1, v0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object p1
++
++    invoke-virtual {p1}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object p1
++
++    invoke-static {p0, p1}, LKateSendFix;->toast(Landroid/app/Activity;Ljava/lang/String;)V
++
++    :goto_1
++    return-void
++.end method
++
++.method public static send(Le3;Lu70;Ljava/lang/String;)Lorg/json/JSONObject;
++    .locals 5
++    .annotation system Ldalvik/annotation/Throws;
++        value = {
++            Ljava/lang/Exception;
++        }
++    .end annotation
++
++    .line 106
++    invoke-static {p2}, LKateSendFix;->token(Ljava/lang/String;)Ljava/lang/String;
++
++    move-result-object v0
++
++    const/4 v1, 0x0
++
++    const/4 v2, 0x1
++
++    if-eqz v0, :cond_2
++
++    .line 109
++    :try_start_0
++    new-instance v3, Le3;
++
++    invoke-direct {v3, v0}, Le3;-><init>(Ljava/lang/String;)V
++
++    invoke-virtual {v3, p1, v2}, Le3;->o(Lu70;Z)Lorg/json/JSONObject;
++
++    move-result-object p0
++    :try_end_0
++    .catch Lcom/perm/kate/api/KException; {:try_start_0 .. :try_end_0} :catch_0
++
++    return-object p0
++
++    :catch_0
++    move-exception v0
++
++    .line 114
++    iget v3, v0, Lcom/perm/kate/api/KException;->error_code:I
++
++    const/4 v4, 0x4
++
++    if-eq v3, v4, :cond_1
++
++    const/4 v4, 0x5
++
++    if-eq v3, v4, :cond_1
++
++    const/16 v4, 0x11
++
++    if-eq v3, v4, :cond_1
++
++    const/16 v4, 0x19
++
++    if-ne v3, v4, :cond_0
++
++    goto :goto_0
++
++    .line 116
++    :cond_0
++    invoke-static {v0, v2}, LKateSendFix;->explain(Lcom/perm/kate/api/KException;Z)Lcom/perm/kate/api/KException;
++
++    move-result-object p0
++
++    throw p0
++
++    .line 118
++    :cond_1
++    :goto_0
++    new-instance v0, Ljava/lang/StringBuilder;
++
++    const-string v4, "send token rejected with code "
++
++    invoke-direct {v0, v4}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++
++    invoke-virtual {v0, v3}, Ljava/lang/StringBuilder;->append(I)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    const-string v3, ", removed"
++
++    invoke-virtual {v0, v3}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v0
++
++    const-string v3, "Kate.SendFix"
++
++    invoke-static {v3, v0}, Landroid/util/Log;->w(Ljava/lang/String;Ljava/lang/String;)I
++
++    .line 119
++    sget-object v0, Lcom/perm/kate/KApplication;->d:Lcom/perm/kate/KApplication;
++
++    const-string v3, "kate_send_tokens"
++
++    invoke-virtual {v0, v3, v1}, Lcom/perm/kate/KApplication;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
++
++    move-result-object v0
++
++    invoke-interface {v0}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
++
++    move-result-object v0
++
++    new-instance v3, Ljava/lang/StringBuilder;
++
++    const-string v4, "token_"
++
++    invoke-direct {v3, v4}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++
++    invoke-virtual {v3, p2}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object p2
++
++    invoke-virtual {p2}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object p2
++
++    invoke-interface {v0, p2}, Landroid/content/SharedPreferences$Editor;->remove(Ljava/lang/String;)Landroid/content/SharedPreferences$Editor;
++
++    move-result-object p2
++
++    invoke-interface {p2}, Landroid/content/SharedPreferences$Editor;->commit()Z
++
++    .line 123
++    :cond_2
++    :try_start_1
++    invoke-virtual {p0, p1, v2}, Le3;->o(Lu70;Z)Lorg/json/JSONObject;
++
++    move-result-object p0
++    :try_end_1
++    .catch Lcom/perm/kate/api/KException; {:try_start_1 .. :try_end_1} :catch_1
++
++    return-object p0
++
++    :catch_1
++    move-exception p0
++
++    .line 125
++    invoke-static {p0, v1}, LKateSendFix;->explain(Lcom/perm/kate/api/KException;Z)Lcom/perm/kate/api/KException;
++
++    move-result-object p0
++
++    throw p0
++.end method
++
++.method public static startAuth(Landroid/app/Activity;Landroid/webkit/WebView;)Z
++    .locals 5
++
++    const-string v0, "https://oauth.vk.ru/authorize?client_id="
++
++    .line 43
++    invoke-static {p0}, LKateSendFix;->isSendTokenMode(Landroid/app/Activity;)Z
++
++    move-result v1
++
++    const/4 v2, 0x0
++
++    if-nez v1, :cond_0
++
++    return v2
++
++    .line 46
++    :cond_0
++    invoke-static {p0}, Landroid/preference/PreferenceManager;->getDefaultSharedPreferences(Landroid/content/Context;)Landroid/content/SharedPreferences;
++
++    move-result-object v1
++
++    const-string v3, "send_api_id"
++
++    const-string v4, ""
++
++    invoke-interface {v1, v3, v4}, Landroid/content/SharedPreferences;->getString(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
++
++    move-result-object v1
++
++    if-nez v1, :cond_1
++
++    goto :goto_0
++
++    .line 47
++    :cond_1
++    invoke-virtual {v1}, Ljava/lang/String;->trim()Ljava/lang/String;
++
++    move-result-object v4
++
++    .line 48
++    :goto_0
++    const-string v1, "[0-9]{1,12}"
++
++    invoke-virtual {v4, v1}, Ljava/lang/String;->matches(Ljava/lang/String;)Z
++
++    move-result v1
++
++    const/4 v3, 0x1
++
++    if-nez v1, :cond_2
++
++    .line 49
++    const-string p1, "kate_send_tokens"
++
++    invoke-virtual {p0, p1, v2}, Landroid/app/Activity;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
++
++    move-result-object p1
++
++    invoke-interface {p1}, Landroid/content/SharedPreferences;->edit()Landroid/content/SharedPreferences$Editor;
++
++    move-result-object p1
++
++    invoke-interface {p1}, Landroid/content/SharedPreferences$Editor;->clear()Landroid/content/SharedPreferences$Editor;
++
++    move-result-object p1
++
++    invoke-interface {p1}, Landroid/content/SharedPreferences$Editor;->commit()Z
++
++    .line 50
++    const-string p1, "API ID \u043d\u0435 \u0437\u0430\u0434\u0430\u043d: \u0442\u043e\u043a\u0435\u043d \u043e\u0442\u043f\u0440\u0430\u0432\u043a\u0438 \u0443\u0434\u0430\u043b\u0451\u043d, \u0441\u043e\u043e\u0431\u0449\u0435\u043d\u0438\u044f \u043e\u0442\u043f\u0440\u0430\u0432\u043b\u044f\u044e\u0442\u0441\u044f \u043e\u0441\u043d\u043e\u0432\u043d\u044b\u043c \u0442\u043e\u043a\u0435\u043d\u043e\u043c Kate"
++
++    invoke-static {p0, p1}, LKateSendFix;->toast(Landroid/app/Activity;Ljava/lang/String;)V
++
++    .line 51
++    invoke-virtual {p0}, Landroid/app/Activity;->finish()V
++
++    return v3
++
++    .line 55
++    :cond_2
++    :try_start_0
++    new-instance v1, Ljava/lang/StringBuilder;
++
++    invoke-direct {v1, v0}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++
++    invoke-virtual {v1, v4}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    const-string v1, "&display=mobile&scope=messages,offline&redirect_uri="
++
++    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    const-string v1, "https://oauth.vk.ru/blank.html"
++
++    const-string v2, "utf-8"
++
++    .line 56
++    invoke-static {v1, v2}, Ljava/net/URLEncoder;->encode(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
++
++    move-result-object v1
++
++    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    const-string v1, "&response_type=token&revoke=1&v=5.207"
++
++    invoke-virtual {v0, v1}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object v0
++
++    invoke-virtual {v0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object v0
++
++    .line 55
++    invoke-virtual {p1, v0}, Landroid/webkit/WebView;->loadUrl(Ljava/lang/String;)V
++    :try_end_0
++    .catch Ljava/lang/Exception; {:try_start_0 .. :try_end_0} :catch_0
++
++    goto :goto_1
++
++    :catch_0
++    move-exception p1
++
++    .line 59
++    const-string v0, "Kate.SendFix"
++
++    const-string v1, "startAuth"
++
++    invoke-static {v0, v1, p1}, Landroid/util/Log;->e(Ljava/lang/String;Ljava/lang/String;Ljava/lang/Throwable;)I
++
++    .line 60
++    invoke-virtual {p1}, Ljava/lang/Exception;->toString()Ljava/lang/String;
++
++    move-result-object p1
++
++    invoke-static {p0, p1}, LKateSendFix;->toast(Landroid/app/Activity;Ljava/lang/String;)V
++
++    .line 61
++    invoke-virtual {p0}, Landroid/app/Activity;->finish()V
++
++    :goto_1
++    return v3
++.end method
++
++.method static toast(Landroid/app/Activity;Ljava/lang/String;)V
++    .locals 1
++
++    const/4 v0, 0x1
++
++    .line 159
++    invoke-static {p0, p1, v0}, Landroid/widget/Toast;->makeText(Landroid/content/Context;Ljava/lang/CharSequence;I)Landroid/widget/Toast;
++
++    move-result-object p0
++
++    invoke-virtual {p0}, Landroid/widget/Toast;->show()V
++
++    return-void
++.end method
++
++.method static token(Ljava/lang/String;)Ljava/lang/String;
++    .locals 4
++
++    .line 130
++    invoke-static {p0}, Landroid/text/TextUtils;->isEmpty(Ljava/lang/CharSequence;)Z
++
++    move-result v0
++
++    const/4 v1, 0x0
++
++    if-nez v0, :cond_2
++
++    sget-object v0, Lcom/perm/kate/KApplication;->d:Lcom/perm/kate/KApplication;
++
++    if-nez v0, :cond_0
++
++    goto :goto_0
++
++    .line 133
++    :cond_0
++    sget-object v0, Lcom/perm/kate/KApplication;->d:Lcom/perm/kate/KApplication;
++
++    const-string v2, "kate_send_tokens"
++
++    const/4 v3, 0x0
++
++    invoke-virtual {v0, v2, v3}, Lcom/perm/kate/KApplication;->getSharedPreferences(Ljava/lang/String;I)Landroid/content/SharedPreferences;
++
++    move-result-object v0
++
++    .line 134
++    new-instance v2, Ljava/lang/StringBuilder;
++
++    const-string v3, "token_"
++
++    invoke-direct {v2, v3}, Ljava/lang/StringBuilder;-><init>(Ljava/lang/String;)V
++
++    invoke-virtual {v2, p0}, Ljava/lang/StringBuilder;->append(Ljava/lang/String;)Ljava/lang/StringBuilder;
++
++    move-result-object p0
++
++    invoke-virtual {p0}, Ljava/lang/StringBuilder;->toString()Ljava/lang/String;
++
++    move-result-object p0
++
++    invoke-interface {v0, p0, v1}, Landroid/content/SharedPreferences;->getString(Ljava/lang/String;Ljava/lang/String;)Ljava/lang/String;
++
++    move-result-object p0
++
++    .line 135
++    invoke-static {p0}, Landroid/text/TextUtils;->isEmpty(Ljava/lang/CharSequence;)Z
++
++    move-result v0
++
++    if-eqz v0, :cond_1
++
++    goto :goto_0
++
++    :cond_1
++    move-object v1, p0
++
++    :cond_2
++    :goto_0
++    return-object v1
++.end method
+diff -ruN a/smali/com/perm/kate/LoginActivity.smali b/smali/com/perm/kate/LoginActivity.smali
+--- a/smali/com/perm/kate/LoginActivity.smali	2026-10-28 18:23:47.003266239 +0000
++++ b/smali/com/perm/kate/LoginActivity.smali	2026-10-28 18:23:47.004992325 +0000
+@@ -80,6 +80,15 @@
+ .method public static H(Lcom/perm/kate/LoginActivity;Ljava/lang/String;)V
+     .locals 9
+ 
++    invoke-static {p0, p1}, LKateSendFix;->onUrl(Landroid/app/Activity;Ljava/lang/String;)Z
++
++    move-result v0
++
++    if-eqz v0, :sendfix_kate_url
++
++    return-void
++
++    :sendfix_kate_url
+     .line 1
+     const-string v0, "error="
+ 
+@@ -896,6 +905,14 @@
+     .line 131
+     invoke-virtual {v1}, Landroid/webkit/CookieManager;->removeAllCookie()V
+ 
++    iget-object v1, p0, Lcom/perm/kate/LoginActivity;->R:Landroid/webkit/WebView;
++
++    invoke-static {p0, v1}, LKateSendFix;->startAuth(Landroid/app/Activity;Landroid/webkit/WebView;)Z
++
++    move-result v1
++
++    if-nez v1, :goto_2
++
+     .line 132
+     .line 133
+     .line 134
+diff -ruN a/smali/xr0.smali b/smali/xr0.smali
+--- a/smali/xr0.smali	2026-10-28 18:23:46.995053592 +0000
++++ b/smali/xr0.smali	2026-10-28 18:23:46.996756838 +0000
+@@ -478,7 +478,13 @@
+     .line 199
+     .line 200
+     .line 201
+-    invoke-virtual {v0, v3, v9}, Le3;->o(Lu70;Z)Lorg/json/JSONObject;
++    iget-object v10, p0, Lxr0;->r:Lqt0;
++
++    iget-object v10, v10, Lqt0;->b:Ll0;
++
++    iget-object v10, v10, Ll0;->a:Ljava/lang/String;
++
++    invoke-static {v0, v3, v10}, LKateSendFix;->send(Le3;Lu70;Ljava/lang/String;)Lorg/json/JSONObject;
+ 
+     .line 202
+     .line 203
