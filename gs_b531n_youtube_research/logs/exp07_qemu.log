@@ -1,0 +1,17 @@
+# EXP-07 qemu-user emulation (2026-10-28T15:05:34Z); qemu-mipsel version 8.2.2 (Debian 1:8.2.2+ds-0ubuntu1.18)
+== cpu=default
+qemu: uncaught target signal 4 (Illegal instruction) - core dumped
+/bin/bash: line 19:  1196 Illegal instruction     qemu-mipsel -L $R $R/bin/busybox uname -m 2>&1
+exit=132
+== cpu=24KEc
+qemu: uncaught target signal 4 (Illegal instruction) - core dumped
+/bin/bash: line 19:  1198 Illegal instruction     qemu-mipsel -cpu $c -L $R $R/bin/busybox uname -m 2>&1
+exit=132
+== cpu=34Kf
+mips
+exit=0
+== cpu=74Kf
+mips
+exit=0
+BusyBox v1.31.0 (2025-10-17 17:09:42 UTC) multi-call binary.
+GNU C Library (crosstool-NG crosstool-ng-1.23.0) stable release version 2.23, by Roland McGrath et al.

@@ -1,0 +1,205 @@
+# EXP-04 rootfs survey (2026-10-28T15:05:33Z)
+bin
+boot
+data
+dev
+etc
+home
+init
+internal_storage
+lib
+linuxrc
+media
+mnt
+proc
+root
+sbin
+share
+storage
+sys
+system
+tmp
+usr
+var
+## /system
+total 126964
+drwxr-xr-x  2 1003 1003      4096 Aug 21 12:54 .
+drwxrwxr-x 22 1003 1003      4096 Aug 21 12:53 ..
+-rwxr-xr-x  1 1003 1003 113198696 Aug 21 12:53 argile-zapper
+-rw-r--r--  1 1003 1003    104321 Aug 21 12:54 controls.pkg
+-rw-r--r--  1 1003 1003     24993 Aug 21 12:51 default.icons.pkg
+-rw-r--r--  1 1003 1003     50222 Aug 21 12:51 default.splash.pkg
+-rw-r--r--  1 1003 1003     84034 Aug 21 12:50 fixtures.pkg
+-rw-r--r--  1 1003 1003       751 Aug 21 12:54 homepagebrochure.pkg
+-rw-r--r--  1 1003 1003    238468 Aug 21 12:54 kidsmodewelcome.pkg
+-rw-r--r--  1 1003 1003    262237 Aug 21 12:50 l10n.pkg
+-rw-r--r--  1 1003 1003      3677 Aug 21 12:51 nova.splash.pkg
+-rw-r--r--  1 1003 1003   2267317 Aug 21 12:50 res.pkg
+-rw-r--r--  1 1003 1003    404032 Aug 21 12:54 secondscreen.pkg
+-rw-rw-r--  1 1003 1003     13479 Aug 21 12:54 smarthome.pkg
+-rw-rw-r--  1 1003 1003    397701 Aug 21 12:54 smarthomeControls.pkg
+-rw-rw-r--  1 1003 1003     56216 Aug 21 12:54 smarthomeDeviceControl.pkg
+-rw-rw-r--  1 1003 1003   1780574 Aug 21 12:54 smarthomeSettings.pkg
+-rwxrwxr-x  1 1003 1003   9683560 Aug 21 12:54 smh-daemon
+-rw-rw-r--  1 1003 1003      1493 Aug 21 12:54 smhFixtures.pkg
+-rw-r--r--  1 1003 1003     30756 Aug 21 12:54 stingray.pkg
+-rw-r--r--  1 1003 1003    198733 Aug 21 12:54 tetris.pkg
+-rw-r--r--  1 1003 1003     44323 Aug 21 12:50 translations.pkg
+-rw-r--r--  1 1003 1003   1623554 Aug 21 12:51 tricolor.icons.pkg
+-rw-r--r--  1 1003 1003       581 Aug 21 12:54 videoapp.pkg
+-rw-r--r--  1 1003 1003       559 Aug 21 12:54 videomonitoring.pkg
+## /lib
+firmware
+ld-2.23.so
+ld.so.1
+libbfd-2.28.so
+libbfd.so
+libc-2.23.so
+libc.so.6
+libdl-2.23.so
+libdl.so.2
+libgcc_s.so
+libgcc_s.so.1
+libm-2.23.so
+libm.so.6
+libnss_dns-2.23.so
+libnss_dns.so.2
+libnss_files-2.23.so
+libnss_files.so.2
+libpthread-2.23.so
+libpthread.so.0
+libresolv-2.23.so
+libresolv.so.2
+librt-2.23.so
+librt.so.1
+libstdc++.so
+libstdc++.so.6
+libstdc++.so.6.0.22
+modules
+## /usr/lib
+libapiACE.so
+libapiAUDIO.so
+libapiCEC.so
+libapiDAC.so
+libapiDLC.so
+libapiDMX.so
+libapiGFX.so
+libapiGOP.so
+libapiHDMITX.so
+libapiJPEG.so
+libapiPNL.so
+libapiVDEC.so
+libapiXC.so
+libblkid.so
+libblkid.so.1
+libblkid.so.1.0
+libcom_err.so
+libcom_err.so.2
+libcom_err.so.2.1
+libcrypto.so
+libcrypto.so.1.1
+libdbus-1.so
+libdbus-1.so.3
+libdbus-1.so.3.19.6
+libdrvCA2.so
+libdrvCIPHER.so
+libdrvCPU.so
+libdrvDEMOD.so
+libdrvDSCMB2.so
+libdrvGPIO.so
+libdrvHWI2C.so
+libdrvIPAUTH.so
+libdrvMSPI.so
+libdrvMVOP.so
+libdrvPCMCIA.so
+libdrvSAR.so
+libdrvVE.so
+libdrvWDT.so
+libe2p.so
+libe2p.so.2
+libe2p.so.2.3
+libexpat.so
+libexpat.so.1
+libexpat.so.1.6.8
+libext2fs.so
+libext2fs.so.2
+libext2fs.so.2.4
+libgio-2.0.so
+libgio-2.0.so.0
+libgio-2.0.so.0.5400.3
+libglib-2.0.so
+libglib-2.0.so.0
+libglib-2.0.so.0.5400.3
+libgmodule-2.0.so
+libgmodule-2.0.so.0
+libgmodule-2.0.so.0.5400.3
+libgobject-2.0.so
+libgobject-2.0.so.0
+libgobject-2.0.so.0.5400.3
+liblinux.so
+libmsAPI_XC.so
+libntfs-3g.so
+libntfs-3g.so.88
+libntfs-3g.so.88.0.0
+libssl.so
+libssl.so.1.1
+libuuid.so
+libuuid.so.1
+libuuid.so.1.2
+## /sbin
+blkid depmod dhcprelay e2fsck flash_eraseall flash_lock flash_unlock flashcp fsck.ext2 fsck.ext3 fsck.ext4 fsck.fat halt hostapd ifconfig init insmod ip killall5 lsmod makedevs mdev mke2fs mkfs.ext2 mkfs.ext3 mkfs.ext4 mkfs.fat mkntfs mkswap modinfo modprobe nanddump nandwrite ntfslabel ntpdate partprobe poweroff readahead reboot rfkill rmmod route run-init start-stop-daemon swapon sysctl ubiattach ubidetach ubimkvol ubirename ubirmvol ubirsvol ubiupdatevol udhcpc udhcpd wpa_supplicant 
+## /bin
+GATEWAY_SRVR NPI_lnx_server NWKMGR_SRVR OTA_SRVR ZLSZNP [ [[ ash awk basename bbconfig busybox cat chmod chrt cp cttyhack cut date dbus-daemon dbus-uuidgen dd df dirname dmesg du dumpleases echo env expr false find grep head kill killall less ln ls mkdir mkfifo mknod mktemp mount mv nice nohup nslookup ntfs-3g ntfs-3g.probe ntfsfix ping ping6 pipe_progress printenv printf ps pstree pwd readlink realpath reset resize rm rmdir sed setsid sh sleep stat stty sync tail taskset test time timeout touch tr true ts tty udhcpc6 umount uname watch which xargs yes 
+## kernel modules
+8188eu.ko 8192cu.ko 8192eu.ko 8192fu.ko 8723bs.ko 8723bu.ko 8812au.ko 8814au.ko 8821au.ko 8821cu.ko 88x2bu.ko 88x2cu.ko ar5523.ko ath.ko ath10k_core.ko ath10k_usb.ko ath6kl_core.ko ath6kl_usb.ko ath9k.ko ath9k_common.ko ath9k_htc.ko ath9k_hw.ko bluetooth.ko btusb.ko carl9170.ko cdc_eem.ko cdc_ether.ko cdc_ncm.ko cfg80211.ko compat.ko hci_uart.ko hidp.ko mac80211.ko mt7601u.ko rfcomm.ko rndis_host.ko rt2500usb.ko rt2800lib.ko rt2800usb.ko rt2x00lib.ko rt2x00usb.ko rt73usb.ko rtk_btusb.ko rtl8187.ko 
+## firmware blobs
+ar5523.bin ath6k ath9k_htc carl9170-1.fw htc_7010.fw htc_9271.fw mediatek mt7601u.bin regulatory.db regulatory.db.p7s rt2870.bin rt73.bin rtl8723a_fw rtl8723b_config rtl8723b_fw rtl8723bu_config rtl8723du_config rtl8723du_fw rtl8725au_config rtl8725au_fw rtl8761a_config rtl8761a_fw rtl8761au8192ee_fw rtl8761au8812ae_fw rtl8761au_fw rtl8761aw8192eu_fw rtl8761aw_config rtl8761aw_fw rtl8761bu_config rtl8761bu_fw rtl8821a_config rtl8821a_fw rtl8821cu_config rtl8821cu_fw rtl8822bu_config rtl8822bu_fw rtl8822cu_config rtl8822cu_fw 
+## inittab
+::sysinit:/etc/init.d/rcS
+ttyS0::respawn:-/bin/sh
+::shutdown:/bin/umount -a -r
+::restart:/sbin/init
+## ssl
+## argile-zapper ELF
+  Class:                             ELF32
+  Data:                              2's complement, little endian
+  Machine:                           MIPS R3000
+  Flags:                             0x74001007, noreorder, pic, cpic, o32, mips16, mips32r2
+ 0x00000001 (NEEDED)                     Shared library: [libpthread.so.0]
+ 0x00000001 (NEEDED)                     Shared library: [librt.so.1]
+ 0x00000001 (NEEDED)                     Shared library: [liblinux.so]
+ 0x00000001 (NEEDED)                     Shared library: [libdrvIPAUTH.so]
+ 0x00000001 (NEEDED)                     Shared library: [libdrvVE.so]
+ 0x00000001 (NEEDED)                     Shared library: [libdrvMVOP.so]
+ 0x00000001 (NEEDED)                     Shared library: [libdrvGPIO.so]
+ 0x00000001 (NEEDED)                     Shared library: [libdrvCA2.so]
+ 0x00000001 (NEEDED)                     Shared library: [libdrvCIPHER.so]
+ 0x00000001 (NEEDED)                     Shared library: [libdrvDSCMB2.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiDMX.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiVDEC.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiAUDIO.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiXC.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiDAC.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiPNL.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiCEC.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiJPEG.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiHDMITX.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiGFX.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiGOP.so]
+ 0x00000001 (NEEDED)                     Shared library: [libmsAPI_XC.so]
+ 0x00000001 (NEEDED)                     Shared library: [libexpat.so.1]
+ 0x00000001 (NEEDED)                     Shared library: [libdbus-1.so.3]
+ 0x00000001 (NEEDED)                     Shared library: [libssl.so.1.1]
+ 0x00000001 (NEEDED)                     Shared library: [libcrypto.so.1.1]
+ 0x00000001 (NEEDED)                     Shared library: [libdl.so.2]
+ 0x00000001 (NEEDED)                     Shared library: [libdrvHWI2C.so]
+ 0x00000001 (NEEDED)                     Shared library: [libdrvCPU.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiACE.so]
+ 0x00000001 (NEEDED)                     Shared library: [libapiDLC.so]
+ 0x00000001 (NEEDED)                     Shared library: [libm.so.6]
+ 0x00000001 (NEEDED)                     Shared library: [libstdc++.so.6]
+ 0x00000001 (NEEDED)                     Shared library: [libgcc_s.so.1]
+ 0x00000001 (NEEDED)                     Shared library: [libc.so.6]
+ 0x00000001 (NEEDED)                     Shared library: [ld.so.1]
+## no browser engine libs check (webkit/chromium/qt/ffmpeg in /usr/lib):
+none found

@@ -1,0 +1,19 @@
+# EXP-02 update container (2026-10-28T15:05:33Z)
+/tmp/claude-0/-home-user-Pol/a9c28fe7-5f9d-5bb7-b607-d441b3bb9812/scratchpad/fw/20260903_B531N_usb_8_0_307-0_1_19/b533m.upd:     Zip archive data, at least v2.0 to extract, compression method=store
+/tmp/claude-0/-home-user-Pol/a9c28fe7-5f9d-5bb7-b607-d441b3bb9812/scratchpad/fw/20260903_B531N_usb_8_0_307-0_1_19/b533m_gs1.upd: data
+/tmp/claude-0/-home-user-Pol/a9c28fe7-5f9d-5bb7-b607-d441b3bb9812/scratchpad/fw/20260903_B531N_usb_8_0_307-0_1_19/readme.txt:    Unicode text, UTF-8 text, with CR, LF line terminators
+Archive:  /tmp/claude-0/-home-user-Pol/a9c28fe7-5f9d-5bb7-b607-d441b3bb9812/scratchpad/fw/20260903_B531N_usb_8_0_307-0_1_19/b533m.upd
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+      353  2026-08-24 12:04   update.json
+  8520240  2026-08-24 12:04   kernel.bin
+ 64160304  2026-08-24 12:04   rootfs.squashfs
+---------                     -------
+ 72680897                     3 files
+{"target": "system", "targetPlatforms": ["b533m"], "updateScenario": [{".class": "WriteFlashPartition", "imageName": "kernel.bin", "partitionName": "kernel"}, {".class": "WriteFlashPartition", "imageName": "rootfs.squashfs", "partitionName": "rootfs"}], "updateVersion": "8.0.307", "targetMarkets": ["tis-dialog", "tricolor", "tricolor-ott", "vashnet"]}
+upd/kernel.bin:      u-boot legacy uImage, Linux-3.10.23-mstar, Linux/MIPS, OS Kernel Image (Not compressed), 8475100 bytes, Fri Oct 17 17:00:50 2025, Load Address: 0X80000000, Entry Point: 0X805D1C60, Header CRC: 0X905392EF, Data CRC: 0X476635B6
+upd/rootfs.squashfs: Squashfs filesystem, little endian, version 4.0, zlib compressed, 64143176 bytes, 1043 inodes, blocksize: 131072 bytes, created: Fri Aug 21 12:54:12 2026
+b533m_gs1.upd first 16 bytes:
+000000 55 50 4e 48 2c c6 4f 00 01 1a 8c 15 3c 7d 59 9c  >UPNH,.O.....<}Y.<
+000010 79 5f 55 b5 e1 34 55 20 50 9b 7c 18 aa 67 5b 76  >y_U..4U P.|..g[v<
+000020

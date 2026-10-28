@@ -1,0 +1,94 @@
+# EXP-05 app packages (2026-10-28T15:05:33Z)
+== stingray.pkg
+Archive:  stingray.pkg
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+      723  2026-06-17 21:39   LICENSE
+       17  2026-06-17 21:39   .gitignore
+     1245  2026-08-21 12:54   generated_files/ts/standByMode.js
+      285  2026-08-21 12:54   generated_files/ts/statistics.js
+     4216  2026-08-21 12:54   generated_files/ts/drm.js
+     1292  2026-08-21 12:54   generated_files/ts/channelRepository.js
+     7428  2026-08-21 12:54   generated_files/ts/tricolorAccount.js
+      794  2026-08-21 12:54   generated_files/ts/timeManager.js
+     1484  2026-08-21 12:54   generated_files/ts/audioOutputManager.js
+      585  2026-08-21 12:54   generated_files/ts/receiverInformation.js
+     2596  2026-08-21 12:54   generated_files/ts/permissions.js
+     1663  2026-08-21 12:54   generated_files/ts/utils.js
+      771  2026-08-21 12:54   generated_files/ts/caSubscriptions.js
+     4835  2026-08-21 12:54   generated_files/ts/cas.js
+      806  2026-08-21 12:54   Manifest
+---------                     -------
+    28740                     15 files
+== videoapp.pkg
+Archive:  videoapp.pkg
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+       30  2026-06-17 21:39   main.qml
+      345  2026-08-21 12:54   Manifest
+---------                     -------
+      375                     2 files
+== videomonitoring.pkg
+Archive:  videomonitoring.pkg
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+       40  2026-06-17 21:39   main.qml
+      313  2026-08-21 12:54   Manifest
+---------                     -------
+      353                     2 files
+== homepagebrochure.pkg
+Archive:  homepagebrochure.pkg
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+      232  2026-06-18 16:32   main.qml
+      313  2026-08-21 12:54   Manifest
+---------                     -------
+      545                     2 files
+== tetris.pkg
+Archive:  tetris.pkg
+  Length      Date    Time    Name
+---------  ---------- -----   ----
+     1259  2026-06-17 21:39   ItemGridView.qml
+     2417  2026-06-17 21:39   LevelMenu.qml
+    11122  2026-06-17 21:39   engine.js
+      502  2026-06-17 21:39   tetris.png
+     1233  2026-06-17 21:39   MenuItem.qml
+     1550  2026-06-17 21:39   ItemDelegate.qml
+      723  2026-06-17 21:39   LICENSE
+     1696  2026-06-17 21:39   InfoRect.qml
+     5039  2026-06-17 21:39   tetris_kids.png
+       17  2026-06-17 21:39   .gitignore
+     1059  2026-06-17 21:39   PauseRect.qml
+     1144  2026-06-17 21:39   LevelDelegate.qml
+     1691  2026-06-17 21:39   ExitMenu.qml
+     1850  2026-06-17 21:39   GameOverMenu.qml
+      764  2026-06-17 21:39   tetris_big.png
+      633  2026-08-21 12:54   ru_RU.qm
+     5726  2026-06-17 21:39   Game.qml
+      880  2026-06-17 21:39   main.qml
+     2149  2026-08-21 12:54   generated_files/tetrisConsts.js
+   154823  2026-08-21 12:54   generated_files/RectArray.qml
+      270  2026-08-21 12:54   Manifest
+---------                     -------
+   196547                     21 files
+== videoapp main.qml + Manifest
+Application { id: videoApp; }
+
+{"id": "videoapp", "markets": ["tricolor", "tricolorplus", "tricolor-ott"], "display": {"name": {"rus": "\u0412\u0438\u0434\u0435\u043e\u043d\u0430\u0431\u043b\u044e\u0434\u0435\u043d\u0438\u0435. \u0412\u0438\u0434\u0435\u043e", "eng": "Video Monitoring. Video"}}, "application": {"registerApp": false}, "version": 4, "sdk": {"minVersion": 12}}
+== homepagebrochure main.qml + Manifest
+Application {
+	id: homePageBrochureApp;
+
+	onStarted: { this.start(); }
+	onStartedWithHotkey: { this.start(); }
+	onStartedWithParams: { this.start(); }
+
+	start: {
+		appManager.closeCurrentApp();
+		appManager.runApp("homepage");
+	}
+}
+
+{"id": "homepagebrochure", "markets": ["tricolor", "tis-dialog", "vashnet", "tricolor-suboperator-demo", "tricolorplus", "tricolor-ott"], "display": {"name": {"rus": "\u0411\u0440\u043e\u0448\u044e\u0440\u0430", "eng": "Brochure"}}, "application": {"registerApp": false}, "version": 10, "sdk": {"minVersion": 12}}
+== WebView usage in system pkgs:
+(end)

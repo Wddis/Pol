@@ -1,0 +1,53 @@
+# EXP-06 argile-zapper capability strings (2026-10-28T15:05:34Z); total strings: 194112
+youtube    0
+webkit     0
+chromium   0
+duktape    0
+quickjs    0
+ffmpeg     0
+widevine   0
+playready  0
+sideload   0
+## V8
+v8 version: 
+v8 context total heap size: 
+9.7.106.21
+## package signing
+N8stingray13function_typeIFvRKNS_10shared_ptrIKN6argile8ManifestEEENS2_2ui24PackageInstallFailReasonEENS_8NullTypeEEE
+N8stingray13function_infoIFvRKNS_10shared_ptrIKN6argile8ManifestEEENS2_2ui24PackageInstallFailReasonEENS_8NullTypeEEE
+N8stingray6Detail23ExceptionHandlerWrapperIFvRKNS_10shared_ptrIKN6argile8ManifestEEENS3_2ui24PackageInstallFailReasonEENS_8functionIFvRKSt9exceptionEEEEE
+N8stingray6Detail10IInvokableIvJRKNS_10shared_ptrIKN6argile8ManifestEEENS3_2ui24PackageInstallFailReasonEEEE
+N8stingray6Detail10SignalImplIFvRKNS_10shared_ptrIKN6argile8ManifestEEENS3_2ui24PackageInstallFailReasonEENS_15signal_policies9threading10ThreadlessENSC_18exception_handling4NullENSC_10populators4NullEEE
+No signature found in package 
+InstallPackageFrom(_context->GetRootDirectory()->Open(pkg))
+DoTryInstallPackage
+signature verification failed
+package signature correct, verifying permissions...
+## WebView
+/home/jenkins/workspace/mstar-k5cn-8.0-nihilus/ui.argile/CMakeFiles/argile_zapper/argile/ui_decl_core_WebView.cpp
+WebView->setHtml
+WebView->setUrl
+ScrollableWebView->setUrl
+ScrollableWebView->setHtml
+## XMLHttpRequest
+XMLHttpRequest
+PN6argile14XMLHttpRequestE
+## media
+AAC, AACLATM, AC3, AC4, EAC3, FLAC, MP2, MP3, OPUS, PCM, VORBIS, WMA
+Mpeg1, Mpeg2, Mpeg4, H263, H264, H265, AV1, FLV1, DivX3, AVS, AVS2, MJPG, RV, VP6, VP8, VP9, MsMpeg4, WMV, VC1
+video/mp4
+video/x-matroska
+video/avi
+/playlist.m3u8
+## DLNA/WebDav
+"Media Explorer" automatically detects available devices with the DLNA-server function (such as a computer or a smartphone) on your local network.
+Dlna, FileSystem, WebDav
+urn:schemas-upnp-org:service:ContentDirectory:1
+## Wi-Fi
+GetApp()->FactoryMode()->EnableWiFiScan(active)
+isWiFi
+wpa_supplicant
+EnableWiFiScan(
+## build path
+     12 /home/jenkins/workspace/CAS_Library_Team
+   2236 /home/jenkins/workspace/mstar-k5cn-8.0-nihilus

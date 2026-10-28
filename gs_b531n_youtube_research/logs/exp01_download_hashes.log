@@ -1,0 +1,15 @@
+# EXP-01 download + hashes (2026-10-28T15:05:33Z)
+total 80840
+drwxr-xr-x 2 root root     4096 Oct 28 15:01 .
+drwx------ 5 root root     4096 Oct 28 15:03 ..
+-rw-r--r-- 1 root root 77914381 Oct 28 15:01 fw.zip
+-rw-r--r-- 1 root root  4853222 Oct 28 15:01 ug.pdf
+8b377b5f8526ba57bb140aeca64992052eb2c0f5e49d8c66f3a66cf2c23baea2  dl/fw.zip
+fae2256d1b0387b0a2fad4c579fd0cf999b8fb78989b9138fe0f89d8f1915b9a  dl/ug.pdf
+
+-rw-r--r-- 1 root root 3712 Sep  3 14:36 fw/20260903_B531N_usb_8_0_307-0_1_19/readme.txt
+-rw-r--r-- 1 root root 5228084 Sep  2 16:33 fw/20260903_B531N_usb_8_0_307-0_1_19/b533m_gs1.upd
+-rw-r--r-- 1 root root 72681779 Sep  2 16:33 fw/20260903_B531N_usb_8_0_307-0_1_19/b533m.upd
+4549ea69d57dd3bbbd330e6a82e6323c  /tmp/claude-0/-home-user-Pol/a9c28fe7-5f9d-5bb7-b607-d441b3bb9812/scratchpad/fw/20260903_B531N_usb_8_0_307-0_1_19/b533m.upd
+4597bd13e10f32c0cfe876ef96bd5354  /tmp/claude-0/-home-user-Pol/a9c28fe7-5f9d-5bb7-b607-d441b3bb9812/scratchpad/fw/20260903_B531N_usb_8_0_307-0_1_19/b533m_gs1.upd
+readme.txt checksums: b533m.upd 4549ea69d57dd3bbbd330e6a82e6323c, b533m_gs1.upd 4597bd13e10f32c0cfe876ef96bd5354
