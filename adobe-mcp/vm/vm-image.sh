@@ -29,6 +29,8 @@ if any(f.startswith('winvm/') for f in api.list_repo_files(repo, repo_type='data
 EOF
     # docker stop sends an ACPI shutdown and waits up to --stop-timeout for Windows.
     docker stop win >/dev/null 2>&1 || true
+    # Without dockur's windows.boot marker a restored disk would be wiped and reinstalled.
+    [ -f "$VM_DIR/storage/windows.boot" ] || { echo "No windows.boot marker: install not finished?" >&2; exit 1; }
     rm -f "$VM_DIR"/storage/*.iso    # the install ISO is not needed once Windows is on disk
     mkdir -p "$VM_DIR/ssh" && cp ~/.ssh/id_ed25519 ~/.ssh/id_ed25519.pub "$VM_DIR/ssh/"
     # split hands each part to upload-part.py on stdin; it buffers the part in a

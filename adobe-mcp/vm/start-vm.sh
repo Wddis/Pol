@@ -74,6 +74,13 @@ until ssh "${SSH_OPTS[@]}" -p 2222 Docker@127.0.0.1 'C:\npm-global\fnf-premiere.
     esac
 done
 
+# dockur only treats the disk as installed when its windows.boot marker exists; it writes
+# the marker at shutdown and only while the install ISO is still in storage. Without it,
+# the next container start (e.g. after the hourly shutdown) wipes the disk and reinstalls.
+# The OEM step has finished, so the install is complete: record it and drop the ISO.
+touch "$VM_DIR/storage/windows.boot"
+rm -f "$VM_DIR"/storage/*.iso
+
 # A restored image may trust an older generation of the sandbox CAs.
 CA_TMP=$(mktemp -d); export_sandbox_cas "$CA_TMP"
 scp "${SSH_OPTS[@]}" -P 2222 "$CA_TMP"/sandbox-ca-*.crt Docker@127.0.0.1:C:/OEM/ >/dev/null
