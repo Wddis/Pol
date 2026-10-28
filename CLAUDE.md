@@ -24,5 +24,6 @@ Higgsfield MCP servers, they mean the setup in `adobe-mcp/` (see `adobe-mcp/READ
   (ask the owner for the e-mail code if a new sign-in needs one; never ask for passwords
   in chat).
 - Known limits: no GPU in the VM, roughly 10-30x slower than a real PC, about 30 GB of
-  session disk. LTSC evaluation images are past their built-in expiry (hourly shutdowns);
-  keep `WIN_VERSION=11e`.
+  session disk. The Windows evaluation cannot activate through the sandbox's TLS
+  interception, so it shuts down about once an hour; the container's restart policy boots it
+  again. Plan long operations (downloads, installs, renders) around that.

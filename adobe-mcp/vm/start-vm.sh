@@ -10,10 +10,10 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 VM_DIR=${VM_DIR:-$HOME/winvm}
-# Windows 11 Enterprise evaluation (90 days), fetched by dockur from Microsoft's Evaluation
-# Center. Evaluation builds carry a hard expiry: the LTSC 2021/2024 evaluation images there
-# are past it (licence "Notification" state, hourly shutdowns, rearm does not help), while the
-# regularly refreshed Enterprise image is not.
+# Windows 11 Enterprise evaluation, fetched by dockur from Microsoft's Evaluation Center.
+# Evaluation editions must activate online, which fails through the sandbox's TLS
+# interception (slmgr /ato: 0x8004FE93), so every evaluation image here reports an expired
+# licence and shuts down about once an hour; slmgr /rearm does not change that.
 WIN_VERSION=${WIN_VERSION:-11e}
 NODE_VERSION=24.22.1
 OPENSSH_URL=https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.8.3.0p2-Preview/OpenSSH-Win64.zip
@@ -33,7 +33,7 @@ fi
 
 # The sandbox re-signs TLS with its own CAs; hand them to Windows one file per certificate.
 export_sandbox_cas() {
-    rm -f "$1"/ca-*.crt
+    rm -f "$1"/sandbox-ca-*.crt
     cp /etc/ssl/certs/ca-certificates.crt "$1/ca-bundle.crt"
     python3 - "$1" <<'EOF'
 import re, subprocess, sys
@@ -41,7 +41,7 @@ pem = open('/etc/ssl/certs/ca-certificates.crt').read()
 for i, c in enumerate(re.findall(r'-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----', pem, re.S)):
     subject = subprocess.run(['openssl', 'x509', '-noout', '-subject'], input=c, capture_output=True, text=True).stdout
     if 'Anthropic' in subject:
-        open(f'{sys.argv[1]}/ca-{i}.crt', 'w').write(c + '\n')
+        open(f'{sys.argv[1]}/sandbox-ca-{i}.crt', 'w').write(c + '\n')
 EOF
 }
 
@@ -61,18 +61,23 @@ docker rm -f win >/dev/null 2>&1 || true
 docker run -d --name win -e VERSION="$WIN_VERSION" \
     -v /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro -e DISK_SIZE=44G -e RAM_SIZE=8G -e CPU_CORES="$(nproc)" \
     -e USER_PORTS=22 -p 127.0.0.1:8006:8006 -p 127.0.0.1:2222:22 --cap-add NET_ADMIN \
-    --stop-timeout 300 "${run_args[@]}" dockurr/windows >/dev/null
+    --restart unless-stopped --stop-timeout 300 "${run_args[@]}" dockurr/windows >/dev/null
+# The evaluation cannot activate through the sandbox's TLS interception, so Windows shuts
+# itself down about once an hour; the restart policy boots it again (a few minutes).
 
 echo "Waiting for Windows and its ssh server (screen: http://127.0.0.1:8006)..."
 until ssh "${SSH_OPTS[@]}" -p 2222 Docker@127.0.0.1 'C:\npm-global\fnf-premiere.cmd doctor' >/dev/null 2>&1; do
-    [ "$(docker inspect -f '{{.State.Status}}' win)" = running ] || { docker logs win | tail -20; exit 1; }
     sleep 30
+    case "$(docker inspect -f '{{.State.Status}}' win)" in
+        running|restarting) ;;
+        *) sleep 20; [ "$(docker inspect -f '{{.State.Status}}' win)" = running ] || { docker logs win | tail -20; exit 1; } ;;
+    esac
 done
 
 # A restored image may trust an older generation of the sandbox CAs.
 CA_TMP=$(mktemp -d); export_sandbox_cas "$CA_TMP"
-scp "${SSH_OPTS[@]}" -P 2222 "$CA_TMP"/ca-*.crt Docker@127.0.0.1:C:/OEM/ >/dev/null
-ssh "${SSH_OPTS[@]}" -p 2222 Docker@127.0.0.1 'for %f in (C:\OEM\ca-*.crt) do @certutil -addstore -f Root %f >nul' || true
+scp "${SSH_OPTS[@]}" -P 2222 "$CA_TMP"/sandbox-ca-*.crt Docker@127.0.0.1:C:/OEM/ >/dev/null
+ssh "${SSH_OPTS[@]}" -p 2222 Docker@127.0.0.1 'for %f in (C:\OEM\sandbox-ca-*.crt) do @certutil -addstore -f Root %f >nul' || true
 rm -rf "$CA_TMP"
 
 if command -v claude >/dev/null; then

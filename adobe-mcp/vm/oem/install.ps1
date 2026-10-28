@@ -6,7 +6,7 @@ Start-Transcript -Path C:\OEM\install.log -Append
 
 # The sandbox intercepts TLS; trust its CAs (one file per certificate: certutil only
 # imports the first certificate of a multi-certificate file).
-Get-ChildItem C:\OEM\ca-*.crt | ForEach-Object { certutil -addstore -f Root $_.FullName }
+Get-ChildItem C:\OEM\sandbox-ca-*.crt | ForEach-Object { certutil -addstore -f Root $_.FullName }
 # Node reads the Windows store with --use-system-ca; npm also gets the full bundle.
 [Environment]::SetEnvironmentVariable('NODE_OPTIONS', '--use-system-ca', 'Machine')
 $env:NODE_OPTIONS = '--use-system-ca'
