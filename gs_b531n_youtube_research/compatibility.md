@@ -8,7 +8,7 @@
 | GS B531N + Android/AOSP | MIPS | Android | Нет (MIPS убран из NDK/AOSP, нет GMS) | ❌ (H8) |
 | GS B531N + Cobalt | MIPS | Linux | Cobalt Evergreen без MIPS, нужна сертификация | ❌ (H9, S6) |
 | GS B531N + своё .pkg-приложение | MIPS / V8 | StingrayTV | Неофициальный клиент. Нужен обход подписи, нарушает ToS | ❌ (H6, H7) |
-| Samsung non-Smart | — | — | Приложения не устанавливаются | ❌ (если подтвердится, H14) |
+| **Samsung PS43E450** (наш, non-Smart, без сети) | MStar (по префиксу ПО) | закрытая ТВ-прошивка, зашифрована | Нет | ❌ (H14, H18) |
 | Samsung Smart 2010–2013 (Orsay, серии C/D/E/F) | — | Orsay | Клиент давно снят Google | ❌ скорее всего |
 | Samsung Smart 2015+ (Tizen) | ARM | Tizen | Есть | ✅ если модель такая (маловероятно по виду) |
 | Google TV / Android TV плеер по HDMI | ARMv7/ARMv8 | Android TV / Google TV | Есть, сертифицирован | ✅ |

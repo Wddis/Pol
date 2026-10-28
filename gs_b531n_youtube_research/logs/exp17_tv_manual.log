@@ -1,0 +1,108 @@
+# EXP-17 Samsung E-series user manual X9DVBEU4E-ENG.pdf (2026-10-28T15:15:19Z)
+    ❑❑ Connecting a USB Device
+      1. Turn on your TV.
+      2. Connect a USB device containing photo, music and movie files to the USB
+         port on the side of the TV.
+      3. When USB is connected to the TV, popup window appears. You can select
+         the Videos, Photos or Music directly.
+      NN It might not work properly with unlicenced multimedia files.
+◀     NN Need-to-Know List before using Media Contents                             ▶
+           ●● MTP (Media Transfer Protocol) is not supported.
+           ●● The file system supports FAT16, FAT32 and NTFS.
+           ●● Certain types of USB Digital camera and audio devices may not be
+              compatible with this TV.
+
+                  Name                  Container         Format
+                     Xsub                      AVI     Picture Format
+             SubStation Alpha              MKV          Text Format
+         Advanced SubStation Alpha         MKV          Text Format
+                  SubRip                   MKV          Text Format
+            MPEG-4 Timed text              MP4          Text Format
+
+
+                                     English
+    ●● Supported Video Formats
+       File                                                               Frame rate   Bit rate   Audio
+                Container        Video Codec              Resolution
+    Extention                                                                (fps)     (Mbps)     Codec
+
+        *.avi               DivX 3.11/4.x/5.x/6.1
+      *.mkv
+        *.asf               MPEG4 SP/ASP                  1920 x 1080                    30          AC3
+      *.wmv        AVI                                                                              LPCM
+      *.mp4       MKV                                                                             ADMPCM
+                            H.264 BP/MP/HP
+       *.3gp      ASF                                                                             (IMA, MS)
+        *.vro     MP4                                                                                AAC
+      *.mpg       3GP       Motion JPEG                       640 x 480     6~30          8        HE-AAC
+     *.mpeg       VRO                                                                                WMA
+◀        *.ts     VOB       Window Media Video v9                                                    DD+      ▶
+         *.tp      PS                                                                               MPEG
+        *.trp      TS                                                                               (MP3)
+                            MPEG2                         1920 x 1080                    30
+     *.m2ts                                                                                       DTS Core
+       *.mts
+       *.divx               MPEG1
+
+
+
+
+                                                    English
+    Other Restrictions
+    ●● Video content will not play, or not play correctly, if there is an error in the
+       content or the container.
+    ●● Sound or video may not work if the contents have a standard bit rate/frame
+       rate above the compatible Frame/sec listed in the table.
+    ●● If the Index Table is in error, the Seek (Jump) function is not supported.
+    ●● When playing the video through network, it may not work depending on the
+       network status. When you play video over a network connection, the video
+       may not be played smoothly. for PDP 490 series
+◀                                                                                        ▶
+    ●● Some USB/digital camera devices may not be compatible with the player.
+    ●● The menu can be displayed late if the video is over 10Mbps(bit rate).
+
+
+
+
+                                          English
+                    Video decoder                                Audio decoder
+
+    ●● Supports up to H.264, Level 4.1
+                                                ●● WMA supports up to 10 Pro 5.1 channel and M2
+    ●● H.264 FMO / ASO / RS, VC1 SP / MP / AP
+                                                   profile. (LBR mode of M0 is not supported)
+       L4 and AVCHD are not supported.
+                                                ●● WMA lossless audio is not supported.
+
+
+
+                                             English
+    ●● Supported Photo Formats
+             File Extension                Type   Resolution
+                  *.jpg                    JPEG   15360 X 8640
+
+                 *.bmp                     BMP    1920 X 1080
+
+                 *.mpo                     MPO    15360 X 8640
+
+
+
+
+
+                                      English
+    ●● Supported Music Formats
+       File Extension   Type         Codec                              Remark
+           *.mp3        MPEG    MPEG1 Audio Layer 3
+
+           *.m4a        MPEG4          AAC
+           *.mpa
+            *.aac
+           *.3ga
+            *.flac      FLAC           FLAC           •   Seek is not supported. Supports up to
+                                                          2ch.
+           *.ogg        OGG           Vorbis          •   Supports up to 2ch.
+
+           *.wma        WMA            WMA            •   WMA supports up to 10 Pro 5.1 channel
+◀                                                         and M2 profile. (LBR mode of M0 is not   ▶
+                                                          supported)
+

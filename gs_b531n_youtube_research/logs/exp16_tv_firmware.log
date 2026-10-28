@@ -1,0 +1,27 @@
+# EXP-16 Samsung TV firmware T-MST9DEUC 1022.0 (2026-10-28T15:15:19Z)
+source: https://downloadcenter.samsung.com/content/FM/201301/20130121102437544/T-MST9DEUC.exe
+7a299ee8266b8015ff33dc1f742b57257a2ed653ee93a2dece54dff037214df6  dl/T-MST9DEUC_1022.exe
+dl/T-MST9DEUC_1022.exe: PE32 executable (GUI) Intel 80386, for MS Windows, RAR self-extracting archive, 5 sections
+total 37068
+drwxr-xr-x 2 root root     4096 Jan 21  2013 .
+drwxr-xr-x 3 root root     4096 Jan 21  2013 ..
+-rw-r--r-- 1 root root 37912868 Oct 29  2012 exe.img.sec
+-rw-r--r-- 1 root root      132 Oct 29  2012 exe.img.sec.cmac
+-rw-r--r-- 1 root root      256 Oct 29  2012 exe.img.sec.cs
+-rw-r--r-- 1 root root      256 Oct 29  2012 exe.img.sec.vs
+-rw-r--r-- 1 root root       18 Oct 29  2012 info.txt
+-rw-r--r-- 1 root root        7 Oct 29  2012 major_version
+-rw-r--r-- 1 root root        6 Oct 29  2012 minor_version
+-rw-r--r-- 1 root root       22 Oct 29  2012 validinfo.txt
+-rw-r--r-- 1 root root       39 Oct 29  2012 version_info.txt
+info.txt: T-MST9DEUC 1022.0
+major_version: 001022
+minor_version: 1022.0
+validinfo.txt: *007_exe.img_5bb53403
+version_info.txt: SWU_T-MST9DEUC_001022_I01_ES000_121029
+/tmp/claude-0/-home-user-Pol/a9c28fe7-5f9d-5bb7-b607-d441b3bb9812/scratchpad/tv/x/T-MST9DEUC/image/exe.img.sec: openssl enc'd data with salted password
+000000 53 61 6c 74 65 64 5f 5f 46 f9 4d 45 d9 32 af 4d  >Salted__F.ME.2.M<
+000010 74 36 c6 97 be 00 39 5c de 68 51 ee 2b c9 5d b6  >t6....9\.hQ.+.].<
+000020
+shannon entropy (first 4 MiB): 8.0 bits/byte
+decision: image is encrypted (openssl enc, salted) and signed (.cs/.vs/.cmac); decryption with leaked keys NOT attempted (protection circumvention)
