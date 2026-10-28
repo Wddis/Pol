@@ -86,7 +86,7 @@ export default {
       }
       if (url.pathname === "/ci/signing-key") {
         if (!env.ODA_KEYSTORE_B64 || !env.ODA_KEYSTORE_PASS) return json({ status: "error", message: "ключ подписи не задан" }, 500);
-        return json({ keystore: env.ODA_KEYSTORE_B64, password: env.ODA_KEYSTORE_PASS, alias: "oda" });
+        return json({ keystore: env.ODA_KEYSTORE_B64 + (env.ODA_KEYSTORE_B64_2 ?? ""), password: env.ODA_KEYSTORE_PASS, alias: "oda" });
       }
       let rel: Partial<ApkRelease>;
       try {

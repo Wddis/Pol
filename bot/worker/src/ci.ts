@@ -4,7 +4,9 @@
 // и принимает сведения о выпуске (версия, ссылка на APK в GitHub Releases) для страницы /download.
 
 export interface CiEnv {
+  /** Ключ подписи APK (PKCS12, base64) — двумя секретами: лимит Cloudflare 5,1 КБ на секрет. */
   ODA_KEYSTORE_B64?: string;
+  ODA_KEYSTORE_B64_2?: string;
   ODA_KEYSTORE_PASS?: string;
   /** Только для тестов: свой издатель и адрес ключей. */
   OIDC_ISSUER?: string;
