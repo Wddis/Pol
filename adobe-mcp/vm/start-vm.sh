@@ -10,10 +10,11 @@
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 VM_DIR=${VM_DIR:-$HOME/winvm}
-# Windows 11 IoT Enterprise LTSC 2024 evaluation (24H2, 90 days from install), fetched by
-# dockur from Microsoft's Evaluation Center. The Windows 10 LTSC 2021 evaluation image is
-# past its built-in expiry and shuts itself down about once an hour.
-WIN_VERSION=${WIN_VERSION:-11l}
+# Windows 11 Enterprise evaluation (90 days), fetched by dockur from Microsoft's Evaluation
+# Center. Evaluation builds carry a hard expiry: the LTSC 2021/2024 evaluation images there
+# are past it (licence "Notification" state, hourly shutdowns, rearm does not help), while the
+# regularly refreshed Enterprise image is not.
+WIN_VERSION=${WIN_VERSION:-11e}
 NODE_VERSION=24.22.1
 OPENSSH_URL=https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.8.3.0p2-Preview/OpenSSH-Win64.zip
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15)
