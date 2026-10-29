@@ -7,7 +7,7 @@ The owner works from an Android phone and talks Russian; reply in Russian.
 When the owner asks for "the Windows VM", "the emulator", Premiere, After Effects or the
 Higgsfield MCP servers, they mean the setup in `adobe-mcp/` (see `adobe-mcp/README.md`):
 
-- `adobe-mcp/vm/start-vm.sh` starts Windows 11 Enterprise Evaluation under dockur/windows
+- `adobe-mcp/vm/start-vm.sh` starts Windows 11 LTSC Evaluation under dockur/windows
   in this container (software emulation, no KVM), installs Node 24, both Higgsfield MCP
   packages and OpenSSH, and registers `higgsfield-use-premiere` /
   `higgsfield-use-after-effects` in Claude Code over ssh (`adobe-mcp/vm/mcp-ssh.sh`).
@@ -27,3 +27,6 @@ Higgsfield MCP servers, they mean the setup in `adobe-mcp/` (see `adobe-mcp/READ
   session disk. The Windows evaluation cannot activate through the sandbox's TLS
   interception, so it shuts down about once an hour; the container's restart policy boots it
   again. Plan long operations (downloads, installs, renders) around that.
+- dockur keeps the disk only if `~/winvm/storage/windows.boot` exists; without it every
+  container start wipes the disk and reinstalls. If the session container restarted while
+  Windows setup was still running, the setup is broken anyway; start over.

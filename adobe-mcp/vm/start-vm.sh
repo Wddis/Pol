@@ -4,17 +4,20 @@
 # registers both servers in Claude Code over ssh.
 #
 # With HF_TOKEN and HF_VM_REPO set, a saved image is restored first (see vm-image.sh);
-# otherwise this does a fresh unattended install (one to two hours without KVM).
+# otherwise this does a fresh unattended install (about three hours without KVM). Do not
+# stop the container while Windows setup is still running: an interrupted setup cannot
+# resume and has to start over.
 #
 #   adobe-mcp/vm/start-vm.sh            # screen: http://127.0.0.1:8006  ssh: port 2222
 set -euo pipefail
 HERE=$(cd "$(dirname "$0")" && pwd)
 VM_DIR=${VM_DIR:-$HOME/winvm}
-# Windows 11 Enterprise evaluation, fetched by dockur from Microsoft's Evaluation Center.
+# Windows 11 IoT Enterprise LTSC 2024 evaluation, fetched by dockur from Microsoft's
+# Evaluation Center; it needs about 5 GB less disk than the regular Enterprise image (11e).
 # Evaluation editions must activate online, which fails through the sandbox's TLS
 # interception (slmgr /ato: 0x8004FE93), so every evaluation image here reports an expired
 # licence and shuts down about once an hour; slmgr /rearm does not change that.
-WIN_VERSION=${WIN_VERSION:-11e}
+WIN_VERSION=${WIN_VERSION:-11l}
 NODE_VERSION=24.22.1
 OPENSSH_URL=https://github.com/PowerShell/Win32-OpenSSH/releases/download/v9.8.3.0p2-Preview/OpenSSH-Win64.zip
 SSH_OPTS=(-o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o ConnectTimeout=15)

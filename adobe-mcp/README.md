@@ -42,8 +42,9 @@ Premiere общается с сервером через подписанное 
 
 ## Windows‑VM прямо в облачной сессии Claude (без своего ПК)
 
-`adobe-mcp/vm/start-vm.sh` поднимает в контейнере сессии Windows 11 Enterprise Evaluation
-(официальный образ Microsoft) через
+`adobe-mcp/vm/start-vm.sh` поднимает в контейнере сессии Windows 11 IoT Enterprise LTSC 2024
+Evaluation (официальный образ Microsoft; `WIN_VERSION=11e` — обычная Enterprise, на ~5 ГБ
+больше) через
 [dockur/windows](https://github.com/dockur/windows), автоматически ставит туда Node 24, оба
 MCP‑пакета и OpenSSH и регистрирует серверы в Claude Code через `ssh` (`mcp-ssh.sh`).
 Экран VM: `http://127.0.0.1:8006`, ssh: порт 2222.
