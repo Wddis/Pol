@@ -75,7 +75,7 @@ async function waitHttp(url, ms = 15000) {
 }
 
 function startServer(env) {
-  const p = spawn(process.execPath, [path.join(root, 'src/server.js')], { env: { ...process.env, ...env }, stdio: ['ignore', 'ignore', 'pipe'] });
+  const p = spawn(process.execPath, [path.join(root, process.env.ACM_TEST_ENTRY || 'server.mjs')], { env: { ...process.env, ...env }, stdio: ['ignore', 'ignore', 'pipe'] });
   p.stderr.on('data', (d) => process.env.DEBUG && process.stderr.write('[server] ' + d));
   procs.push(p);
   return p;

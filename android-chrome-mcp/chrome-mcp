@@ -1,0 +1,265 @@
+#!/data/data/com.termux/files/usr/bin/env bash
+# chrome-mcp — Claude управляет вашим Chrome в фоне.
+# Просто запустите:  chrome-mcp
+# (команды для опытных: setup | start | stop | restart | status | url | logs |
+#  new-secret | user-tabs on|off | update)
+set -u
+
+APP_DIR="$(cd "$(dirname "$(readlink -f "$0")")" && pwd)"
+STATE="${ACM_STATE_DIR:-$HOME/.android-chrome-mcp}"
+CONF="$STATE/config.env"
+LOG="$STATE/server.log"
+TLOG="$STATE/tunnel.log"
+SERIAL="127.0.0.1:5555"
+mkdir -p "$STATE"; chmod 700 "$STATE"
+
+G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; B=$'\e[1m'; N=$'\e[0m'
+say()  { printf '%s\n' "$*"; }
+ok()   { printf '%s✔%s %s\n' "$G" "$N" "$*"; }
+warn() { printf '%s!%s %s\n' "$Y" "$N" "$*"; }
+err()  { printf '%s✘ %s%s\n' "$R" "$*" "$N"; }
+die()  { err "$*"; exit 1; }
+pause() { read -r -p "  ${B}Готово? Нажмите Enter${N} " _; }
+open_screen() { am start -a "$1" ${2:+-d "$2"} >/dev/null 2>&1 || true; }
+newsecret() { head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n'; }
+
+# ---------- настройки ----------
+[ -f "$CONF" ] || {
+  cat >"$CONF" <<EOF
+ACM_SECRET=$(newsecret)
+ACM_PORT=8765
+ACM_CDP_PORT=9222
+ACM_ALL_TABS=0
+ACM_CHROME_PACKAGE=com.android.chrome
+# Постоянный адрес через свой Cloudflare-туннель (необязательно):
+ACM_CF_TOKEN=
+ACM_PUBLIC_URL=
+EOF
+  chmod 600 "$CONF"
+}
+# shellcheck disable=SC1090
+. "$CONF"
+export ACM_SECRET ACM_PORT ACM_CDP_PORT ACM_ALL_TABS ACM_CHROME_PACKAGE \
+  ACM_STATE_DIR="$STATE" ACM_ADB_SERIAL="$SERIAL" ACM_MODE=android
+
+set_conf() { if grep -q "^$1=" "$CONF"; then sed -i "s|^$1=.*|$1=$2|" "$CONF"; else echo "$1=$2" >>"$CONF"; fi; }
+alive() { [ -f "$STATE/$1.pid" ] && kill -0 "$(cat "$STATE/$1.pid")" 2>/dev/null; }
+running() { alive server && alive tunnel; }
+
+# ---------- adb: телефон подключается сам к себе ----------
+adb_ok() { adb -s "$SERIAL" get-state 2>/dev/null | grep -q device; }
+mdns_port() { adb mdns services 2>/dev/null | awk -v t="$1" '$0 ~ t {print $NF}' | head -n1 | sed 's/.*://'; }
+
+adb_connect() {
+  adb start-server >/dev/null 2>&1
+  adb_ok && return 0
+  adb connect "$SERIAL" >/dev/null 2>&1; sleep 1
+  adb_ok && return 0
+  local port=""
+  for _ in 1 2 3 4 5; do port="$(mdns_port _adb-tls-connect)"; [ -n "$port" ] && break; sleep 1; done
+  if [ -z "$port" ]; then
+    say ""
+    warn "Нужна «Отладка по Wi-Fi» (Wi-Fi должен быть включён)."
+    say "  Открываю «Для разработчиков» → включите «Отладка по Wi-Fi» и вернитесь сюда."
+    open_screen android.settings.APPLICATION_DEVELOPMENT_SETTINGS
+    pause
+    for _ in 1 2 3 4 5 6; do port="$(mdns_port _adb-tls-connect)"; [ -n "$port" ] && break; sleep 1; done
+  fi
+  if [ -z "$port" ]; then
+    say "  Откройте «Отладка по Wi-Fi»: там «IP-адрес и порт», например 192.168.1.5:${B}41234${N}"
+    read -r -p "  Введите только порт: " port
+  fi
+  [ -n "$port" ] || { err "Порт не указан."; return 1; }
+  adb connect "127.0.0.1:$port" 2>&1 | grep -q "connected" || { err "Не удалось подключиться. Если вы ещё не делали сопряжение — выберите «Настройка» в меню."; return 1; }
+  sleep 1
+  adb -s "127.0.0.1:$port" tcpip 5555 >/dev/null 2>&1   # дальше работает и без Wi-Fi до перезагрузки
+  sleep 3
+  adb disconnect "127.0.0.1:$port" >/dev/null 2>&1
+  for _ in 1 2 3 4 5; do adb connect "$SERIAL" >/dev/null 2>&1; sleep 1; adb_ok && return 0; done
+  err "adb не подключился к $SERIAL."; return 1
+}
+
+chrome_version() {
+  adb -s "$SERIAL" forward "tcp:$ACM_CDP_PORT" localabstract:chrome_devtools_remote >/dev/null 2>&1
+  curl -fsS -m 3 "http://127.0.0.1:$ACM_CDP_PORT/json/version" 2>/dev/null | grep -o '"Browser": *"[^"]*"' | cut -d'"' -f4
+}
+
+# ---------- первая настройка (мастер) ----------
+cmd_setup() {
+  clear 2>/dev/null
+  say "${B}Настройка (один раз, ~3 минуты). Я буду открывать нужные экраны сам.${N}"
+  say ""
+  say "${B}1/4. Режим разработчика${N}"
+  say "  Открываю «О телефоне» → 7 раз нажмите на «Версия HyperOS» (или «Версия MIUI»)."
+  say "  Если режим уже включён — просто нажмите Enter."
+  open_screen android.settings.DEVICE_INFO_SETTINGS
+  pause
+  say ""
+  say "${B}2/4. Отладка${N}"
+  say "  Открываю «Для разработчиков» → включите ${B}«Отладка по USB»${N} и ${B}«Отладка по Wi-Fi»${N}."
+  open_screen android.settings.APPLICATION_DEVELOPMENT_SETTINGS
+  pause
+  say ""
+  say "${B}3/4. Сопряжение${N}"
+  say "  а) Откройте недавние приложения, зажмите Termux → «Разделить экран», во второй половине — Настройки."
+  say "  б) В Настройках: «Для разработчиков» → «Отладка по Wi-Fi» → «Подключение с помощью кода»."
+  say "  в) Не закрывая окно с кодом, вернитесь сюда."
+  pause
+  adb start-server >/dev/null 2>&1
+  local pport=""
+  for _ in 1 2 3 4 5 6; do pport="$(mdns_port _adb-tls-pairing)"; [ -n "$pport" ] && break; sleep 1; done
+  if [ -n "$pport" ]; then ok "Окно сопряжения найдено."
+  else read -r -p "  Введите порт из окна с кодом (число после двоеточия): " pport; fi
+  local pcode; read -r -p "  Введите 6-значный код: " pcode
+  if adb pair "127.0.0.1:$pport" "$pcode" 2>&1 | grep -qi "successfully"; then ok "Сопряжено."
+  else die "Сопряжение не удалось. Запустите chrome-mcp ещё раз и введите свежий код."; fi
+  touch "$STATE/paired"
+  adb_connect || exit 1
+  ok "Телефон подключён сам к себе."
+  say ""
+  say "${B}4/4. Чтобы Xiaomi не закрывал работу в фоне${N}"
+  say "  Открываю Termux: включите ${B}«Автозапуск»${N}, «Контроль активности» → ${B}«Нет ограничений»${N}."
+  open_screen android.settings.APPLICATION_DETAILS_SETTINGS package:com.termux
+  pause
+  say "  Открываю Chrome: то же самое — «Автозапуск» и «Нет ограничений»."
+  open_screen android.settings.APPLICATION_DETAILS_SETTINGS "package:$ACM_CHROME_PACKAGE"
+  pause
+  say "  И ещё: в недавних приложениях зажмите Termux → нажмите ${B}замок${N} 🔒."
+  say ""
+  ok "Настройка завершена. Запускаю..."
+  cmd_start
+}
+
+# ---------- запуск ----------
+start_tunnel() {
+  : >"$TLOG"
+  if [ -n "${ACM_CF_TOKEN:-}" ]; then
+    nohup cloudflared tunnel --no-autoupdate run --token "$ACM_CF_TOKEN" >"$TLOG" 2>&1 &
+    echo $! >"$STATE/tunnel.pid"; echo "${ACM_PUBLIC_URL%/}" >"$STATE/base_url"
+  else
+    nohup cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$ACM_PORT" >"$TLOG" 2>&1 &
+    echo $! >"$STATE/tunnel.pid"
+    local url=""
+    for _ in $(seq 1 60); do
+      url="$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$TLOG" | head -n1)"
+      [ -n "$url" ] && break; alive tunnel || break; sleep 1
+    done
+    [ -n "$url" ] || { tail -n 8 "$TLOG"; cmd_stop >/dev/null; err "Туннель не запустился. Переключите VPN (вкл/выкл) и попробуйте снова."; return 1; }
+    echo "$url" >"$STATE/base_url"
+  fi
+  for _ in $(seq 1 45); do grep -q 'Registered tunnel connection' "$TLOG" && break; alive tunnel || break; sleep 1; done
+  grep -q 'Registered tunnel connection' "$TLOG" || { tail -n 8 "$TLOG"; cmd_stop >/dev/null; err "Туннель не соединился с Cloudflare. Переключите VPN (вкл/выкл) или сеть и попробуйте снова."; return 1; }
+  local base; base="$(cat "$STATE/base_url")"
+  for _ in $(seq 1 20); do curl -fsS -m 5 "$base/health" >/dev/null 2>&1 && return 0; sleep 2; done
+  warn "Адрес заработает через минуту (обновляется DNS)."
+}
+
+show_url() {
+  [ -f "$STATE/base_url" ] || { warn "Сейчас не запущено."; return 1; }
+  local u; u="$(cat "$STATE/base_url")/mcp/$ACM_SECRET"
+  local last; last="$(cat "$STATE/last_url" 2>/dev/null)"
+  say ""
+  if [ "$u" = "$last" ]; then
+    ok "Адрес не изменился — в Claude ничего менять не нужно."
+  else
+    say "${B}Новый адрес для Claude:${N}"
+  fi
+  say "${G}$u${N}"
+  command -v termux-clipboard-set >/dev/null 2>&1 && timeout 3 termux-clipboard-set "$u" 2>/dev/null && ok "Скопирован в буфер обмена."
+  if [ "$u" != "$last" ]; then
+    say ""
+    say "Вставьте его в Claude: ${B}claude.ai → Настройки → Коннекторы → Добавить свой коннектор${N}"
+    say "(OAuth-поля пустые). Если коннектор уже есть — удалите старый и добавьте этот."
+    read -r -p "Открыть claude.ai сейчас? [Enter = да, n = нет] " a
+    [ "${a:-}" = n ] || open_screen android.intent.action.VIEW "https://claude.ai/settings/connectors"
+  fi
+  echo "$u" >"$STATE/last_url"
+  say "${Y}Никому не показывайте адрес — он даёт доступ к вашему Chrome.${N}"
+}
+
+cmd_start() {
+  [ -f "$STATE/paired" ] || { cmd_setup; return; }
+  command -v termux-wake-lock >/dev/null && termux-wake-lock
+  adb_connect || return 1
+  local v; v="$(chrome_version)"
+  [ -n "$v" ] && ok "Chrome: $v" || warn "Chrome запустится сам при первой задаче (мелькнёт на секунду)."
+  if ! alive server; then
+    nohup node "$APP_DIR/server.mjs" >>"$LOG" 2>&1 &
+    echo $! >"$STATE/server.pid"
+    for _ in $(seq 1 30); do curl -fsS -m 1 "http://127.0.0.1:$ACM_PORT/health" >/dev/null 2>&1 && break; sleep 0.5; done
+    curl -fsS -m 1 "http://127.0.0.1:$ACM_PORT/health" >/dev/null 2>&1 || { tail -n 10 "$LOG"; err "Сервер не запустился."; return 1; }
+  fi
+  ok "Сервер работает."
+  alive tunnel || start_tunnel || return 1
+  ok "Туннель работает."
+  show_url
+  say ""
+  ok "${B}Готово! Пишите задачи Claude. Termux можно свернуть (не смахивайте его).${N}"
+}
+
+cmd_stop() {
+  for p in tunnel server; do alive "$p" && kill "$(cat "$STATE/$p.pid")" 2>/dev/null; rm -f "$STATE/$p.pid"; done
+  rm -f "$STATE/base_url"
+  adb -s "$SERIAL" forward --remove "tcp:$ACM_CDP_PORT" >/dev/null 2>&1
+  command -v termux-wake-unlock >/dev/null && termux-wake-unlock
+  ok "Остановлено. Доступ к Chrome закрыт."
+}
+
+cmd_status() {
+  alive server && ok "Сервер работает" || warn "Сервер остановлен"
+  alive tunnel && ok "Туннель: $(cat "$STATE/base_url" 2>/dev/null)" || warn "Туннель остановлен"
+  adb_ok && ok "adb подключён" || warn "adb не подключён"
+  local v; v="$(adb_ok && chrome_version)"
+  [ -n "$v" ] && ok "Chrome: $v" || warn "Chrome недоступен"
+  [ "$ACM_ALL_TABS" = 1 ] && say "Ваши вкладки: Claude ${B}видит${N}" || say "Ваши вкладки: Claude ${B}не видит${N} (только свои)"
+}
+
+cmd_user_tabs() {
+  case "$1" in
+    on) set_conf ACM_ALL_TABS 1; ACM_ALL_TABS=1; ok "Claude будет видеть и ваши вкладки." ;;
+    off) set_conf ACM_ALL_TABS 0; ACM_ALL_TABS=0; ok "Claude видит только свои вкладки." ;;
+  esac
+  export ACM_ALL_TABS
+  if alive server; then kill "$(cat "$STATE/server.pid")"; rm -f "$STATE/server.pid"; sleep 1; cmd_start >/dev/null && ok "Применено."; fi
+}
+
+cmd_new_secret() {
+  set_conf ACM_SECRET "$(newsecret)"; . "$CONF"; export ACM_SECRET
+  ok "Старый адрес больше не работает."
+  if alive server; then kill "$(cat "$STATE/server.pid")"; rm -f "$STATE/server.pid"; sleep 1; cmd_start; fi
+}
+
+cmd_update() {
+  curl -fsSL "${ACM_INSTALL_URL:-https://cdn.jsdelivr.net/gh/wddis/pol@ccr-53c32ce8-hewh3l/android-chrome-mcp/install.sh}" | bash
+}
+
+menu() {
+  while true; do
+    say ""
+    if running; then say "${G}●${N} ${B}Claude подключён к Chrome${N}"; else say "${Y}○${N} ${B}Остановлено${N}"; fi
+    say "  1) Запустить            2) Остановить"
+    say "  3) Показать адрес       4) Проверить состояние"
+    if [ "$ACM_ALL_TABS" = 1 ]; then say "  5) Мои вкладки: Claude видит  → скрыть"
+    else say "  5) Мои вкладки: Claude не видит → показать"; fi
+    say "  6) Сменить секретный адрес"
+    say "  7) Настройка заново     8) Логи"
+    say "  9) Обновить программу   0) Выход"
+    read -r -p "Выберите: " c
+    case "$c" in
+      1) cmd_start ;; 2) cmd_stop ;; 3) show_url ;; 4) cmd_status ;;
+      5) [ "$ACM_ALL_TABS" = 1 ] && cmd_user_tabs off || cmd_user_tabs on ;;
+      6) cmd_new_secret ;; 7) rm -f "$STATE/paired"; cmd_setup ;;
+      8) tail -n 40 "$LOG" 2>/dev/null; say "--- туннель ---"; tail -n 10 "$TLOG" 2>/dev/null ;;
+      9) cmd_update; exit 0 ;; 0|q|"") exit 0 ;;
+    esac
+  done
+}
+
+case "${1:-}" in
+  "") if [ -f "$STATE/paired" ]; then running || cmd_start; menu; else cmd_setup; menu; fi ;;
+  setup) cmd_setup ;; start) cmd_start ;; stop) cmd_stop ;;
+  restart) cmd_stop; cmd_start ;; status) cmd_status ;; url) show_url ;;
+  logs) tail -n 60 "$LOG"; tail -n 15 "$TLOG" 2>/dev/null ;;
+  new-secret) cmd_new_secret ;; user-tabs) cmd_user_tabs "${2:-}" ;; update) cmd_update ;;
+  *) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac

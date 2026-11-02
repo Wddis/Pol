@@ -3,16 +3,24 @@
   "version": "1.0.0",
   "description": "MCP server that lets Claude drive Chrome on Android in the background via the DevTools protocol (no screen, no other apps).",
   "type": "module",
-  "main": "src/server.js",
-  "bin": { "android-chrome-mcp": "src/server.js" },
+  "main": "server.mjs",
+  "bin": {
+    "android-chrome-mcp": "server.mjs"
+  },
   "scripts": {
     "start": "node src/server.js",
-    "test": "node test/e2e.test.js"
+    "test": "node test/e2e.test.js",
+    "build": "esbuild src/server.js --bundle --platform=node --format=esm --target=node22 --external:ws --minify-syntax --legal-comments=none --banner:js=\"import{createRequire as __cr}from\\\"node:module\\\";const require=__cr(import.meta.url);\" --outfile=server.mjs"
   },
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.2",
     "zod": "^3.25.0"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.12"
   }
 }

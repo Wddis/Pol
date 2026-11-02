@@ -1,41 +1,40 @@
 #!/data/data/com.termux/files/usr/bin/env bash
-# Installer for Termux:
-#   curl -fsSL https://raw.githubusercontent.com/wddis/pol/main/android-chrome-mcp/install.sh | bash
+# Установка в Termux одной командой (см. README).
 set -e
-REPO="wddis/pol"
-BRANCHES="${ACM_BRANCH:-main ccr-53c32ce8-hewh3l}"
-DEST="$HOME/android-chrome-mcp"
+REF="${ACM_REF:-ccr-53c32ce8-hewh3l}"
+P="android-chrome-mcp"
+MIRRORS="https://cdn.jsdelivr.net/gh/wddis/pol@$REF/$P
+https://fastly.jsdelivr.net/gh/wddis/pol@$REF/$P
+https://raw.githubusercontent.com/wddis/pol/$REF/$P
+https://github.com/wddis/pol/raw/$REF/$P"
+APP="$HOME/.android-chrome-mcp/app"
 
-[ -n "${PREFIX:-}" ] && [ -d "$PREFIX" ] || { echo "Запустите это в Termux."; exit 1; }
+[ -d "${PREFIX:-/nonexistent}" ] || { echo "Запустите это в приложении Termux."; exit 1; }
 
-echo "==> Устанавливаю пакеты (nodejs, adb, cloudflared)..."
-pkg update -y >/dev/null 2>&1 || true
-pkg install -y nodejs android-tools cloudflared curl tar >/dev/null
+echo "▶ 1/3 Обновляю Termux и ставлю нужные пакеты (пару минут)..."
+export DEBIAN_FRONTEND=noninteractive
+pkg update -y -o Dpkg::Options::=--force-confnew >/dev/null 2>&1 || true
+pkg upgrade -y -o Dpkg::Options::=--force-confnew >/dev/null 2>&1 || true
+pkg install -y nodejs android-tools cloudflared curl >/dev/null 2>&1 || pkg install -y nodejs android-tools cloudflared curl
+[ "$(node -p 'process.versions.node.split(".")[0]')" -ge 22 ] || { echo "Нужен Node.js 22+. Выполните: pkg upgrade и повторите."; exit 1; }
 
-major="$(node -p 'process.versions.node.split(".")[0]')"
-[ "$major" -ge 22 ] || { echo "Нужен Node.js 22+, установлен $(node -v). Выполните: pkg upgrade"; exit 1; }
+echo "▶ 2/3 Скачиваю программу..."
+mkdir -p "$APP"
+fetch() { # file
+  local m
+  while read -r m; do
+    if curl -fsSL --retry 2 -m 120 "$m/$1" -o "$APP/$1.tmp" 2>/dev/null && [ -s "$APP/$1.tmp" ]; then
+      mv "$APP/$1.tmp" "$APP/$1"; return 0
+    fi
+  done <<<"$MIRRORS"
+  echo "Не удалось скачать $1. Включите/выключите VPN и повторите."; exit 1
+}
+fetch server.mjs
+fetch chrome-mcp
+grep -q "android-chrome MCP" "$APP/server.mjs" || { echo "Файл повреждён, повторите установку."; exit 1; }
+chmod +x "$APP/chrome-mcp" "$APP/server.mjs"
+ln -sf "$APP/chrome-mcp" "$PREFIX/bin/chrome-mcp"
 
-echo "==> Скачиваю android-chrome-mcp..."
-tmp="$(mktemp -d)"
-got=""
-for b in $BRANCHES; do
-  if curl -fsSL "https://codeload.github.com/$REPO/tar.gz/refs/heads/$b" | tar -xz -C "$tmp" 2>/dev/null; then
-    src="$(find "$tmp" -maxdepth 2 -type d -name android-chrome-mcp | head -n1)"
-    [ -n "$src" ] && { got="$src"; break; }
-    rm -rf "${tmp:?}"/*
-  fi
-done
-[ -n "$got" ] || { echo "Не удалось скачать проект."; exit 1; }
-rm -rf "$DEST"
-mv "$got" "$DEST"
-rm -rf "$tmp"
-
-echo "==> Устанавливаю зависимости..."
-(cd "$DEST" && npm install --omit=dev --no-audit --no-fund --loglevel=error)
-chmod +x "$DEST/bin/chrome-mcp" "$DEST/src/server.js"
-ln -sf "$DEST/bin/chrome-mcp" "$PREFIX/bin/chrome-mcp"
-
-echo ""
-echo "Готово. Дальше:"
-echo "  chrome-mcp setup   — один раз: сопряжение телефона с самим собой"
-echo "  chrome-mcp start   — запуск, выдаст адрес для Claude"
+echo "▶ 3/3 Готово! Запускаю мастер настройки..."
+echo
+exec chrome-mcp </dev/tty
