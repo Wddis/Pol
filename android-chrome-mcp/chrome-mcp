@@ -49,6 +49,48 @@ running() { alive server && alive tunnel; }
 # ---------- adb: телефон подключается сам к себе ----------
 adb_ok() { adb -s "$SERIAL" get-state 2>/dev/null | grep -q device; }
 mdns_port() { adb mdns services 2>/dev/null | awk -v t="$1" '$0 ~ t {print $NF}' | head -n1 | sed 's/.*://'; }
+export ADB_MDNS_OPENSCREEN=1   # обнаружение портов через mDNS во всех версиях adb
+
+# Спрашивает «IP-адрес & Порт». Принимает «192.168.1.5:41234» или просто «41234».
+# Результат: ADDR_HOST, ADDR_PORT. Пустой/неверный ввод — переспрашивает.
+read_addr() { # prompt [пример]
+  local v ex="${2:-192.168.38.40:43235}"
+  while true; do
+    read -r -p "$1" v
+    v="$(printf '%s' "$v" | tr -d ' \t\r')"
+    if [[ "$v" =~ ^([0-9]{1,3}(\.[0-9]{1,3}){3}):([0-9]{2,5})$ ]]; then
+      ADDR_HOST="${BASH_REMATCH[1]}"; ADDR_PORT="${BASH_REMATCH[3]}"; return 0
+    elif [[ "$v" =~ ^[0-9]{2,5}$ ]]; then
+      ADDR_HOST=""; ADDR_PORT="$v"; return 0
+    fi
+    warn "Не похоже на адрес. Введите строку целиком, например $ex"
+  done
+}
+
+read_code() {
+  local v
+  while true; do
+    read -r -p "  Введите 6-значный код из того же окна: " v
+    v="$(printf '%s' "$v" | tr -d ' \t\r')"
+    [[ "$v" =~ ^[0-9]{6}$ ]] && { PAIR_CODE="$v"; return 0; }
+    warn "Код — это 6 цифр, например 948219."
+  done
+}
+
+# Пробует 127.0.0.1 и адрес из Wi-Fi.
+try_adb() { # pair|connect host port [code]
+  local h out
+  for h in 127.0.0.1 $2; do
+    [ -n "$h" ] || continue
+    if [ "$1" = pair ]; then
+      out="$(adb pair "$h:$3" "$4" 2>&1)"; printf '%s' "$out" | grep -qi successfully && return 0
+    else
+      out="$(adb connect "$h:$3" 2>&1)"; printf '%s' "$out" | grep -q "connected to" && { CONNECTED="$h:$3"; return 0; }
+    fi
+  done
+  LAST_ADB_ERR="$out"
+  return 1
+}
 
 boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown; }
 remember_link() { boot_id >"$STATE/boot_id"; }
@@ -72,7 +114,7 @@ adb_connect() {
   say ""
   warn "Требуется переподключение."
   why_wifi
-  local port=""
+  local port="" host="" tries=0
   for _ in 1 2 3 4 5; do port="$(mdns_port _adb-tls-connect)"; [ -n "$port" ] && break; sleep 1; done
   if [ -z "$port" ]; then
     say "  1) Подключитесь к Wi-Fi."
@@ -82,16 +124,25 @@ adb_connect() {
     pause
     for _ in 1 2 3 4 5 6; do port="$(mdns_port _adb-tls-connect)"; [ -n "$port" ] && break; sleep 1; done
   fi
-  if [ -z "$port" ]; then
-    say "  Откройте «Отладка по Wi-Fi»: там «IP-адрес и порт», например 192.168.1.5:${B}41234${N}"
-    read -r -p "  Введите только порт: " port
-  fi
-  [ -n "$port" ] || { err "Порт не указан."; return 1; }
-  adb connect "127.0.0.1:$port" 2>&1 | grep -q "connected" || { err "Не удалось подключиться. Если вы ещё не делали сопряжение — выберите «Настройка» в меню."; return 1; }
+  while true; do
+    if [ -z "$port" ]; then
+      say "  Откройте «Отладка по Wi-Fi». На ${B}главном экране${N} (не в окне с кодом) есть строка"
+      say "  «IP-адрес & Порт», например ${B}192.168.38.40:42285${N}."
+      read_addr "  Введите её целиком: " 192.168.38.40:42285; port="$ADDR_PORT"; host="$ADDR_HOST"
+    fi
+    try_adb connect "$host" "$port" && break
+    tries=$((tries+1)); port=""
+    err "Не подключилось."
+    if [ "$tries" -ge 3 ]; then
+      say "  Возможно, сопряжение не сохранилось. Запустите ${B}chrome-mcp setup${N}."
+      return 1
+    fi
+    say "  Проверьте, что «Отладка по Wi-Fi» включена (порт меняется при каждом включении), и попробуйте ещё раз."
+  done
   sleep 1
-  adb -s "127.0.0.1:$port" tcpip 5555 >/dev/null 2>&1   # дальше работает и без Wi-Fi до перезагрузки
+  adb -s "$CONNECTED" tcpip 5555 >/dev/null 2>&1   # дальше работает и без Wi-Fi до перезагрузки
   sleep 3
-  adb disconnect "127.0.0.1:$port" >/dev/null 2>&1
+  adb disconnect "$CONNECTED" >/dev/null 2>&1
   for _ in 1 2 3 4 5; do
     adb connect "$SERIAL" >/dev/null 2>&1; sleep 1
     if adb_ok; then
@@ -133,19 +184,36 @@ cmd_setup() {
   say ""
   say "${B}3/4. Сопряжение${N}"
   say "  а) Откройте недавние приложения, зажмите Termux → «Разделить экран», во второй половине — Настройки."
-  say "  б) В Настройках: «Для разработчиков» → «Отладка по Wi-Fi» → «Подключение с помощью кода»."
-  say "  в) Не закрывая окно с кодом, вернитесь сюда."
+  say "  б) В Настройках: «Для разработчиков» → «Отладка по Wi-Fi» → ${B}«Подключение через код»${N}."
+  say "  в) Появится окно ${B}«Подключить устройство»${N} с кодом. Не закрывайте его и вернитесь сюда."
   pause
-  adb start-server >/dev/null 2>&1
-  local pport=""
-  for _ in 1 2 3 4 5 6; do pport="$(mdns_port _adb-tls-pairing)"; [ -n "$pport" ] && break; sleep 1; done
-  if [ -n "$pport" ]; then ok "Окно сопряжения найдено."
-  else read -r -p "  Введите порт из окна с кодом (число после двоеточия): " pport; fi
-  local pcode; read -r -p "  Введите 6-значный код: " pcode
-  if adb pair "127.0.0.1:$pport" "$pcode" 2>&1 | grep -qi "successfully"; then ok "Сопряжено."
-  else die "Сопряжение не удалось. Запустите chrome-mcp ещё раз и введите свежий код."; fi
+  adb kill-server >/dev/null 2>&1; adb start-server >/dev/null 2>&1
+  local attempt=0 pport phost
+  while true; do
+    attempt=$((attempt+1)); pport=""; phost=""
+    for _ in 1 2 3 4 5; do pport="$(mdns_port _adb-tls-pairing)"; [ -n "$pport" ] && break; sleep 1; done
+    if [ -n "$pport" ]; then
+      ok "Окно с кодом найдено автоматически."
+    else
+      say ""
+      say "  Посмотрите в окно ${B}«Подключить устройство»${N} (с кодом) на строку «IP-адрес & Порт»,"
+      say "  например ${B}192.168.38.40:43235${N}. Порт там ${B}другой${N}, чем на главном экране — нужен именно этот."
+      read_addr "  Введите её целиком: "; pport="$ADDR_PORT"; phost="$ADDR_HOST"
+    fi
+    read_code
+    say "  Сопрягаю..."
+    if try_adb pair "$phost" "$pport" "$PAIR_CODE"; then ok "Сопряжено."; break; fi
+    err "Сопряжение не прошло."
+    say "  Частые причины: окно с кодом закрылось (код меняется каждый раз) или введён порт с главного экрана."
+    if [ "$attempt" -ge 5 ]; then die "Не получилось 5 раз. Пришлите скриншот этого экрана — разберёмся."; fi
+    say "  Откройте ${B}«Подключение через код»${N} заново и нажмите здесь Enter, чтобы ввести новые данные."
+    pause
+  done
   touch "$STATE/paired"
-  adb_connect || exit 1
+  until adb_connect; do
+    say ""; read -r -p "  Попробовать подключиться ещё раз? [Enter = да, n = выйти] " a
+    [ "${a:-}" = n ] && exit 1
+  done
   ok "Телефон подключён сам к себе."
   say ""
   say "${B}4/4. Чтобы Xiaomi не закрывал работу в фоне${N}"
