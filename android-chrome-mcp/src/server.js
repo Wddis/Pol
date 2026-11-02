@@ -23,6 +23,7 @@ const cfg = {
   adb: env.ACM_ADB || 'adb',
   serial: env.ACM_ADB_SERIAL || '',
   stateDir: env.ACM_STATE_DIR || path.join(os.homedir(), '.android-chrome-mcp'),
+  cdpSocket: env.ACM_CDP_SOCKET || '',
 };
 
 if (cfg.secret.length < 16) {
@@ -32,7 +33,7 @@ if (cfg.secret.length < 16) {
 
 const log = (...a) => console.error(new Date().toISOString(), ...a);
 const android = cfg.mode === 'android'
-  ? new Android({ adbPath: cfg.adb, serial: cfg.serial, chromePackage: cfg.chromePackage, port: cfg.cdpPort, log })
+  ? new Android({ adbPath: cfg.adb, serial: cfg.serial, chromePackage: cfg.chromePackage, port: cfg.cdpPort, socketPath: cfg.cdpSocket || null, log })
   : undefined;
 const browser = new Browser({ mode: cfg.mode, cdpPort: cfg.cdpPort, android, allTabs: cfg.allTabs, stateDir: cfg.stateDir, log });
 
@@ -82,7 +83,7 @@ function buildServer() {
     description: 'Open a new background tab owned by the agent and make it current.',
     inputSchema: { url: z.string().optional().describe('URL to open (default about:blank)') },
   }, wrap(async ({ url }) => {
-    const id = await browser.openTab(url ? (/^[a-z][a-z0-9+.-]*:/i.test(url) ? url : 'https://' + url) : 'about:blank');
+    const id = await browser.openTab(url || 'about:blank');
     return ok({ tab: id, current: true });
   }));
 

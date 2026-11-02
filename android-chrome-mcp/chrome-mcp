@@ -44,7 +44,7 @@ grep -q '^ACM_STABLE=' "$CONF" || echo "ACM_STABLE=1" >>"$CONF"
 # shellcheck disable=SC1090
 . "$CONF"
 export ACM_SECRET ACM_PORT ACM_CDP_PORT ACM_ALL_TABS ACM_CHROME_PACKAGE \
-  ACM_STATE_DIR="$STATE" ACM_ADB_SERIAL="$SERIAL" ACM_MODE=android
+  ACM_STATE_DIR="$STATE" ACM_ADB_SERIAL="$SERIAL" ACM_MODE=android ACM_CDP_SOCKET="$STATE/cdp.sock"
 
 set_conf() { if grep -q "^$1=" "$CONF"; then sed -i "s|^$1=.*|$1=$2|" "$CONF"; else echo "$1=$2" >>"$CONF"; fi; }
 alive() { [ -f "$STATE/$1.pid" ] && kill -0 "$(cat "$STATE/$1.pid")" 2>/dev/null; }
@@ -166,9 +166,15 @@ wifi_hint() {
   say "Wi-Fi понадобится снова только после перезагрузки телефона (программа сама подскажет)."
 }
 
+# Связь с Chrome — через закрытый сокет в папке Termux (другие приложения его не видят).
 chrome_version() {
-  adb -s "$SERIAL" forward "tcp:$ACM_CDP_PORT" localabstract:chrome_devtools_remote >/dev/null 2>&1
-  curl -fsS -m 3 "http://127.0.0.1:$ACM_CDP_PORT/json/version" 2>/dev/null | grep -o '"Browser": *"[^"]*"' | cut -d'"' -f4
+  adb -s "$SERIAL" forward --remove "tcp:$ACM_CDP_PORT" >/dev/null 2>&1   # убрать открытый порт старых версий
+  if ! adb -s "$SERIAL" forward --list 2>/dev/null | grep -q "localfilesystem:$ACM_CDP_SOCKET "; then
+    rm -f "$ACM_CDP_SOCKET"
+    adb -s "$SERIAL" forward "localfilesystem:$ACM_CDP_SOCKET" localabstract:chrome_devtools_remote >/dev/null 2>&1
+    chmod 600 "$ACM_CDP_SOCKET" 2>/dev/null
+  fi
+  curl -fsS -m 3 --unix-socket "$ACM_CDP_SOCKET" "http://localhost/json/version" 2>/dev/null | grep -o '"Browser": *"[^"]*"' | cut -d'"' -f4
 }
 
 # ---------- первая настройка (мастер) ----------
@@ -491,6 +497,7 @@ cmd_stop() {
   tunnel_unlock
   rm -f "$STATE/base_url"
   adb -s "$SERIAL" forward --remove "tcp:$ACM_CDP_PORT" >/dev/null 2>&1
+  adb -s "$SERIAL" forward --remove "localfilesystem:$ACM_CDP_SOCKET" >/dev/null 2>&1; rm -f "$ACM_CDP_SOCKET"
   command -v termux-wake-unlock >/dev/null && termux-wake-unlock
   ok "Остановлено. Доступ к Chrome закрыт."
 }

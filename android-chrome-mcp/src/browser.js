@@ -9,6 +9,22 @@ import { SNAPSHOT_JS, CLICK_JS, FOCUS_JS, READ_VALUE_JS, FALLBACK_TYPE_JS, SCROL
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/**
+ * Only web pages. file://, content://, intent://, chrome:// etc. would reach
+ * the phone's files or other apps, which this server must never allow.
+ */
+export function safeUrl(input) {
+  let url = String(input || '').trim();
+  if (!url || url === 'about:blank') return 'about:blank';
+  if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url;
+  let u;
+  try { u = new URL(url); } catch { throw new CdpError(`Invalid URL: ${input}`); }
+  if (u.protocol !== 'http:' && u.protocol !== 'https:') {
+    throw new CdpError(`Only http(s) pages are allowed (got ${u.protocol}). Files and other apps on the phone are off-limits.`);
+  }
+  return u.href;
+}
+
 const KEYS = {
   Enter: { code: 'Enter', keyCode: 13, text: '\r' },
   Tab: { code: 'Tab', keyCode: 9 },
@@ -46,7 +62,7 @@ export class Browser {
    */
   constructor({ mode = 'android', cdpPort = 9222, android, allTabs = false, stateDir, log = () => {} }) {
     this.mode = mode;
-    this.http = new DevtoolsHttp(`http://127.0.0.1:${cdpPort}`);
+    this.http = new DevtoolsHttp(`http://127.0.0.1:${cdpPort}`, android?.socketPath || null);
     this.android = android;
     this.allTabs = allTabs;
     this.log = log;
@@ -82,6 +98,7 @@ export class Browser {
   async ensureReady() {
     if (this.mode === 'android') {
       await this.android.ensureForward();
+      this.http.socketPath = this.android.socketPath;
       try {
         return await this.http.version();
       } catch {
@@ -155,6 +172,7 @@ export class Browser {
   }
 
   async openTab(url = 'about:blank') {
+    url = safeUrl(url);
     await this.ensureReady();
     let id;
     if (this.mode === 'desktop') {
@@ -229,7 +247,7 @@ export class Browser {
     if (!page.webSocketDebuggerUrl) {
       throw new CdpError('This tab is already being debugged by another client (for example chrome://inspect). Close it and retry.');
     }
-    const s = await PageSession.open(page.webSocketDebuggerUrl, id);
+    const s = await PageSession.open(page.webSocketDebuggerUrl, id, 10000, this.http.socketPath);
     this.sessions.set(id, s);
     // Make a background tab behave like a focused one: focus(), typing and
     // key events work while the user is in another app.
@@ -267,7 +285,7 @@ export class Browser {
 
   navigate(url, tab) {
     return this.op(async () => {
-      if (!/^[a-z][a-z0-9+.-]*:/i.test(url)) url = 'https://' + url;
+      url = safeUrl(url);
       if (!tab && !this.current && ![...this.agentTabs].length) {
         const id = await this.openTab(url);
         return this.#info(await this.session(id), id);
@@ -450,11 +468,12 @@ export class Browser {
       const { s } = await this.#page(tab);
       const wrapped = `(async () => { const __r = await (async () => (${expression}))(); try { return JSON.parse(JSON.stringify(__r ?? null)); } catch { return String(__r); } })()`;
       try {
-        return await s.evaluate(wrapped);
+        // userGesture: false, so scripts cannot launch other apps (intent:) or pop windows.
+        return await s.evaluate(wrapped, { userGesture: false });
       } catch (e) {
         // Statements (not an expression): run as a function body.
         if (/SyntaxError/.test(e.message)) {
-          return s.evaluate(`(async () => { ${expression} })()`);
+          return s.evaluate(`(async () => { ${expression} })()`, { userGesture: false });
         }
         throw e;
       }

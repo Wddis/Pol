@@ -45,6 +45,7 @@ const pages = {
     <div id="live"></div>
     <script>q.addEventListener('input', () => live.textContent = 'live:' + q.value)</script>`,
   '/new': `<!doctype html><title>New</title><p>Opened in same tab</p>`,
+  '/apps': `<!doctype html><title>Apps</title><a href="intent://scan/#Intent;scheme=zxing;end">Open app</a> <a href="tel:+100">Call</a>`,
   '/late': `<!doctype html><title>Late</title><p id=p>loading</p><script>setTimeout(()=>p.textContent='Ready now',1200)</script>`,
 };
 let postCount = 0;
@@ -266,6 +267,21 @@ async function main() {
     assert.equal(JSON.parse(text(await call(c, 'tabs_list'))).length, 1);
   });
 
+  await test('security: files, other apps and browser internals are blocked', async () => {
+    for (const url of ['file:///etc/passwd', 'content://media/external/images', 'intent://scan/#Intent;scheme=zxing;end', 'chrome://settings', 'javascript:alert(1)', 'tel:123']) {
+      const r = await c.callTool({ name: 'navigate', arguments: { url } });
+      assert.ok(r.isError && /Only http\(s\)/.test(text(r)), 'navigate ' + url + ' -> ' + text(r));
+      const r2 = await c.callTool({ name: 'tab_open', arguments: { url } });
+      assert.ok(r2.isError, 'tab_open ' + url);
+    }
+    await call(c, 'navigate', { url: `${B}/apps` });
+    const s = await call(c, 'snapshot');
+    const r = await c.callTool({ name: 'click', arguments: { ref: refOf(s, /Open app/) } });
+    assert.ok(r.isError && /blocked/.test(text(r)), 'intent link click blocked');
+    const t = JSON.parse(text(await call(c, 'tabs_list')));
+    assert.ok(t.every((x) => /^http/.test(x.url)), 'still on a web page');
+  });
+
   await test('stale element number gives a clear error', async () => {
     const r = await c.callTool({ name: 'click', arguments: { ref: 999 } });
     assert.ok(r.isError && /take a new snapshot/i.test(text(r)));
@@ -280,6 +296,7 @@ async function main() {
   startServer({
     ACM_MODE: 'android', ACM_PORT: '8802', ACM_SECRET: SECRET, ACM_CDP_PORT: String(CDP_PORT), ACM_STATE_DIR: state2,
     ACM_ADB: path.join(here, 'fake-adb.js'), FAKE_ADB_LOG: adbLog, FAKE_ADB_CDP_PORT: String(CDP_PORT),
+    ACM_CDP_SOCKET: path.join(state2, 'cdp.sock'), ACM_CDP_PORT: '1',  // TCP port unusable: must go through the socket
   });
   await waitHttp('http://127.0.0.1:8802/health');
   const a = await connect(8802, SECRET);
@@ -288,7 +305,9 @@ async function main() {
     const r = JSON.parse(text(await call(a, 'navigate', { url: `${B}/form` })));
     assert.equal(r.title, 'Form');
     const calls = fs.readFileSync(adbLog, 'utf8').trim().split('\n').map((l) => JSON.parse(l));
-    assert.ok(calls.some((x) => x[0] === 'forward' && x[2] === 'localabstract:chrome_devtools_remote'), 'adb forward');
+    assert.ok(calls.some((x) => x[0] === 'forward' && /^localfilesystem:/.test(x[1]) && x[2] === 'localabstract:chrome_devtools_remote'), 'private unix-socket forward');
+    assert.ok(!calls.some((x) => x[0] === 'forward' && /^tcp:/.test(x[1] || '')), 'no TCP port opened on the phone');
+    assert.equal(fs.statSync(path.join(state2, 'cdp.sock')).mode & 0o077, 0, 'socket is private (0600)');
     const am = calls.find((x) => x[0] === 'shell' && x[1].startsWith('am start'));
     assert.ok(am && am[1].includes('--ez create_new_tab true') && am[1].includes("-p 'com.android.chrome'"), 'intent');
     assert.ok(calls.some((x) => x[0] === 'shell' && x[1].includes("monkey -p 'com.google.android.youtube'")), 'focus restored to YouTube');

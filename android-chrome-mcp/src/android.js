@@ -1,11 +1,13 @@
 // Android side: everything that needs `adb` lives here and is used only
 // internally by the server. Claude never gets a shell: no tool exposes adb.
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
 
 const shq = (s) => "'" + String(s).replace(/'/g, `'\\''`) + "'";
 
 export class Android {
-  constructor({ adbPath = 'adb', serial = '', chromePackage = 'com.android.chrome', port = 9222, log = () => {} } = {}) {
+  constructor({ adbPath = 'adb', serial = '', chromePackage = 'com.android.chrome', port = 9222, socketPath = null, log = () => {} } = {}) {
+    this.socketPath = socketPath;
     this.adbPath = adbPath;
     this.serial = serial;
     this.chromePackage = chromePackage;
@@ -25,8 +27,26 @@ export class Android {
 
   shell(cmd, timeoutMs) { return this.adb(['shell', cmd], timeoutMs); }
 
-  /** (Re)create the TCP -> Chrome DevTools socket forward. Idempotent. */
+  /**
+   * (Re)create the forward to Chrome's DevTools socket. Idempotent.
+   * Prefers a unix socket inside Termux's private directory: other apps on the
+   * phone cannot open it (a TCP port on 127.0.0.1 would be open to every app).
+   */
   async ensureForward() {
+    if (this.socketPath) {
+      const list = await this.adb(['forward', '--list']).catch(() => '');
+      if (list.includes(`localfilesystem:${this.socketPath} `)) return;
+      try { fs.unlinkSync(this.socketPath); } catch {}
+      try {
+        await this.adb(['forward', `localfilesystem:${this.socketPath}`, 'localabstract:chrome_devtools_remote']);
+        try { fs.chmodSync(this.socketPath, 0o600); } catch {}
+        return;
+      } catch (e) {
+        // Very old adb without localfilesystem: fall back to a loopback TCP port.
+        this.log(`private socket forward failed (${e.message}); falling back to tcp:${this.port}`);
+        this.socketPath = null;
+      }
+    }
     await this.adb(['forward', `tcp:${this.port}`, 'localabstract:chrome_devtools_remote']);
   }
 

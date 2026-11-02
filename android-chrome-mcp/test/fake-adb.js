@@ -10,7 +10,19 @@ if (logFile) fs.appendFileSync(logFile, JSON.stringify(args) + '\n');
 
 const out = (s) => process.stdout.write(s + '\n');
 
-if (args[0] === 'forward') process.exit(0);
+if (args[0] === 'forward') {
+  const state = (process.env.FAKE_ADB_LOG || '/tmp/fake-adb') + '.forwards';
+  if (args[1] === '--list') { try { process.stdout.write(fs.readFileSync(state, 'utf8')); } catch {} process.exit(0); }
+  const m = /^localfilesystem:(.+)$/.exec(args[1] || '');
+  if (m) {
+    const { spawn } = await import('node:child_process');
+    const code = `const net=require('net');net.createServer(c=>{const u=net.connect(${process.env.FAKE_ADB_CDP_PORT},'127.0.0.1');c.pipe(u);u.pipe(c);u.on('error',()=>c.destroy());c.on('error',()=>u.destroy())}).listen(${JSON.stringify(m[1])})`;
+    spawn(process.execPath, ['-e', code], { detached: true, stdio: 'ignore' }).unref();
+    for (let i = 0; i < 50 && !fs.existsSync(m[1]); i++) await new Promise((r) => setTimeout(r, 50));
+    fs.appendFileSync(state, `emulator-5554 localfilesystem:${m[1]} localabstract:chrome_devtools_remote\n`);
+  }
+  process.exit(0);
+}
 if (args[0] !== 'shell') process.exit(0);
 const cmd = args[1] || '';
 

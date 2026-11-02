@@ -2811,7 +2811,7 @@ var require_schemes = __commonJS({
       let urnComponent = uuidComponent;
       return urnComponent.nss = (uuidComponent.uuid || "").toLowerCase(), urnComponent;
     }
-    var http2 = (
+    var http3 = (
       /** @type {SchemeHandler} */
       {
         scheme: "http",
@@ -2823,7 +2823,7 @@ var require_schemes = __commonJS({
       /** @type {SchemeHandler} */
       {
         scheme: "https",
-        domainHost: http2.domainHost,
+        domainHost: http3.domainHost,
         parse: httpParse,
         serialize: httpSerialize
       }
@@ -2862,7 +2862,7 @@ var require_schemes = __commonJS({
     ), SCHEMES = (
       /** @type {Record<SchemeName, SchemeHandler>} */
       {
-        http: http2,
+        http: http3,
         https,
         ws,
         wss,
@@ -5415,11 +5415,11 @@ var require_dist = __commonJS({
         throw new Error(`Unknown format "${name}"`);
       return f;
     };
-    function addFormats(ajv, list, fs2, exportName) {
+    function addFormats(ajv, list, fs3, exportName) {
       var _a, _b;
       (_a = (_b = ajv.opts.code).formats) !== null && _a !== void 0 || (_b.formats = (0, codegen_1._)`require("ajv-formats/dist/formats").${exportName}`);
       for (let f of list)
-        ajv.addFormat(f, fs2[f]);
+        ajv.addFormat(f, fs3[f]);
     }
     module.exports = exports = formatsPlugin;
     Object.defineProperty(exports, "__esModule", { value: !0 });
@@ -5492,7 +5492,7 @@ var require_content_type = __commonJS({
 });
 
 // src/server.js
-import http from "node:http";
+import http2 from "node:http";
 import os from "node:os";
 import path2 from "node:path";
 import { timingSafeEqual } from "node:crypto";
@@ -17687,10 +17687,11 @@ var StreamableHTTPServerTransport = class {
 
 // src/android.js
 import { execFile } from "node:child_process";
+import fs from "node:fs";
 var shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'", Android = class {
-  constructor({ adbPath = "adb", serial = "", chromePackage = "com.android.chrome", port = 9222, log: log2 = () => {
+  constructor({ adbPath = "adb", serial = "", chromePackage = "com.android.chrome", port = 9222, socketPath = null, log: log2 = () => {
   } } = {}) {
-    this.adbPath = adbPath, this.serial = serial, this.chromePackage = chromePackage, this.port = port, this.log = log2;
+    this.socketPath = socketPath, this.adbPath = adbPath, this.serial = serial, this.chromePackage = chromePackage, this.port = port, this.log = log2;
   }
   adb(args, timeoutMs = 15e3) {
     let full = this.serial ? ["-s", this.serial, ...args] : args;
@@ -17703,8 +17704,29 @@ var shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'", Android = class {
   shell(cmd, timeoutMs) {
     return this.adb(["shell", cmd], timeoutMs);
   }
-  /** (Re)create the TCP -> Chrome DevTools socket forward. Idempotent. */
+  /**
+   * (Re)create the forward to Chrome's DevTools socket. Idempotent.
+   * Prefers a unix socket inside Termux's private directory: other apps on the
+   * phone cannot open it (a TCP port on 127.0.0.1 would be open to every app).
+   */
   async ensureForward() {
+    if (this.socketPath) {
+      if ((await this.adb(["forward", "--list"]).catch(() => "")).includes(`localfilesystem:${this.socketPath} `)) return;
+      try {
+        fs.unlinkSync(this.socketPath);
+      } catch {
+      }
+      try {
+        await this.adb(["forward", `localfilesystem:${this.socketPath}`, "localabstract:chrome_devtools_remote"]);
+        try {
+          fs.chmodSync(this.socketPath, 384);
+        } catch {
+        }
+        return;
+      } catch (e) {
+        this.log(`private socket forward failed (${e.message}); falling back to tcp:${this.port}`), this.socketPath = null;
+      }
+    }
     await this.adb(["forward", `tcp:${this.port}`, "localabstract:chrome_devtools_remote"]);
   }
   /** Currently focused app, e.g. { pkg: 'com.google.android.youtube', activity: '...' }. */
@@ -17781,26 +17803,21 @@ var shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'", Android = class {
 };
 
 // src/browser.js
-import fs from "node:fs";
+import fs2 from "node:fs";
 import path from "node:path";
 import { randomBytes } from "node:crypto";
 
 // src/cdp.js
-var WS = globalThis.WebSocket;
-if (!WS)
-  try {
-    WS = (await import("ws")).default;
-  } catch {
-    throw new Error("WebSocket is unavailable: use Node 22+ (pkg install nodejs) or `npm i ws`.");
-  }
-var CdpError = class extends Error {
+import http from "node:http";
+import WsLib from "ws";
+var WS = globalThis.WebSocket || WsLib, CdpError = class extends Error {
 }, PageSession = class _PageSession {
   constructor(ws, targetId) {
     this.ws = ws, this.targetId = targetId, this.nextId = 1, this.pending = /* @__PURE__ */ new Map(), this.closed = !1, ws.addEventListener("message", (ev) => this.#onMessage(ev)), ws.addEventListener("close", () => this.#onClose()), ws.addEventListener("error", () => this.#onClose());
   }
-  static open(wsUrl, targetId, timeoutMs = 1e4) {
+  static open(wsUrl, targetId, timeoutMs = 1e4, socketPath = null) {
     return new Promise((resolve, reject) => {
-      let ws = new WS(wsUrl), timer = setTimeout(() => {
+      let ws = socketPath ? new WsLib(`ws+unix://${socketPath}:${new URL(wsUrl).pathname}`) : new WS(wsUrl), timer = setTimeout(() => {
         try {
           ws.close();
         } catch {
@@ -17865,24 +17882,29 @@ var CdpError = class extends Error {
     this.#onClose();
   }
 }, DevtoolsHttp = class {
-  constructor(baseUrl) {
-    this.base = baseUrl.replace(/\/$/, "");
+  /** @param {string} baseUrl  @param {string|null} socketPath unix socket instead of TCP */
+  constructor(baseUrl, socketPath = null) {
+    this.base = baseUrl.replace(/\/$/, ""), this.socketPath = socketPath;
   }
-  async #req(path3, method = "GET", timeoutMs = 5e3) {
-    let ctrl = new AbortController(), t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      let r = await fetch(this.base + path3, { method, signal: ctrl.signal }), text = await r.text();
-      if (!r.ok) throw new CdpError(`DevTools HTTP ${r.status} for ${path3}: ${text.slice(0, 200)}`);
-      try {
-        return JSON.parse(text);
-      } catch {
-        return text;
-      }
-    } catch (e) {
-      throw e instanceof CdpError ? e : new CdpError(`Chrome DevTools is not reachable at ${this.base} (${e.cause?.code || e.name})`);
-    } finally {
-      clearTimeout(t);
-    }
+  #req(path3, method = "GET", timeoutMs = 5e3) {
+    let where = this.socketPath ? `unix:${this.socketPath}` : this.base;
+    return new Promise((resolve, reject) => {
+      let url = new URL(this.base + path3), req = http.request(
+        this.socketPath ? { socketPath: this.socketPath, path: url.pathname + url.search, method, headers: { host: "localhost" } } : { hostname: url.hostname, port: url.port, path: url.pathname + url.search, method },
+        (res) => {
+          let body = "";
+          res.setEncoding("utf8"), res.on("data", (c) => body += c), res.on("end", () => {
+            if (res.statusCode >= 400) return reject(new CdpError(`DevTools HTTP ${res.statusCode} for ${path3}: ${body.slice(0, 200)}`));
+            try {
+              resolve(JSON.parse(body));
+            } catch {
+              resolve(body);
+            }
+          });
+        }
+      );
+      req.setTimeout(timeoutMs, () => req.destroy(new Error("timeout"))), req.on("error", (e) => reject(new CdpError(`Chrome DevTools is not reachable at ${where} (${e.code || e.message})`))), req.end();
+    });
   }
   version() {
     return this.#req("/json/version");
@@ -17986,7 +18008,14 @@ var INTERACTIVE = [
   const el = ${FIND(ref2)};
   if (!el) return ${NOT_FOUND(ref2)};
   el.scrollIntoView({ block: 'center', inline: 'center' });
-  if (el.tagName === 'A' && el.target === '_blank') el.target = '_self';
+  if (el.tagName === 'A') {
+    const href = el.getAttribute('href') || '';
+    const scheme = (href.match(/^s*([a-z][a-z0-9+.-]*):/i) || [])[1];
+    if (scheme && !/^(https?|javascript)$/i.test(scheme)) {
+      return { ok: false, error: 'This link opens something outside the browser (' + scheme + ':) and is blocked.' };
+    }
+    if (el.target === '_blank') el.target = '_self';
+  }
   const r = el.getBoundingClientRect();
   const o = { bubbles: true, cancelable: true, view: window, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
   try { el.dispatchEvent(new PointerEvent('pointerdown', o)); } catch {}
@@ -18050,7 +18079,22 @@ var INTERACTIVE = [
 })()`;
 
 // src/browser.js
-var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
+var sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+function safeUrl(input) {
+  let url = String(input || "").trim();
+  if (!url || url === "about:blank") return "about:blank";
+  /^[a-z][a-z0-9+.-]*:/i.test(url) || (url = "https://" + url);
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    throw new CdpError(`Invalid URL: ${input}`);
+  }
+  if (u.protocol !== "http:" && u.protocol !== "https:")
+    throw new CdpError(`Only http(s) pages are allowed (got ${u.protocol}). Files and other apps on the phone are off-limits.`);
+  return u.href;
+}
+var KEYS = {
   Enter: { code: "Enter", keyCode: 13, text: "\r" },
   Tab: { code: "Tab", keyCode: 9 },
   Escape: { code: "Escape", keyCode: 27 },
@@ -18083,12 +18127,12 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
    */
   constructor({ mode = "android", cdpPort = 9222, android: android2, allTabs = !1, stateDir, log: log2 = () => {
   } }) {
-    this.mode = mode, this.http = new DevtoolsHttp(`http://127.0.0.1:${cdpPort}`), this.android = android2, this.allTabs = allTabs, this.log = log2, this.sessions = /* @__PURE__ */ new Map(), this.mutex = new Mutex(), this.stateFile = stateDir ? path.join(stateDir, "tabs.json") : null, this.agentTabs = /* @__PURE__ */ new Set(), this.current = null, this.#loadState();
+    this.mode = mode, this.http = new DevtoolsHttp(`http://127.0.0.1:${cdpPort}`, android2?.socketPath || null), this.android = android2, this.allTabs = allTabs, this.log = log2, this.sessions = /* @__PURE__ */ new Map(), this.mutex = new Mutex(), this.stateFile = stateDir ? path.join(stateDir, "tabs.json") : null, this.agentTabs = /* @__PURE__ */ new Set(), this.current = null, this.#loadState();
   }
   #loadState() {
     if (this.stateFile)
       try {
-        let s = JSON.parse(fs.readFileSync(this.stateFile, "utf8"));
+        let s = JSON.parse(fs2.readFileSync(this.stateFile, "utf8"));
         this.agentTabs = new Set(s.agentTabs || []), this.current = s.current || null;
       } catch {
       }
@@ -18096,7 +18140,7 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
   #saveState() {
     if (this.stateFile)
       try {
-        fs.mkdirSync(path.dirname(this.stateFile), { recursive: !0 }), fs.writeFileSync(this.stateFile, JSON.stringify({ agentTabs: [...this.agentTabs], current: this.current }));
+        fs2.mkdirSync(path.dirname(this.stateFile), { recursive: !0 }), fs2.writeFileSync(this.stateFile, JSON.stringify({ agentTabs: [...this.agentTabs], current: this.current }));
       } catch (e) {
         this.log(`cannot save state: ${e.message}`);
       }
@@ -18104,7 +18148,7 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
   // ---------- connection ----------
   async ensureReady() {
     if (this.mode === "android") {
-      await this.android.ensureForward();
+      await this.android.ensureForward(), this.http.socketPath = this.android.socketPath;
       try {
         return await this.http.version();
       } catch {
@@ -18157,7 +18201,7 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
     }));
   }
   async openTab(url = "about:blank") {
-    await this.ensureReady();
+    url = safeUrl(url), await this.ensureReady();
     let id;
     if (this.mode === "desktop")
       id = (await this.http.newTab(url)).id;
@@ -18208,7 +18252,7 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
     if (!page) throw new CdpError(`Tab ${id} no longer exists.`);
     if (!page.webSocketDebuggerUrl)
       throw new CdpError("This tab is already being debugged by another client (for example chrome://inspect). Close it and retry.");
-    let s = await PageSession.open(page.webSocketDebuggerUrl, id);
+    let s = await PageSession.open(page.webSocketDebuggerUrl, id, 1e4, this.http.socketPath);
     return this.sessions.set(id, s), await s.send("Emulation.setFocusEmulationEnabled", { enabled: !0 }).catch(() => {
     }), s;
   }
@@ -18235,7 +18279,7 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
   }
   navigate(url, tab2) {
     return this.op(async () => {
-      if (/^[a-z][a-z0-9+.-]*:/i.test(url) || (url = "https://" + url), !tab2 && !this.current && ![...this.agentTabs].length) {
+      if (url = safeUrl(url), !tab2 && !this.current && ![...this.agentTabs].length) {
         let id2 = await this.openTab(url);
         return this.#info(await this.session(id2), id2);
       }
@@ -18372,10 +18416,10 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
     return this.op(async () => {
       let { s } = await this.#page(tab2), wrapped = `(async () => { const __r = await (async () => (${expression}))(); try { return JSON.parse(JSON.stringify(__r ?? null)); } catch { return String(__r); } })()`;
       try {
-        return await s.evaluate(wrapped);
+        return await s.evaluate(wrapped, { userGesture: !1 });
       } catch (e) {
         if (/SyntaxError/.test(e.message))
-          return s.evaluate(`(async () => { ${expression} })()`);
+          return s.evaluate(`(async () => { ${expression} })()`, { userGesture: !1 });
         throw e;
       }
     });
@@ -18393,10 +18437,11 @@ var env = process.env, cfg = {
   chromePackage: env.ACM_CHROME_PACKAGE || "com.android.chrome",
   adb: env.ACM_ADB || "adb",
   serial: env.ACM_ADB_SERIAL || "",
-  stateDir: env.ACM_STATE_DIR || path2.join(os.homedir(), ".android-chrome-mcp")
+  stateDir: env.ACM_STATE_DIR || path2.join(os.homedir(), ".android-chrome-mcp"),
+  cdpSocket: env.ACM_CDP_SOCKET || ""
 };
 cfg.secret.length < 16 && (console.error("ACM_SECRET must be set (at least 16 characters). Use the chrome-mcp launcher."), process.exit(1));
-var log = (...a) => console.error((/* @__PURE__ */ new Date()).toISOString(), ...a), android = cfg.mode === "android" ? new Android({ adbPath: cfg.adb, serial: cfg.serial, chromePackage: cfg.chromePackage, port: cfg.cdpPort, log }) : void 0, browser = new Browser({ mode: cfg.mode, cdpPort: cfg.cdpPort, android, allTabs: cfg.allTabs, stateDir: cfg.stateDir, log }), ok = (data) => ({ content: [{ type: "text", text: typeof data == "string" ? data : JSON.stringify(data, null, 1) }] }), fail = (e) => ({ isError: !0, content: [{ type: "text", text: String(e?.message || e) }] }), wrap = (fn) => async (args) => {
+var log = (...a) => console.error((/* @__PURE__ */ new Date()).toISOString(), ...a), android = cfg.mode === "android" ? new Android({ adbPath: cfg.adb, serial: cfg.serial, chromePackage: cfg.chromePackage, port: cfg.cdpPort, socketPath: cfg.cdpSocket || null, log }) : void 0, browser = new Browser({ mode: cfg.mode, cdpPort: cfg.cdpPort, android, allTabs: cfg.allTabs, stateDir: cfg.stateDir, log }), ok = (data) => ({ content: [{ type: "text", text: typeof data == "string" ? data : JSON.stringify(data, null, 1) }] }), fail = (e) => ({ isError: !0, content: [{ type: "text", text: String(e?.message || e) }] }), wrap = (fn) => async (args) => {
   try {
     return await fn(args || {});
   } catch (e) {
@@ -18425,7 +18470,7 @@ function buildServer() {
     description: "Open a new background tab owned by the agent and make it current.",
     inputSchema: { url: external_exports.string().optional().describe("URL to open (default about:blank)") }
   }, wrap(async ({ url }) => {
-    let id = await browser.openTab(url ? /^[a-z][a-z0-9+.-]*:/i.test(url) ? url : "https://" + url : "about:blank");
+    let id = await browser.openTab(url || "about:blank");
     return ok({ tab: id, current: !0 });
   })), server.registerTool("tab_select", {
     title: "Select tab",
@@ -18522,7 +18567,7 @@ function setHeader(req, name, value) {
 var expected = Buffer.from(`/mcp/${cfg.secret}`), pathOk = (p) => {
   let b = Buffer.from(p);
   return b.length === expected.length && timingSafeEqual(b, expected);
-}, httpServer = http.createServer(async (req, res) => {
+}, httpServer = http2.createServer(async (req, res) => {
   let url = new URL(req.url, "http://localhost"), shown = url.pathname.startsWith("/mcp/") ? pathOk(url.pathname.replace(/\/$/, "")) ? "/mcp/<secret>" : "/mcp/<WRONG secret>" : url.pathname.slice(0, 80), t0 = Date.now();
   if (res.on("finish", () => {
     url.pathname !== "/health" && log(`${req.method} ${shown} -> ${res.statusCode} (${Date.now() - t0} ms)`);

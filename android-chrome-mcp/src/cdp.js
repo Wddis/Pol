@@ -2,14 +2,11 @@
 // dependencies: uses Node's built-in fetch and WebSocket (Node >= 22).
 // Falls back to the `ws` package if a global WebSocket is not present.
 
-let WS = globalThis.WebSocket;
-if (!WS) {
-  try {
-    WS = (await import('ws')).default;
-  } catch {
-    throw new Error('WebSocket is unavailable: use Node 22+ (pkg install nodejs) or `npm i ws`.');
-  }
-}
+import http from 'node:http';
+import WsLib from 'ws';
+
+// Global WebSocket for TCP endpoints; the `ws` package for unix sockets.
+const WS = globalThis.WebSocket || WsLib;
 
 export class CdpError extends Error {}
 
@@ -25,9 +22,11 @@ export class PageSession {
     ws.addEventListener('error', () => this.#onClose());
   }
 
-  static open(wsUrl, targetId, timeoutMs = 10000) {
+  static open(wsUrl, targetId, timeoutMs = 10000, socketPath = null) {
     return new Promise((resolve, reject) => {
-      const ws = new WS(wsUrl);
+      const ws = socketPath
+        ? new WsLib(`ws+unix://${socketPath}:${new URL(wsUrl).pathname}`)
+        : new WS(wsUrl);
       const timer = setTimeout(() => {
         try { ws.close(); } catch {}
         reject(new CdpError(`Timed out connecting to tab ${targetId}`));
@@ -104,24 +103,34 @@ export class PageSession {
 
 /** HTTP side of the DevTools endpoint (/json/...). */
 export class DevtoolsHttp {
-  constructor(baseUrl) {
+  /** @param {string} baseUrl  @param {string|null} socketPath unix socket instead of TCP */
+  constructor(baseUrl, socketPath = null) {
     this.base = baseUrl.replace(/\/$/, '');
+    this.socketPath = socketPath;
   }
 
-  async #req(path, method = 'GET', timeoutMs = 5000) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const r = await fetch(this.base + path, { method, signal: ctrl.signal });
-      const text = await r.text();
-      if (!r.ok) throw new CdpError(`DevTools HTTP ${r.status} for ${path}: ${text.slice(0, 200)}`);
-      try { return JSON.parse(text); } catch { return text; }
-    } catch (e) {
-      if (e instanceof CdpError) throw e;
-      throw new CdpError(`Chrome DevTools is not reachable at ${this.base} (${e.cause?.code || e.name})`);
-    } finally {
-      clearTimeout(t);
-    }
+  #req(path, method = 'GET', timeoutMs = 5000) {
+    const where = this.socketPath ? `unix:${this.socketPath}` : this.base;
+    return new Promise((resolve, reject) => {
+      const url = new URL(this.base + path);
+      const req = http.request(
+        this.socketPath
+          ? { socketPath: this.socketPath, path: url.pathname + url.search, method, headers: { host: 'localhost' } }
+          : { hostname: url.hostname, port: url.port, path: url.pathname + url.search, method },
+        (res) => {
+          let body = '';
+          res.setEncoding('utf8');
+          res.on('data', (c) => (body += c));
+          res.on('end', () => {
+            if (res.statusCode >= 400) return reject(new CdpError(`DevTools HTTP ${res.statusCode} for ${path}: ${body.slice(0, 200)}`));
+            try { resolve(JSON.parse(body)); } catch { resolve(body); }
+          });
+        },
+      );
+      req.setTimeout(timeoutMs, () => req.destroy(new Error('timeout')));
+      req.on('error', (e) => reject(new CdpError(`Chrome DevTools is not reachable at ${where} (${e.code || e.message})`)));
+      req.end();
+    });
   }
 
   version() { return this.#req('/json/version'); }

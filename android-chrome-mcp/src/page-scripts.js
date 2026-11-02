@@ -78,7 +78,14 @@ export const CLICK_JS = (ref) => `(() => {
   const el = ${FIND(ref)};
   if (!el) return ${NOT_FOUND(ref)};
   el.scrollIntoView({ block: 'center', inline: 'center' });
-  if (el.tagName === 'A' && el.target === '_blank') el.target = '_self';
+  if (el.tagName === 'A') {
+    const href = el.getAttribute('href') || '';
+    const scheme = (href.match(/^\s*([a-z][a-z0-9+.-]*):/i) || [])[1];
+    if (scheme && !/^(https?|javascript)$/i.test(scheme)) {
+      return { ok: false, error: 'This link opens something outside the browser (' + scheme + ':) and is blocked.' };
+    }
+    if (el.target === '_blank') el.target = '_self';
+  }
   const r = el.getBoundingClientRect();
   const o = { bubbles: true, cancelable: true, view: window, clientX: r.x + r.width / 2, clientY: r.y + r.height / 2 };
   try { el.dispatchEvent(new PointerEvent('pointerdown', o)); } catch {}
