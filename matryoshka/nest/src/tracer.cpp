@@ -54,8 +54,8 @@ enum class Kind {
     GetCwd,
     ReadLink,
     Sock,       // connect/bind with AF_UNIX path
-    FakeZero,   // skip syscall, return 0 (identity / privileged no-ops)
-    GetResId,   // getresuid/getresgid: write zeros, return 0
+    FakeZero,   // skip syscall, return 0 (privileged no-ops)
+    Ids,        // uid/gid get/set family, answered from the virtual credentials
     FakeChown,  // translate then skip, return 0
 };
 
@@ -178,12 +178,10 @@ std::vector<Spec> buildSpecs() {
     s.push_back({SYS_lchown, Kind::FakeChown, CWD, 0});
     s.back().followDefault = false;
 #endif
-    for (long nr : {SYS_getuid, SYS_geteuid, SYS_getgid, SYS_getegid}) s.push_back({nr, Kind::FakeZero});
-    for (long nr : {SYS_setuid, SYS_setgid, SYS_setreuid, SYS_setregid, SYS_setresuid, SYS_setresgid,
+    for (long nr : {SYS_getuid, SYS_geteuid, SYS_getgid, SYS_getegid, SYS_getresuid, SYS_getresgid,
+                    SYS_setuid, SYS_setgid, SYS_setreuid, SYS_setregid, SYS_setresuid, SYS_setresgid,
                     SYS_setfsuid, SYS_setfsgid, SYS_setgroups})
-        s.push_back({nr, Kind::FakeZero});
-    s.push_back({SYS_getresuid, Kind::GetResId});
-    s.push_back({SYS_getresgid, Kind::GetResId});
+        s.push_back({nr, Kind::Ids});
     return s;
 }
 
@@ -482,6 +480,120 @@ bool Tracer::rewriteExec(pid_t tid, Regs& r, uint64_t& scratch) {
     return true;
 }
 
+pid_t Tracer::tgidOf(pid_t tid) const {
+    auto it = tgid_.find(tid);
+    return it == tgid_.end() ? tid : it->second;
+}
+
+Tracer::Creds Tracer::credsOf(pid_t tid) const {
+    auto it = creds_.find(tgidOf(tid));
+    if (it != creds_.end()) return it->second;
+    Creds c;
+    c.ruid = c.euid = c.suid = c.fsuid = cfg_.initialUid;
+    c.rgid = c.egid = c.sgid = c.fsgid = cfg_.initialGid;
+    return c;
+}
+
+void Tracer::onNewTask(pid_t parent, pid_t tid) {
+    pid_t tgid = tid;
+    char status[64];
+    snprintf(status, sizeof(status), "/proc/%d/status", tid);
+    if (FILE* f = fopen(status, "r")) {
+        char line[128];
+        while (fgets(line, sizeof(line), f))
+            if (sscanf(line, "Tgid: %d", &tgid) == 1) break;
+        fclose(f);
+    }
+    tgid_[tid] = tgid;
+    if (tgid == tid) creds_[tid] = credsOf(parent);  // new process inherits its parent's identity
+}
+
+// uid/gid syscalls with the kernel's permission rules, applied to virtual credentials.
+void Tracer::handleIds(pid_t tid, Regs& r) {
+    stats_.faked++;
+    Creds c = credsOf(tid);
+    const uint32_t keep = 0xffffffffu;  // "-1": leave unchanged
+    auto a = [&](int i) { return static_cast<uint32_t>(r.arg[i]); };
+    long ret = 0;
+    bool privileged = c.euid == 0;
+    auto allowedU = [&](uint32_t v) { return privileged || v == c.ruid || v == c.euid || v == c.suid; };
+    auto allowedG = [&](uint32_t v) { return privileged || v == c.rgid || v == c.egid || v == c.sgid; };
+    long nr = static_cast<long>(r.nr);
+
+    if (nr == SYS_getuid) ret = c.ruid;
+    else if (nr == SYS_geteuid) ret = c.euid;
+    else if (nr == SYS_getgid) ret = c.rgid;
+    else if (nr == SYS_getegid) ret = c.egid;
+    else if (nr == SYS_getresuid || nr == SYS_getresgid) {
+        uint32_t v[3] = {c.ruid, c.euid, c.suid};
+        if (nr == SYS_getresgid) { v[0] = c.rgid; v[1] = c.egid; v[2] = c.sgid; }
+        for (int i = 0; i < 3; i++)
+            if (r.arg[i] && !writeMem(tid, r.arg[i], &v[i], sizeof(uint32_t))) ret = -EFAULT;
+    } else if (nr == SYS_setuid) {
+        uint32_t u = a(0);
+        if (privileged) c.ruid = c.euid = c.suid = c.fsuid = u;
+        else if (u == c.ruid || u == c.suid) c.euid = c.fsuid = u;
+        else ret = -EPERM;
+    } else if (nr == SYS_setgid) {
+        uint32_t g = a(0);
+        if (privileged) c.rgid = c.egid = c.sgid = c.fsgid = g;
+        else if (g == c.rgid || g == c.sgid) c.egid = c.fsgid = g;
+        else ret = -EPERM;
+    } else if (nr == SYS_setresuid) {
+        uint32_t nr_ = a(0), ne = a(1), ns = a(2);
+        if ((nr_ != keep && !allowedU(nr_)) || (ne != keep && !allowedU(ne)) || (ns != keep && !allowedU(ns))) ret = -EPERM;
+        else {
+            if (nr_ != keep) c.ruid = nr_;
+            if (ne != keep) c.euid = ne;
+            if (ns != keep) c.suid = ns;
+            c.fsuid = c.euid;
+        }
+    } else if (nr == SYS_setresgid) {
+        uint32_t nr_ = a(0), ne = a(1), ns = a(2);
+        if ((nr_ != keep && !allowedG(nr_)) || (ne != keep && !allowedG(ne)) || (ns != keep && !allowedG(ns))) ret = -EPERM;
+        else {
+            if (nr_ != keep) c.rgid = nr_;
+            if (ne != keep) c.egid = ne;
+            if (ns != keep) c.sgid = ns;
+            c.fsgid = c.egid;
+        }
+    } else if (nr == SYS_setreuid) {
+        uint32_t nr_ = a(0), ne = a(1);
+        bool ok = (nr_ == keep || privileged || nr_ == c.ruid || nr_ == c.euid) && (ne == keep || allowedU(ne));
+        if (!ok) ret = -EPERM;
+        else {
+            uint32_t oldR = c.ruid;
+            if (nr_ != keep) c.ruid = nr_;
+            if (ne != keep) c.euid = ne;
+            if (nr_ != keep || (ne != keep && ne != oldR)) c.suid = c.euid;
+            c.fsuid = c.euid;
+        }
+    } else if (nr == SYS_setregid) {
+        uint32_t nr_ = a(0), ne = a(1);
+        bool ok = (nr_ == keep || privileged || nr_ == c.rgid || nr_ == c.egid) && (ne == keep || allowedG(ne));
+        if (!ok) ret = -EPERM;
+        else {
+            uint32_t oldR = c.rgid;
+            if (nr_ != keep) c.rgid = nr_;
+            if (ne != keep) c.egid = ne;
+            if (nr_ != keep || (ne != keep && ne != oldR)) c.sgid = c.egid;
+            c.fsgid = c.egid;
+        }
+    } else if (nr == SYS_setfsuid) {
+        ret = c.fsuid;  // returns the previous value, never fails
+        if (allowedU(a(0)) || a(0) == c.fsuid) c.fsuid = a(0);
+    } else if (nr == SYS_setfsgid) {
+        ret = c.fsgid;
+        if (allowedG(a(0)) || a(0) == c.fsgid) c.fsgid = a(0);
+    } else if (nr == SYS_setgroups) {
+        ret = privileged ? 0 : -EPERM;
+    }
+    if (ret == -EPERM) stats_.denied++;
+    creds_[tgidOf(tid)] = c;
+    setSyscall(tid, r, -1);
+    setReturn(tid, r, ret);
+}
+
 void Tracer::handleSeccomp(pid_t tid) {
     stats_.stops++;
     Regs r;
@@ -547,22 +659,20 @@ void Tracer::handleSeccomp(pid_t tid) {
                 if (cfg_.fakeRoot) {
                     stats_.faked++;
                     setSyscall(tid, r, -1);
-                    setReturn(tid, r, 0);
+                    setReturn(tid, r, credsOf(tid).euid == 0 ? 0 : -EPERM);
                 } else {
                     if (rewritePath(tid, r, s->dirfd1, s->path1, follow(*s), scratch)) setArgs(tid, r);
                 }
                 break;
             case Kind::FakeZero:
-            case Kind::GetResId:
+                // fchown: ownership is not representable on the host; succeed only for root.
                 if (!cfg_.fakeRoot) break;
                 stats_.faked++;
-                if (s->kind == Kind::GetResId) {
-                    uint32_t zero = 0;
-                    for (int i = 0; i < 3; i++)
-                        if (r.arg[i]) writeMem(tid, r.arg[i], &zero, sizeof(zero));
-                }
                 setSyscall(tid, r, -1);
-                setReturn(tid, r, 0);
+                setReturn(tid, r, credsOf(tid).euid == 0 ? 0 : -EPERM);
+                break;
+            case Kind::Ids:
+                if (cfg_.fakeRoot) handleIds(tid, r);
                 break;
         }
     }
@@ -641,7 +751,15 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
     ptrace(PTRACE_CONT, child, nullptr, nullptr);
 
     std::set<pid_t> alive{child};
-    std::set<pid_t> fresh;  // auto-attached tids whose initial SIGSTOP we have not consumed yet
+    tgid_[child] = child;
+    creds_[child] = credsOf(child);  // initial identity from the config
+    // A new task is resumed only once BOTH its initial SIGSTOP and its parent's fork/clone event
+    // were seen (they arrive in either order): its identity must be inherited before it runs.
+    std::set<pid_t> registered;  // parent event seen
+    std::set<pid_t> stopped;     // initial SIGSTOP seen, waiting for registration
+    std::set<pid_t> started;     // initial SIGSTOP consumed
+    started.insert(child);
+    registered.insert(child);
     stats_.processes = 1;
     int rootStatus = -1;
 
@@ -654,33 +772,41 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
         if (WIFEXITED(status) || WIFSIGNALED(status)) {
             alive.erase(tid);
             pending_.erase(tid);
+            registered.erase(tid);
+            stopped.erase(tid);
+            started.erase(tid);
+            if (tgidOf(tid) == tid) creds_.erase(tid);
+            tgid_.erase(tid);
             if (tid == child) rootStatus = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
             continue;
         }
         if (!WIFSTOPPED(status)) continue;
-        if (!alive.count(tid)) {
-            alive.insert(tid);  // new thread/process reported before its parent's event
-            fresh.insert(tid);
-        }
+        alive.insert(tid);
         int sig = WSTOPSIG(status);
         int event = status >> 16;
+        if (!started.count(tid) && sig == SIGSTOP) {
+            started.insert(tid);
+            if (registered.count(tid)) ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+            else stopped.insert(tid);  // parent's event not seen yet: keep it stopped
+            continue;
+        }
         if (sig == SIGTRAP && event == PTRACE_EVENT_SECCOMP) {
             handleSeccomp(tid);
         } else if (sig == (SIGTRAP | 0x80)) {
             handleSyscallExit(tid);
         } else if (sig == SIGTRAP && event != 0) {
             if (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_VFORK || event == PTRACE_EVENT_CLONE) {
-                unsigned long newTid = 0;
-                ptrace(PTRACE_GETEVENTMSG, tid, nullptr, &newTid);
-                if (newTid && !alive.count(static_cast<pid_t>(newTid))) {
-                    alive.insert(static_cast<pid_t>(newTid));
-                    fresh.insert(static_cast<pid_t>(newTid));
+                unsigned long n = 0;
+                ptrace(PTRACE_GETEVENTMSG, tid, nullptr, &n);
+                pid_t newTid = static_cast<pid_t>(n);
+                if (newTid && !registered.count(newTid)) {
+                    registered.insert(newTid);
+                    alive.insert(newTid);
                     stats_.processes++;
+                    onNewTask(tid, newTid);
+                    if (stopped.erase(newTid)) ptrace(PTRACE_CONT, newTid, nullptr, nullptr);
                 }
             }
-            ptrace(PTRACE_CONT, tid, nullptr, nullptr);
-        } else if (sig == SIGSTOP && fresh.count(tid)) {
-            fresh.erase(tid);
             ptrace(PTRACE_CONT, tid, nullptr, nullptr);
         } else if (sig == SIGTRAP) {
             ptrace(PTRACE_CONT, tid, nullptr, nullptr);  // plain exec trap

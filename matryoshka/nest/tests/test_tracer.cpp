@@ -215,3 +215,41 @@ TEST(tracer_benchmark_stat_loop) {
     fprintf(stderr, "  bench: 3000 stat() traced %.1f ms vs native %.1f ms (%.1f us/intercepted call)\n", tt, tn,
             (tt - tn) * 1000.0 / 3000.0);
 }
+
+// ---- virtual identities (what Android's init/zygote and Magisk's su rely on)
+
+static std::vector<std::string> idCmd(std::vector<std::string> extra, const std::string& uid = "") {
+    std::vector<std::string> a{NEST_RUN_PATH, "-b", "/=/", "-s"};
+    if (!uid.empty()) { a.push_back("-u"); a.push_back(uid); }
+    a.push_back("--");
+    a.push_back(NEST_IDPROG_PATH);
+    a.insert(a.end(), extra.begin(), extra.end());
+    return a;
+}
+
+TEST(ids_guest_init_starts_as_root) {
+    auto r = run(idCmd({"uid", "gid"}));
+    EXPECT_EQ(r.out, "0 0 0\n0 0 0\n");
+}
+
+TEST(ids_app_cannot_become_root) {
+    auto r = run(idCmd({"uid", "setuid", "0", "setresuid", "0", "0", "0", "uid"}, "10050"));
+    EXPECT_EQ(r.out, "10050 10050 10050\n-1 EPERM\n-1 EPERM\n10050 10050 10050\n");
+    EXPECT_TRUE(r.err.find("denied=2") != std::string::npos);
+}
+
+TEST(ids_root_drops_privileges_permanently) {
+    auto r = run(idCmd({"setuid", "10050", "uid", "setuid", "0", "uid"}));
+    EXPECT_EQ(r.out, "0\n10050 10050 10050\n-1 EPERM\n10050 10050 10050\n");
+}
+
+TEST(ids_saved_uid_allows_regaining_root) {
+    // Like a daemon that drops euid but keeps root in the saved set (Linux semantics).
+    auto r = run(idCmd({"setresuid", "10050", "10050", "0", "uid", "setuid", "0", "uid"}));
+    EXPECT_EQ(r.out, "0\n10050 10050 0\n0\n10050 0 0\n");
+}
+
+TEST(ids_inherited_across_fork_and_exec) {
+    auto r = run(idCmd({"setuid", "10077", "fork-uid", "exec", "/usr/bin/id", "-u"}));
+    EXPECT_EQ(r.out, "0\nchild 10077 10077\n10077\n");
+}

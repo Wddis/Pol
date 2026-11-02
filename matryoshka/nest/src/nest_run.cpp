@@ -8,7 +8,7 @@
 //
 //   -b   bind a host directory/file at a guest path ("-b /=rootfs" sets the guest root)
 //   -w   guest working directory (default "/")
-//   -0   fake root identity (default) ; -n  real identity
+//   -0   virtual identities (default) ; -n  real identity ; -u UID  start as this virtual uid
 //   -v   verbose (repeat for more)    ; -s  print statistics to stderr on exit
 //   -E   add/override an environment variable ; -c  start with a clean environment
 //
@@ -54,6 +54,9 @@ int main(int argc, char** argv) {
             cfg.guestCwd = argv[++i];
         } else if (a == "-0") {
             cfg.fakeRoot = true;
+        } else if (a == "-u" && i + 1 < argc) {
+            cfg.initialUid = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 10));
+            cfg.initialGid = cfg.initialUid;
         } else if (a == "-n") {
             cfg.fakeRoot = false;
         } else if (a == "-v") {
@@ -90,10 +93,10 @@ int main(int argc, char** argv) {
         const auto& s = tracer.stats();
         double ms = (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
         fprintf(stderr,
-                "nest: exit=%d time=%.1fms processes=%llu stops=%llu paths=%llu execs=%llu exec_rewrites=%llu faked=%llu\n",
+                "nest: exit=%d time=%.1fms processes=%llu stops=%llu paths=%llu execs=%llu exec_rewrites=%llu faked=%llu denied=%llu\n",
                 rc, ms, (unsigned long long)s.processes, (unsigned long long)s.stops,
                 (unsigned long long)s.pathRewrites, (unsigned long long)s.execs,
-                (unsigned long long)s.execRewrites, (unsigned long long)s.faked);
+                (unsigned long long)s.execRewrites, (unsigned long long)s.faked, (unsigned long long)s.denied);
     }
     if (rc < 0) {
         fprintf(stderr, "nest: failed to start the guest (ptrace/seccomp unavailable?)\n");

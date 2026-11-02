@@ -21,7 +21,12 @@ namespace nest {
 struct TracerConfig {
     Vfs vfs;
     std::string guestCwd = "/";
-    bool fakeRoot = true;     // guest sees uid/gid 0 and privileged calls succeed
+    // Virtual identities: every guest process has its own uid/gid set, tracked by the tracer with
+    // Linux semantics (setuid/setresuid/...), inherited across fork/exec. The host kernel only
+    // ever sees the app's uid. Root exists only where the guest grants it (init, Magisk su).
+    bool fakeRoot = true;
+    uint32_t initialUid = 0;  // identity of the first guest process (guest init = 0)
+    uint32_t initialGid = 0;
     int verbose = 0;          // 1 = exec log, 2 = every intercepted syscall
     int logFd = 2;
     // Runs in the child right before the first execve (e.g. dup2 for stdio redirection).
@@ -34,6 +39,7 @@ struct TracerStats {
     uint64_t execs = 0;
     uint64_t execRewrites = 0;   // exec redirected to the guest's own ELF interpreter / shebang
     uint64_t faked = 0;          // identity / privilege syscalls answered without the kernel
+    uint64_t denied = 0;         // privilege changes refused (EPERM), like the kernel would
     uint64_t processes = 0;
 };
 
@@ -49,6 +55,13 @@ public:
     const TracerStats& stats() const { return stats_; }
     TracerConfig& config() { return cfg_; }
 
+    struct Creds {
+        uint32_t ruid = 0, euid = 0, suid = 0, fsuid = 0;
+        uint32_t rgid = 0, egid = 0, sgid = 0, fsgid = 0;
+    };
+    // Current virtual identity of a guest process (by any of its thread ids).
+    Creds credsOf(pid_t tid) const;
+
 private:
     struct Pending {
         long nr = -1;            // syscall awaiting its exit stop
@@ -58,6 +71,9 @@ private:
     };
 
     void handleSeccomp(pid_t tid);
+    void handleIds(pid_t tid, struct Regs& r);
+    void onNewTask(pid_t parent, pid_t tid);
+    pid_t tgidOf(pid_t tid) const;
     void handleSyscallExit(pid_t tid);
     bool rewritePath(pid_t tid, struct Regs& r, int dirfdArg, int pathArg, bool followLast,
                      uint64_t& scratch, std::string* guestOut = nullptr);
@@ -71,6 +87,8 @@ private:
     TracerConfig cfg_;
     TracerStats stats_;
     std::map<pid_t, Pending> pending_;
+    std::map<pid_t, pid_t> tgid_;     // thread id -> process id
+    std::map<pid_t, Creds> creds_;    // process id -> virtual credentials
 };
 
 // The seccomp filter used by the tracer (exposed for the capability probe).
