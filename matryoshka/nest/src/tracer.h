@@ -29,6 +29,10 @@ struct TracerConfig {
     uint32_t initialGid = 0;
     int verbose = 0;          // 1 = exec log, 2 = every intercepted syscall
     int logFd = 2;
+    // Environment entries forced into every guest execve (e.g. LD_PRELOAD of the fast path and
+    // NEST_VFS_FILE). Guest init starts services with a clean environment, so injecting at exec
+    // time is the only reliable way to keep the fast path in every process.
+    std::vector<std::string> injectEnv;
     // Runs in the child right before the first execve (e.g. dup2 for stdio redirection).
     std::function<void()> childSetup;
 };
@@ -41,6 +45,7 @@ struct TracerStats {
     uint64_t faked = 0;          // identity / privilege syscalls answered without the kernel
     uint64_t denied = 0;         // privilege changes refused (EPERM), like the kernel would
     uint64_t processes = 0;
+    uint64_t envInjections = 0;
 };
 
 class Tracer {

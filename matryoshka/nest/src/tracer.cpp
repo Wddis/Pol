@@ -24,6 +24,7 @@
 #include <unistd.h>
 
 #include "arch.h"
+#include "fastpath.h"
 
 #ifndef PTRACE_EVENT_SECCOMP
 #define PTRACE_EVENT_SECCOMP 7
@@ -201,9 +202,20 @@ const Spec* findSpec(long nr) {
 bool installTraceFilter() {
     const auto& sp = specs();
     std::vector<sock_filter> f;
+    auto lo = [](uint64_t v) { return static_cast<uint32_t>(v & 0xffffffffu); };
+    auto hi = [](uint64_t v) { return static_cast<uint32_t>(v >> 32); };
     f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, arch)));
     f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, kAuditArch, 1, 0));
     f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+    // Fast path: 6th argument carries the tag -> already translated in-process (except execve).
+    f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[5])));
+    f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, lo(kFastPathTag), 0, 5));
+    f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[5]) + 4));
+    f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, hi(kFastPathTag), 0, 3));
+    f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)));
+    f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, static_cast<uint32_t>(SYS_execve), 1, 0));
+    f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+    // Slow path: stop at the tracer for every syscall that needs translation.
     f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)));
     for (const auto& s : sp) {
         f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, static_cast<uint32_t>(s.nr), 0, 1));
@@ -409,6 +421,46 @@ bool Tracer::rewriteExec(pid_t tid, Regs& r, uint64_t& scratch) {
         argvPtrs.push_back(p);
     }
 
+    // Environment: make sure the injected entries are present (replace same-named ones).
+    bool envChanged = false;
+    std::vector<uint64_t> envPtrs;
+    if (!cfg_.injectEnv.empty()) {
+        for (int i = 0; i < 8192 && r.arg[2]; i++) {
+            uint64_t p = 0;
+            if (!readMem(tid, r.arg[2] + i * 8, &p, 8) || !p) break;
+            char e[512];
+            if (readString(tid, p, e, sizeof(e))) {
+                bool replaced = false, same = false;
+                for (const auto& inj : cfg_.injectEnv) {
+                    size_t k = inj.find('=') + 1;
+                    if (strncmp(e, inj.c_str(), k) == 0) {
+                        replaced = true;
+                        same = inj == e;
+                    }
+                }
+                if (replaced && !same) { envChanged = true; continue; }
+                if (replaced && same) continue;  // re-added below, keeps a single copy
+            }
+            envPtrs.push_back(p);
+        }
+        envChanged = true;  // always rebuild: cheap, and guarantees exactly one copy of each entry
+    }
+    auto applyEnv = [&]() -> bool {
+        if (!envChanged) return true;
+        std::vector<uint64_t> np = envPtrs;
+        for (const auto& inj : cfg_.injectEnv) {
+            uint64_t a = pushBytes(tid, scratch, inj.c_str(), inj.size() + 1);
+            if (!a) return false;
+            np.push_back(a);
+        }
+        np.push_back(0);
+        uint64_t envAddr = pushBytes(tid, scratch, np.data(), np.size() * 8);
+        if (!envAddr) return false;
+        r.arg[2] = envAddr;
+        stats_.envInjections++;
+        return true;
+    };
+
     std::string base = path[0] == '/' ? "/" : guestCwdOf(tid);
     std::string hostProg, guestProg;
     if (!cfg_.vfs.resolve(path, base, true, hostProg, &guestProg)) return false;
@@ -416,7 +468,9 @@ bool Tracer::rewriteExec(pid_t tid, Regs& r, uint64_t& scratch) {
     // Chain: script interpreter -> ELF -> ELF interpreter. Build new filename + argv prefix.
     std::vector<std::string> prefix;  // replaces argv[0]
     std::string target = hostProg;       // host file the kernel will execute
-    std::string targetGuest = guestProg; // the same file as the (translated) guest sees it
+    // The program's guest path *as invoked* (symlinks not resolved): multi-call binaries such as
+    // toybox pick the command from argv[0], so "/system/bin/cat" must not become ".../toybox".
+    std::string targetGuest = Vfs::join(base, path);
     ExecInfo info;
     bool rewritten = false;
     for (int depth = 0; depth < 4 && inspectExecutable(target, info); depth++) {
@@ -436,8 +490,12 @@ bool Tracer::rewriteExec(pid_t tid, Regs& r, uint64_t& scratch) {
             continue;
         }
         if (!info.interp.empty()) {
+            // Only redirect when the guest's loader is a different file than the one the kernel
+            // would pick from the host (on Android /system/bin/linker64 is itself a symlink).
             std::string hostInterp;
-            if (cfg_.vfs.resolve(info.interp, "/", true, hostInterp) && hostInterp != info.interp) {
+            char real[PATH_MAX];
+            bool sameAsHost = realpath(info.interp.c_str(), real) != nullptr;
+            if (cfg_.vfs.resolve(info.interp, "/", true, hostInterp) && !(sameAsHost && hostInterp == real)) {
                 // Run the guest's own dynamic loader explicitly: "ld.so <program> args...". The
                 // loader runs under translation too, so it gets the program's *guest* path.
                 std::vector<std::string> np{info.interp, targetGuest};
@@ -452,7 +510,8 @@ bool Tracer::rewriteExec(pid_t tid, Regs& r, uint64_t& scratch) {
     }
 
     if (!rewritten) {
-        if (hostProg == path) return true;
+        if (!applyEnv()) return false;
+        if (hostProg == path) return envChanged;
         uint64_t a = pushBytes(tid, scratch, hostProg.c_str(), hostProg.size() + 1);
         if (!a) return false;
         r.arg[0] = a;
@@ -470,6 +529,7 @@ bool Tracer::rewriteExec(pid_t tid, Regs& r, uint64_t& scratch) {
     }
     for (size_t i = 1; i < argvPtrs.size(); i++) newArgv.push_back(argvPtrs[i]);
     newArgv.push_back(0);
+    if (!applyEnv()) return false;
     uint64_t argvAddr = pushBytes(tid, scratch, newArgv.data(), newArgv.size() * 8);
     uint64_t fileAddr = pushBytes(tid, scratch, target.c_str(), target.size() + 1);
     if (!argvAddr || !fileAddr) return false;

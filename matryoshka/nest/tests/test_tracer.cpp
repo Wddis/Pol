@@ -121,6 +121,8 @@ const std::string& rootfs() {
     copyWithDeps(root, "/bin/dash", "/bin/sh");
     copyWithDeps(root, "/usr/bin/readlink");
     copyWithDeps(root, "/usr/bin/id");
+    copyWithDeps(root, NEST_IDPROG_PATH, "/bin/multi");
+    (void)!symlink("/bin/multi", (root + "/bin/applet").c_str());  // like /system/bin/cat -> toybox
     mkdirs(root + "/proc");
     mkdirs(root + "/dev");
     mkdirs(root + "/tmp");
@@ -252,4 +254,86 @@ TEST(ids_saved_uid_allows_regaining_root) {
 TEST(ids_inherited_across_fork_and_exec) {
     auto r = run(idCmd({"setuid", "10077", "fork-uid", "exec", "/usr/bin/id", "-u"}));
     EXPECT_EQ(r.out, "0\nchild 10077 10077\n10077\n");
+}
+
+// Regression for the Redmi Note 8 probe: multi-call binaries (toybox) dispatch on argv[0], which must
+// survive symlink resolution and the switch to the guest's loader.
+TEST(exec_keeps_argv0_through_guest_loader) {
+    auto r = run(guestCmd({"/bin/applet", "argv0"}));
+    EXPECT_EQ(trim(r.out), "applet");
+    EXPECT_TRUE(r.err.find("exec_rewrites=1") != std::string::npos);
+}
+
+TEST(exec_symlinked_host_loader_is_not_redirected) {
+    // Host root: the program's loader is the host's own (even if reached through a symlink, as
+    // /system/bin/linker64 is on Android), so exec must not be rewritten at all.
+    std::string dir = mktmp();
+    (void)!symlink(NEST_IDPROG_PATH, (dir + "/applet").c_str());
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "-s", "--", dir + "/applet", "argv0"});
+    EXPECT_EQ(trim(r.out), "applet");
+    EXPECT_TRUE(r.err.find("exec_rewrites=0") != std::string::npos);
+}
+
+// ---- fast path (in-process translation, no ptrace stop)
+
+static std::vector<std::string> fastCmd(std::vector<std::string> extra) {
+    std::vector<std::string> a{NEST_RUN_PATH, "-b", "/=" + rootfs(), "-b", "/proc=/proc", "-b", "/dev=/dev",
+                               "-P", NEST_PRELOAD_PATH, "-s", "--"};
+    a.insert(a.end(), extra.begin(), extra.end());
+    return a;
+}
+
+static long statValue(const std::string& err, const char* key) {
+    size_t p = err.find(std::string(key) + "=");
+    return p == std::string::npos ? -1 : atol(err.c_str() + p + strlen(key) + 1);
+}
+
+TEST(fastpath_same_results_as_slow_path) {
+    auto r = run(fastCmd({"/bin/sh", "-c", "/bin/cat /hello.txt && /bin/mycat /hello.txt && /script.sh x && cd /tmp && /usr/bin/readlink /proc/self/cwd"}));
+    EXPECT_EQ(r.out, "hello from the guest root\nhello from the guest root\nscript-ok x\n/tmp\n");
+    EXPECT_TRUE(statValue(r.err, "env") >= 3);  // injected into every exec
+}
+
+TEST(fastpath_avoids_stops) {
+    const char* loop = "i=0; while [ $i -lt 3000 ]; do [ -e /hello.txt ]; i=$((i+1)); done; echo done";
+    timespec a{}, b{}, c{};
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    auto slow = run(guestCmd({"/bin/sh", "-c", loop}));
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    auto fast = run(fastCmd({"/bin/sh", "-c", loop}));
+    clock_gettime(CLOCK_MONOTONIC, &c);
+    EXPECT_EQ(trim(fast.out), "done");
+    long slowStops = statValue(slow.err, "stops"), fastStops = statValue(fast.err, "stops");
+    EXPECT_TRUE(fastStops >= 0 && fastStops * 10 < slowStops);
+    double ts = (b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6;
+    double tf = (c.tv_sec - b.tv_sec) * 1e3 + (c.tv_nsec - b.tv_nsec) / 1e6;
+    fprintf(stderr, "  bench: 3000 stat() slow path %.1f ms (%ld stops) vs fast path %.1f ms (%ld stops)\n", ts,
+            slowStops, tf, fastStops);
+}
+
+TEST(fastpath_app_files_land_in_guest_view) {
+    auto r = run(fastCmd({"/bin/sh", "-c", "echo data > /tmp/fp.txt && /bin/cat /tmp/fp.txt"}));
+    EXPECT_EQ(r.out, "data\n");
+    struct stat st;
+    EXPECT_TRUE(stat((rootfs() + "/tmp/fp.txt").c_str(), &st) == 0);  // written inside the rootfs
+}
+
+// The preload library must export only the libc wrappers (never its private C++ runtime).
+TEST(preload_exports_only_wrappers) {
+    std::string cmd = std::string("nm -D --defined-only ") + NEST_PRELOAD_PATH + " | awk '{print $3}'";
+    FILE* p = popen(cmd.c_str(), "r");
+    char line[256];
+    int total = 0, unexpected = 0;
+    while (p && fgets(line, sizeof(line), p)) {
+        std::string s = trim(line);
+        if (s.empty()) continue;
+        total++;
+        if (s.rfind("_Z", 0) == 0 || s.rfind("__cxa", 0) == 0 || s.rfind("__gxx", 0) == 0) {
+            unexpected++;
+            fprintf(stderr, "  unexpected export: %s\n", s.c_str());
+        }
+    }
+    if (p) pclose(p);
+    EXPECT_TRUE(total > 10);
+    EXPECT_EQ(unexpected, 0);
 }

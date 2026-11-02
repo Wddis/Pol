@@ -48,8 +48,10 @@ std::string checkSeccomp() {
 
 std::string checkExecFromData(const std::string& dir) {
     // Android forbids exec() from app data for targetSdk >= 29 (W^X). The guest needs it.
+    // Keep the name "toybox": the multi-call binary dispatches on its own file name.
     std::string src = exists("/system/bin/toybox") ? "/system/bin/toybox" : "/bin/true";
-    std::string dst = dir + "/probe-exec";
+    mkdir((dir + "/bin").c_str(), 0755);
+    std::string dst = dir + "/bin/toybox";
     int in = open(src.c_str(), O_RDONLY | O_CLOEXEC);
     int out = open(dst.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0755);
     if (in < 0 || out < 0) return err("copy");
@@ -64,7 +66,7 @@ std::string checkExecFromData(const std::string& dir) {
         int null = open("/dev/null", O_WRONLY);
         dup2(null, 1);
         dup2(null, 2);
-        const char* argv[] = {dst.c_str(), "true", nullptr};
+        const char* argv[] = {"toybox", "true", nullptr};
         execv(dst.c_str(), const_cast<char**>(argv));
         return errno == EACCES ? 77 : 78;
     });
@@ -157,11 +159,30 @@ std::string checkTracer(const std::string& dir) {
     return "fail:path rewrite did not work (rc=" + std::to_string(rc) + ", read " + std::to_string(n) + " bytes)";
 }
 
-std::string checkBenchmark(const std::string& dir) {
-    // Cost of one intercepted syscall, which bounds guest file-heavy workloads.
+std::string selfDir() {
+    char buf[4096];
+    ssize_t n = readlink("/proc/self/exe", buf, sizeof(buf) - 1);
+    if (n <= 0) return ".";
+    buf[n] = 0;
+    std::string s(buf);
+    return s.substr(0, s.rfind('/'));
+}
+
+// Cost of guest file syscalls: slow path (every call stops at the tracer) and, if the preload
+// library is available, the fast path (translated inside the process, no stop).
+std::string benchOnce(const std::string& dir, const std::string& preload, double& ms, uint64_t& stops) {
     TracerConfig cfg;
     cfg.vfs.bind("/", "/");
     cfg.vfs.bind("/mvm-probe", dir);
+    if (!preload.empty()) {
+        std::string pdir = preload.substr(0, preload.rfind('/'));
+        std::string vfsFile = dir + "/vfs.txt";
+        FILE* f = fopen(vfsFile.c_str(), "w");
+        if (!f) return err("vfs file");
+        fputs(cfg.vfs.serialize().c_str(), f);
+        fclose(f);
+        cfg.injectEnv = {"LD_PRELOAD=" + preload, "NEST_VFS_FILE=" + vfsFile};
+    }
     cfg.childSetup = [] {
         int null = open("/dev/null", O_WRONLY);
         dup2(null, 1);
@@ -171,14 +192,38 @@ std::string checkBenchmark(const std::string& dir) {
     const char* sh = exists("/system/bin/sh") ? "/system/bin/sh" : "/bin/sh";
     timespec a{}, b{};
     clock_gettime(CLOCK_MONOTONIC, &a);
-    int rc = tracer.run(sh, {sh, "-c", "i=0; while [ $i -lt 2000 ]; do [ -e /mvm-probe ]; i=$((i+1)); done"}, {});
+    int rc = tracer.run(sh, {sh, "-c", "i=0; while [ $i -lt 2000 ]; do [ -e /mvm-probe/vfs.txt ]; i=$((i+1)); done; [ -e /mvm-probe/vfs.txt ] || [ -z \"$LD_PRELOAD\" ]"}, {});
     clock_gettime(CLOCK_MONOTONIC, &b);
     if (rc != 0) return "fail:rc=" + std::to_string(rc);
-    double ms = (b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6;
-    char out[96];
-    snprintf(out, sizeof(out), "ok:%.0fms for %llu stops (%.1f us/stop)", ms,
-             (unsigned long long)tracer.stats().stops,
-             tracer.stats().stops ? ms * 1000.0 / tracer.stats().stops : 0.0);
+    ms = (b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6;
+    stops = tracer.stats().stops;
+    return "ok";
+}
+
+std::string checkBenchmark(const std::string& dir) {
+    double ms = 0;
+    uint64_t stops = 0;
+    std::string r = benchOnce(dir, "", ms, stops);
+    if (r != "ok") return r;
+    char out[128];
+    snprintf(out, sizeof(out), "ok:slow path %.0fms for %llu stops (%.1f us/stop)", ms, (unsigned long long)stops,
+             stops ? ms * 1000.0 / stops : 0.0);
+    return out;
+}
+
+std::string checkFastPath(const std::string& dir) {
+    std::string preload = selfDir() + "/libnest_preload.so";
+    if (!exists(preload.c_str())) return "fail:libnest_preload.so not found next to the supervisor";
+    double slowMs = 0, fastMs = 0;
+    uint64_t slowStops = 0, fastStops = 0;
+    std::string r = benchOnce(dir, "", slowMs, slowStops);
+    if (r != "ok") return r;
+    r = benchOnce(dir, preload, fastMs, fastStops);
+    if (r != "ok") return r;
+    char out[160];
+    snprintf(out, sizeof(out), "%s:2000 stat() %.0fms with %llu stops (slow path %.0fms, %llu stops) = %.1fx faster",
+             fastStops * 5 < slowStops ? "ok" : "fail", fastMs, (unsigned long long)fastStops, slowMs,
+             (unsigned long long)slowStops, fastMs > 0 ? slowMs / fastMs : 0.0);
     return out;
 }
 
@@ -208,6 +253,7 @@ std::string runProbe(const std::string& workDir) {
     line("check.memfd_fd_passing", checkMemfdAndFdPassing());
     line("check.tracer_path_rewrite", checkTracer(workDir));
     line("check.tracer_benchmark", checkBenchmark(workDir));
+    line("check.fast_path", checkFastPath(workDir));
     return r;
 }
 

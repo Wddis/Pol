@@ -11,9 +11,18 @@
 #pragma once
 
 #include <string>
+#include <sys/stat.h>
 #include <vector>
 
 namespace nest {
+
+// Host filesystem primitives used while resolving paths. The in-process fast path supplies
+// versions that bypass interception; the tracer uses plain libc.
+struct HostFs {
+    int (*lstat)(const char* path, struct stat* st);
+    long (*readlink)(const char* path, char* buf, unsigned long size);
+};
+const HostFs& libcHostFs();
 
 struct Mount {
     std::string guest;   // normalized guest prefix, "/" or "/a/b" (no trailing slash)
@@ -47,7 +56,14 @@ public:
     // host path is not visible in the guest.
     bool reverse(const std::string& hostPath, std::string& guestOut) const;
 
+    void setHostFs(const HostFs* fs) { fs_ = fs; }
+
+    // Text form used to hand the mount table to guest processes: "guest\thost\tro\n" per line.
+    std::string serialize() const;
+    bool deserialize(const std::string& text);
+
 private:
+    const HostFs* fs_ = &libcHostFs();
     std::vector<Mount> mounts_;  // kept sorted by guest prefix length, descending
 };
 

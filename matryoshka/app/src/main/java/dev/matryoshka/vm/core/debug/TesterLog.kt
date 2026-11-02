@@ -75,6 +75,8 @@ object TesterLog {
             .putExtra(Intent.EXTRA_STREAM, uri)
             .putExtra(Intent.EXTRA_SUBJECT, file.name)
             .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        // ClipData makes the read grant follow the intent through the chooser to the target app.
+        send.clipData = android.content.ClipData.newRawUri(file.name, uri)
         context.startActivity(Intent.createChooser(send, file.name).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 }

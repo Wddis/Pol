@@ -124,3 +124,14 @@ TEST(vfs_resolve_across_binds) {
     EXPECT_TRUE(v.resolve("/sdcard/Download", "/", true, host));
     EXPECT_EQ(host, data + "/media/0/Download");
 }
+
+TEST(vfs_serialize_roundtrip) {
+    Vfs v;
+    v.bind("/", "/r");
+    v.bind("/data", "/d", true);
+    Vfs w;
+    EXPECT_TRUE(w.deserialize(v.serialize()));
+    EXPECT_EQ(w.mounts().size(), 2u);
+    EXPECT_EQ(w.mapLexical("/data/x"), "/d/x");
+    EXPECT_TRUE(w.mounts()[0].readOnly);
+}

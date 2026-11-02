@@ -17,7 +17,10 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
         const char* c = argv[i];
-        if (!strcmp(c, "uid")) {
+        if (!strcmp(c, "argv0")) {
+            const char* b = strrchr(argv[0], '/');
+            printf("%s\n", b ? b + 1 : argv[0]);
+        } else if (!strcmp(c, "uid")) {
             uid_t r, e, s;
             getresuid(&r, &e, &s);
             printf("%u %u %u\n", r, e, s);

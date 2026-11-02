@@ -11,6 +11,18 @@ add_library(nest_core STATIC src/vfs.cpp src/arch.cpp src/tracer.cpp src/probe.c
 target_include_directories(nest_core PUBLIC src)
 set_target_properties(nest_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
+# In-process fast path, LD_PRELOADed into guest processes. Self-contained (static C++ runtime) so
+# it loads in any guest regardless of the guest's own C++ libraries.
+add_library(nest_preload SHARED src/preload.cpp src/vfs.cpp)
+target_include_directories(nest_preload PRIVATE src)
+set_target_properties(nest_preload PROPERTIES CXX_VISIBILITY_PRESET hidden
+                                              LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/preload.map)
+target_link_options(nest_preload PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/preload.map
+                                         -Wl,--exclude-libs,ALL)
+if(NOT ANDROID)
+  target_link_options(nest_preload PRIVATE -static-libstdc++ -static-libgcc)
+endif()
+
 # Supervisor executable. On Android it is packaged as a "native library" (lib*.so) so that it lands
 # in the app's native library directory, which apps are always allowed to execute from.
 add_executable(nest_run src/nest_run.cpp)
@@ -23,8 +35,9 @@ else()
   add_executable(nest_tests tests/test_main.cpp tests/test_vfs.cpp tests/test_tracer.cpp)
   target_link_libraries(nest_tests nest_core)
   add_executable(nest_idprog tests/idprog.cpp)
-  add_dependencies(nest_tests nest_run nest_idprog)
+  add_dependencies(nest_tests nest_run nest_idprog nest_preload)
   target_compile_definitions(nest_tests PRIVATE NEST_RUN_PATH="$<TARGET_FILE:nest_run>"
-                                                NEST_IDPROG_PATH="$<TARGET_FILE:nest_idprog>")
+                                                NEST_IDPROG_PATH="$<TARGET_FILE:nest_idprog>"
+                                                NEST_PRELOAD_PATH="$<TARGET_FILE:nest_preload>")
   add_test(NAME nest_tests COMMAND nest_tests)
 endif()

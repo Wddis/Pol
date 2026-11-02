@@ -9,6 +9,14 @@
 namespace nest {
 
 namespace {
+int libcLstat(const char* p, struct stat* st) { return ::lstat(p, st); }
+long libcReadlink(const char* p, char* b, unsigned long n) { return ::readlink(p, b, n); }
+const HostFs kLibc{libcLstat, libcReadlink};
+}  // namespace
+
+const HostFs& libcHostFs() { return kLibc; }
+
+namespace {
 
 bool hasPrefix(const std::string& path, const std::string& prefix) {
     if (prefix == "/") return !path.empty() && path[0] == '/';
@@ -117,7 +125,7 @@ bool Vfs::resolve(const std::string& path, const std::string& guestCwd, bool fol
         for (auto& d : done) g += "/" + d;
         std::string h = mapLexical(g);
         struct stat st;
-        if (lstat(h.c_str(), &st) != 0) {
+        if (fs_->lstat(h.c_str(), &st) != 0) {
             missing = true;
             continue;
         }
@@ -129,7 +137,7 @@ bool Vfs::resolve(const std::string& path, const std::string& guestCwd, bool fol
 
         if (++links > 40) return false;
         char buf[PATH_MAX];
-        ssize_t n = readlink(h.c_str(), buf, sizeof(buf) - 1);
+        long n = fs_->readlink(h.c_str(), buf, sizeof(buf) - 1);
         if (n < 0) continue;
         buf[n] = 0;
         std::string target(buf);
@@ -145,6 +153,30 @@ bool Vfs::resolve(const std::string& path, const std::string& guestCwd, bool fol
     if (guestOut) *guestOut = g;
     hostOut = mapLexical(g);
     if (trailingSlash && hostOut.back() != '/') hostOut += '/';
+    return true;
+}
+
+std::string Vfs::serialize() const {
+    std::string out;
+    for (const auto& m : mounts_) out += m.guest + "\t" + m.host + "\t" + (m.readOnly ? "ro" : "rw") + "\n";
+    return out;
+}
+
+bool Vfs::deserialize(const std::string& text) {
+    size_t pos = 0;
+    while (pos < text.size()) {
+        size_t end = text.find('\n', pos);
+        if (end == std::string::npos) end = text.size();
+        std::string line = text.substr(pos, end - pos);
+        pos = end + 1;
+        if (line.empty()) continue;
+        size_t t1 = line.find('\t'), t2 = line.find('\t', t1 + 1);
+        if (t1 == std::string::npos) return false;
+        std::string guest = line.substr(0, t1);
+        std::string host = line.substr(t1 + 1, (t2 == std::string::npos ? line.size() : t2) - t1 - 1);
+        bool ro = t2 != std::string::npos && line.compare(t2 + 1, 2, "ro") == 0;
+        bind(guest, host, ro);
+    }
     return true;
 }
 

@@ -10,6 +10,7 @@
 //   -w   guest working directory (default "/")
 //   -0   virtual identities (default) ; -n  real identity ; -u UID  start as this virtual uid
 //   -v   verbose (repeat for more)    ; -s  print statistics to stderr on exit
+//   -P   fast-path preload library (host path); NEST_STATE_DIR = where to write the mount table
 //   -E   add/override an environment variable ; -c  start with a clean environment
 //
 // SPDX-License-Identifier: Apache-2.0
@@ -18,6 +19,7 @@
 #include <cstring>
 #include <ctime>
 #include <string>
+#include <unistd.h>
 #include <vector>
 
 #include "probe.h"
@@ -37,6 +39,7 @@ int main(int argc, char** argv) {
     }
     nest::TracerConfig cfg;
     bool stats = false, clean = false;
+    std::string preload;
     std::vector<std::string> extraEnv;
     int i = 1;
     for (; i < argc; i++) {
@@ -57,6 +60,8 @@ int main(int argc, char** argv) {
         } else if (a == "-u" && i + 1 < argc) {
             cfg.initialUid = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 10));
             cfg.initialGid = cfg.initialUid;
+        } else if (a == "-P" && i + 1 < argc) {
+            preload = argv[++i];
         } else if (a == "-n") {
             cfg.fakeRoot = false;
         } else if (a == "-v") {
@@ -84,6 +89,20 @@ int main(int argc, char** argv) {
         env.push_back(kv);
     }
 
+    if (!preload.empty()) {
+        // Fast path: the preload library must be visible inside the guest at its host path, and
+        // the mount table is handed over through a small file next to it (or in TMPDIR).
+        std::string dir = preload.substr(0, preload.rfind('/'));
+        cfg.vfs.bind(dir, dir, true);
+        const char* tmp = getenv("NEST_STATE_DIR");
+        std::string vfsFile = std::string(tmp && *tmp ? tmp : "/tmp") + "/nest-vfs-" + std::to_string(getpid());
+        cfg.vfs.bind(vfsFile, vfsFile, true);
+        FILE* f = fopen(vfsFile.c_str(), "w");
+        if (!f) { perror("nest: vfs file"); return 125; }
+        fputs(cfg.vfs.serialize().c_str(), f);
+        fclose(f);
+        cfg.injectEnv = {"LD_PRELOAD=" + preload, "NEST_VFS_FILE=" + vfsFile};
+    }
     timespec t0{}, t1{};
     clock_gettime(CLOCK_MONOTONIC, &t0);
     nest::Tracer tracer(std::move(cfg));
@@ -93,10 +112,10 @@ int main(int argc, char** argv) {
         const auto& s = tracer.stats();
         double ms = (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
         fprintf(stderr,
-                "nest: exit=%d time=%.1fms processes=%llu stops=%llu paths=%llu execs=%llu exec_rewrites=%llu faked=%llu denied=%llu\n",
+                "nest: exit=%d time=%.1fms processes=%llu stops=%llu paths=%llu execs=%llu exec_rewrites=%llu faked=%llu denied=%llu env=%llu\n",
                 rc, ms, (unsigned long long)s.processes, (unsigned long long)s.stops,
                 (unsigned long long)s.pathRewrites, (unsigned long long)s.execs,
-                (unsigned long long)s.execRewrites, (unsigned long long)s.faked, (unsigned long long)s.denied);
+                (unsigned long long)s.execRewrites, (unsigned long long)s.faked, (unsigned long long)s.denied, (unsigned long long)s.envInjections);
     }
     if (rc < 0) {
         fprintf(stderr, "nest: failed to start the guest (ptrace/seccomp unavailable?)\n");
