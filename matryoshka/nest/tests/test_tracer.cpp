@@ -337,3 +337,9 @@ TEST(preload_exports_only_wrappers) {
     EXPECT_TRUE(total > 10);
     EXPECT_EQ(unexpected, 0);
 }
+
+// errno must survive both preload branches (fast-path translation and the traced fallback).
+TEST(fastpath_preserves_errno) {
+    auto r = run(fastCmd({"/bin/multi", "errno-rel", "errno-abs"}));
+    EXPECT_EQ(r.out, "-1 No such file or directory\n-1 No such file or directory\n");
+}

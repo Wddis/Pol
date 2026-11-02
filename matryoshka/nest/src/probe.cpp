@@ -16,6 +16,11 @@
 #include <unistd.h>
 
 #include "tracer.h"
+#include "vbinder.h"
+
+#include <poll.h>
+#include <signal.h>
+#include <thread>
 
 namespace nest {
 
@@ -227,6 +232,87 @@ std::string checkFastPath(const std::string& dir) {
     return out;
 }
 
+// vbinder on the real device: context manager, service and client processes talk through the
+// userspace broker (same scenario as the host test): calls, fd passing, nested callback, death.
+std::string checkVbinder(const std::string& dir) {
+    std::string prog = selfDir() + (exists((selfDir() + "/libnest_bindertest.so").c_str()) ? "/libnest_bindertest.so" : "/nest_binderprog");
+    std::string preload = selfDir() + "/libnest_preload.so";
+    if (!exists(prog.c_str()) || !exists(preload.c_str())) return "fail:test binaries missing";
+    std::string sock = dir + "/vb.sock";
+    vbinder::Broker broker(sock, [](int) { return 10123u; });
+    if (!broker.listen()) return err("broker socket");
+    std::thread th([&] { broker.serve(); });
+
+    struct Kid { pid_t pid; int out; std::string buf; };
+    auto spawn = [&](const char* role) {
+        int p[2];
+        if (pipe(p) != 0) return Kid{-1, -1, ""};
+        pid_t pid = fork();
+        if (pid == 0) {
+            dup2(p[1], 1);
+            close(p[0]);
+            setenv("LD_PRELOAD", preload.c_str(), 1);
+            setenv("NEST_BINDER_SOCK", sock.c_str(), 1);
+            execl(prog.c_str(), prog.c_str(), role, nullptr);
+            _exit(127);
+        }
+        close(p[1]);
+        return Kid{pid, p[0], ""};
+    };
+    auto waitFor = [](Kid& k, const char* want) {
+        timespec start{}, now{};
+        clock_gettime(CLOCK_MONOTONIC, &start);
+        while (k.buf.find(want) == std::string::npos) {
+            clock_gettime(CLOCK_MONOTONIC, &now);
+            if (now.tv_sec - start.tv_sec > 15) break;
+            pollfd pf{k.out, POLLIN, 0};
+            if (poll(&pf, 1, 1000) <= 0) continue;
+            char tmp[256];
+            ssize_t n = read(k.out, tmp, sizeof(tmp));
+            if (n <= 0) break;
+            k.buf.append(tmp, static_cast<size_t>(n));
+        }
+        return k.buf.find(want) != std::string::npos;
+    };
+    std::string result;
+    timespec a{}, b{};
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    Kid mgr = spawn("manager");
+    if (!waitFor(mgr, "ready")) result = "fail:context manager did not start: " + mgr.buf;
+    Kid srv{-1, -1, ""}, cli{-1, -1, ""};
+    if (result.empty()) {
+        srv = spawn("server");
+        if (!waitFor(srv, "registered added")) result = "fail:service registration: " + srv.buf;
+    }
+    if (result.empty()) {
+        cli = spawn("client");
+        waitFor(cli, "dead-after");
+        clock_gettime(CLOCK_MONOTONIC, &b);
+        const char* expected = "echo cba\npong:ping:uid10123\nfd-ok\nnested:cb-ok\ndead-reply\ndeath 0xdead\ndead-after\n";
+        if (cli.buf == expected) {
+            auto s = broker.stats();
+            char out[160];
+            snprintf(out, sizeof(out), "ok:%llu transactions, %llu fds, death notice in %.0fms",
+                     (unsigned long long)(s.transactions + s.replies), (unsigned long long)s.fdsPassed,
+                     (b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6);
+            result = out;
+        } else {
+            std::string got = cli.buf;
+            for (auto& c : got) if (c == '\n') c = '|';
+            result = "fail:client got [" + got + "]";
+        }
+    }
+    for (Kid* k : {&cli, &srv, &mgr}) {
+        if (k->pid <= 0) continue;
+        kill(k->pid, SIGKILL);
+        waitpid(k->pid, nullptr, 0);
+        close(k->out);
+    }
+    broker.stop();
+    th.join();
+    return result;
+}
+
 }  // namespace
 
 std::string runProbe(const std::string& workDir) {
@@ -254,6 +340,7 @@ std::string runProbe(const std::string& workDir) {
     line("check.tracer_path_rewrite", checkTracer(workDir));
     line("check.tracer_benchmark", checkBenchmark(workDir));
     line("check.fast_path", checkFastPath(workDir));
+    line("check.vbinder", checkVbinder(workDir));
     return r;
 }
 

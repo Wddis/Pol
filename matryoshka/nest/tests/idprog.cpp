@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -17,7 +18,16 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
         const char* c = argv[i];
-        if (!strcmp(c, "argv0")) {
+        if (!strcmp(c, "errno-rel")) {
+            // relative path -> passthrough (traced) branch of the preload wrappers
+            struct stat st;
+            int r = stat("definitely-missing-file", &st);
+            printf("%d %s\n", r, r == 0 ? "ok" : strerror(errno));
+        } else if (!strcmp(c, "errno-abs")) {
+            struct stat st;
+            int r = stat("/definitely/missing/file", &st);
+            printf("%d %s\n", r, r == 0 ? "ok" : strerror(errno));
+        } else if (!strcmp(c, "argv0")) {
             const char* b = strrchr(argv[0], '/');
             printf("%s\n", b ? b + 1 : argv[0]);
         } else if (!strcmp(c, "uid")) {

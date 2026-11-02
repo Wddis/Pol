@@ -139,6 +139,7 @@ class NestProbe(private val context: Context) {
         "check.tracer_path_rewrite" -> "Virtual filesystem (ptrace)"
         "check.tracer_benchmark" -> "Interception cost (slow path)"
         "check.fast_path" -> "Fast path (in-process)"
+        "check.vbinder" -> "Binder (userspace driver)"
         "info.kernel" -> "Kernel"
         "info.machine" -> "Machine"
         "info.uid" -> "App UID"

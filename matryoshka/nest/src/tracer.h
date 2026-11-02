@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -94,6 +95,7 @@ private:
     std::map<pid_t, Pending> pending_;
     std::map<pid_t, pid_t> tgid_;     // thread id -> process id
     std::map<pid_t, Creds> creds_;    // process id -> virtual credentials
+    mutable std::mutex credsMu_;      // creds_/tgid_ are also read by the binder broker thread
 };
 
 // The seccomp filter used by the tracer (exposed for the capability probe).

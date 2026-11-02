@@ -546,6 +546,7 @@ pid_t Tracer::tgidOf(pid_t tid) const {
 }
 
 Tracer::Creds Tracer::credsOf(pid_t tid) const {
+    std::lock_guard<std::mutex> g(credsMu_);
     auto it = creds_.find(tgidOf(tid));
     if (it != creds_.end()) return it->second;
     Creds c;
@@ -564,8 +565,10 @@ void Tracer::onNewTask(pid_t parent, pid_t tid) {
             if (sscanf(line, "Tgid: %d", &tgid) == 1) break;
         fclose(f);
     }
+    Creds inherited = credsOf(parent);
+    std::lock_guard<std::mutex> g(credsMu_);
     tgid_[tid] = tgid;
-    if (tgid == tid) creds_[tid] = credsOf(parent);  // new process inherits its parent's identity
+    if (tgid == tid) creds_[tid] = inherited;  // new process inherits its parent's identity
 }
 
 // uid/gid syscalls with the kernel's permission rules, applied to virtual credentials.
@@ -649,7 +652,10 @@ void Tracer::handleIds(pid_t tid, Regs& r) {
         ret = privileged ? 0 : -EPERM;
     }
     if (ret == -EPERM) stats_.denied++;
-    creds_[tgidOf(tid)] = c;
+    {
+        std::lock_guard<std::mutex> g(credsMu_);
+        creds_[tgidOf(tid)] = c;
+    }
     setSyscall(tid, r, -1);
     setReturn(tid, r, ret);
 }
@@ -811,8 +817,12 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
     ptrace(PTRACE_CONT, child, nullptr, nullptr);
 
     std::set<pid_t> alive{child};
-    tgid_[child] = child;
-    creds_[child] = credsOf(child);  // initial identity from the config
+    {
+        Creds initial = credsOf(child);
+        std::lock_guard<std::mutex> g(credsMu_);
+        tgid_[child] = child;
+        creds_[child] = initial;  // initial identity from the config
+    }
     // A new task is resumed only once BOTH its initial SIGSTOP and its parent's fork/clone event
     // were seen (they arrive in either order): its identity must be inherited before it runs.
     std::set<pid_t> registered;  // parent event seen
@@ -835,8 +845,11 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
             registered.erase(tid);
             stopped.erase(tid);
             started.erase(tid);
-            if (tgidOf(tid) == tid) creds_.erase(tid);
-            tgid_.erase(tid);
+            {
+                std::lock_guard<std::mutex> g(credsMu_);
+                if (tgidOf(tid) == tid) creds_.erase(tid);
+                tgid_.erase(tid);
+            }
             if (tid == child) rootStatus = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
             continue;
         }

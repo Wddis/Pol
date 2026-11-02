@@ -15,11 +15,13 @@
 #include <cstring>
 #include <fcntl.h>
 #include <string>
+#include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 #include "fastpath.h"
+#include "vbinder_client.h"
 #include "vfs.h"
 
 using nest::taggedSyscall;
@@ -83,10 +85,15 @@ long ret(long r) {
 
 // One helper per syscall shape: translate path(s) or fall back to an untagged (traced) syscall.
 long pathCall(long nr, long dirfd, const char* path, long a2, long a3, long a4, bool follow) {
+    if (nr == SYS_openat) {
+        // /dev/binder, /dev/hwbinder, /dev/vndbinder are served by the vbinder broker.
+        int b = nest::vbinder::clientOpen(path, static_cast<int>(a2));
+        if (b != -2) return b;
+    }
     std::string host;
     if (translate(path, follow, host))
         return ret(taggedSyscall(nr, dirfd, reinterpret_cast<long>(host.c_str()), a2, a3, a4));
-    return ret(syscall(nr, dirfd, path, a2, a3, a4));
+    return (syscall(nr, dirfd, path, a2, a3, a4));
 }
 
 int openFlagsFollow(int flags) { return !(flags & O_NOFOLLOW); }
@@ -194,8 +201,41 @@ NEST_EXPORT int renameat(int olddirfd, const char* oldpath, int newdirfd, const 
     if (translate(oldpath, false, a) && translate(newpath, false, b))
         return static_cast<int>(ret(taggedSyscall(SYS_renameat, olddirfd, reinterpret_cast<long>(a.c_str()), newdirfd,
                                                   reinterpret_cast<long>(b.c_str()))));
-    return static_cast<int>(ret(syscall(SYS_renameat, olddirfd, oldpath, newdirfd, newpath)));
+    return static_cast<int>((syscall(SYS_renameat, olddirfd, oldpath, newdirfd, newpath)));
 }
 NEST_EXPORT int rename(const char* oldpath, const char* newpath) { return renameat(AT_FDCWD, oldpath, AT_FDCWD, newpath); }
+
+// ---- binder devices: ioctl / mmap / close on vbinder fds go to the broker
+
+#if defined(__BIONIC__)
+NEST_EXPORT int ioctl(int fd, int request, ...) {
+#else
+NEST_EXPORT int ioctl(int fd, unsigned long request, ...) {
+#endif
+    va_list ap;
+    va_start(ap, request);
+    void* arg = va_arg(ap, void*);
+    va_end(ap);
+    if (nest::vbinder::clientIsBinderFd(fd))
+        return nest::vbinder::clientIoctl(fd, static_cast<unsigned long>(static_cast<unsigned int>(request)), arg);
+    return static_cast<int>((syscall(SYS_ioctl, fd, request, arg)));
+}
+
+NEST_EXPORT void* mmap(void* addr, size_t len, int prot, int flags, int fd, off_t off) {
+    if (fd >= 0 && nest::vbinder::clientIsBinderFd(fd)) return nest::vbinder::clientMmap(addr, len, prot, flags, fd, off);
+    // libc syscall() already returns -1 / sets errno on failure.
+    long r = syscall(SYS_mmap, addr, len, prot, flags, fd, off);
+    return r == -1 ? MAP_FAILED : reinterpret_cast<void*>(r);
+}
+NEST_EXPORT void* mmap64(void* addr, size_t len, int prot, int flags, int fd, off64_t off) {
+    return mmap(addr, len, prot, flags, fd, static_cast<off_t>(off));
+}
+
+NEST_EXPORT int close(int fd) {
+    if (nest::vbinder::clientIsBinderFd(fd)) nest::vbinder::clientClose(fd);
+    long r = syscall(SYS_close, fd);
+    if (r == -1 && errno == EINTR) return 0;  // the fd is gone either way (bionic semantics)
+    return static_cast<int>(r);
+}
 
 }  // extern "C"

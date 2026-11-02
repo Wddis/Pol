@@ -10,6 +10,7 @@
 //   -w   guest working directory (default "/")
 //   -0   virtual identities (default) ; -n  real identity ; -u UID  start as this virtual uid
 //   -v   verbose (repeat for more)    ; -s  print statistics to stderr on exit
+//   -B   serve /dev/{,hw,vnd}binder for the guest from a userspace broker on this socket
 //   -P   fast-path preload library (host path); NEST_STATE_DIR = where to write the mount table
 //   -E   add/override an environment variable ; -c  start with a clean environment
 //
@@ -18,11 +19,15 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <memory>
 #include <string>
 #include <unistd.h>
 #include <vector>
 
+#include <thread>
+
 #include "probe.h"
+#include "vbinder.h"
 #include "tracer.h"
 
 extern char** environ;
@@ -39,7 +44,7 @@ int main(int argc, char** argv) {
     }
     nest::TracerConfig cfg;
     bool stats = false, clean = false;
-    std::string preload;
+    std::string preload, binderSock;
     std::vector<std::string> extraEnv;
     int i = 1;
     for (; i < argc; i++) {
@@ -60,6 +65,8 @@ int main(int argc, char** argv) {
         } else if (a == "-u" && i + 1 < argc) {
             cfg.initialUid = static_cast<uint32_t>(strtoul(argv[++i], nullptr, 10));
             cfg.initialGid = cfg.initialUid;
+        } else if (a == "-B" && i + 1 < argc) {
+            binderSock = argv[++i];
         } else if (a == "-P" && i + 1 < argc) {
             preload = argv[++i];
         } else if (a == "-n") {
@@ -103,9 +110,21 @@ int main(int argc, char** argv) {
         fclose(f);
         cfg.injectEnv = {"LD_PRELOAD=" + preload, "NEST_VFS_FILE=" + vfsFile};
     }
+    if (!binderSock.empty()) cfg.injectEnv.push_back("NEST_BINDER_SOCK=" + binderSock);
     timespec t0{}, t1{};
     clock_gettime(CLOCK_MONOTONIC, &t0);
     nest::Tracer tracer(std::move(cfg));
+    // Userspace binder driver for the guest; reports each process's *virtual* euid.
+    std::unique_ptr<nest::vbinder::Broker> broker;
+    std::thread brokerThread;
+    if (!binderSock.empty()) {
+        broker.reset(new nest::vbinder::Broker(binderSock, [&tracer](int pid) { return tracer.credsOf(pid).euid; }));
+        if (!broker->listen()) {
+            perror("nest: binder socket");
+            return 125;
+        }
+        brokerThread = std::thread([&] { broker->serve(); });
+    }
     int rc = tracer.run(args[0], args, env);
     clock_gettime(CLOCK_MONOTONIC, &t1);
     if (stats) {
@@ -116,6 +135,10 @@ int main(int argc, char** argv) {
                 rc, ms, (unsigned long long)s.processes, (unsigned long long)s.stops,
                 (unsigned long long)s.pathRewrites, (unsigned long long)s.execs,
                 (unsigned long long)s.execRewrites, (unsigned long long)s.faked, (unsigned long long)s.denied, (unsigned long long)s.envInjections);
+    }
+    if (broker) {
+        broker->stop();
+        brokerThread.join();
     }
     if (rc < 0) {
         fprintf(stderr, "nest: failed to start the guest (ptrace/seccomp unavailable?)\n");

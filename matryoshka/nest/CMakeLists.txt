@@ -5,15 +5,15 @@ project(nest CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-add_compile_options(-Wall -Wextra -Wno-unused-parameter -O2 -fno-exceptions)
+add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -O2 -fno-exceptions)
 
-add_library(nest_core STATIC src/vfs.cpp src/arch.cpp src/tracer.cpp src/probe.cpp)
+add_library(nest_core STATIC src/vfs.cpp src/arch.cpp src/tracer.cpp src/probe.cpp src/vbinder.cpp)
 target_include_directories(nest_core PUBLIC src)
 set_target_properties(nest_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # In-process fast path, LD_PRELOADed into guest processes. Self-contained (static C++ runtime) so
 # it loads in any guest regardless of the guest's own C++ libraries.
-add_library(nest_preload SHARED src/preload.cpp src/vfs.cpp)
+add_library(nest_preload SHARED src/preload.cpp src/vfs.cpp src/vbinder_client.cpp)
 target_include_directories(nest_preload PRIVATE src)
 set_target_properties(nest_preload PROPERTIES CXX_VISIBILITY_PRESET hidden
                                               LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/preload.map)
@@ -27,17 +27,26 @@ endif()
 # in the app's native library directory, which apps are always allowed to execute from.
 add_executable(nest_run src/nest_run.cpp)
 target_link_libraries(nest_run nest_core)
+if(NOT ANDROID)
+  target_link_libraries(nest_run pthread)
+endif()
+# Raw-binder test client used by the tests and by the on-device probe (vbinder self-test).
+add_executable(nest_binderprog tests/binderprog.cpp)
+
 if(ANDROID)
   set_target_properties(nest_run PROPERTIES OUTPUT_NAME "nest_run" PREFIX "lib" SUFFIX ".so")
   target_link_options(nest_run PRIVATE -pie)
+  set_target_properties(nest_binderprog PROPERTIES OUTPUT_NAME "nest_bindertest" PREFIX "lib" SUFFIX ".so")
+  target_link_options(nest_binderprog PRIVATE -pie)
 else()
   enable_testing()
-  add_executable(nest_tests tests/test_main.cpp tests/test_vfs.cpp tests/test_tracer.cpp)
-  target_link_libraries(nest_tests nest_core)
+  add_executable(nest_tests tests/test_main.cpp tests/test_vfs.cpp tests/test_tracer.cpp tests/test_vbinder.cpp)
+  target_link_libraries(nest_tests nest_core pthread)
   add_executable(nest_idprog tests/idprog.cpp)
-  add_dependencies(nest_tests nest_run nest_idprog nest_preload)
+  add_dependencies(nest_tests nest_run nest_idprog nest_preload nest_binderprog)
   target_compile_definitions(nest_tests PRIVATE NEST_RUN_PATH="$<TARGET_FILE:nest_run>"
                                                 NEST_IDPROG_PATH="$<TARGET_FILE:nest_idprog>"
-                                                NEST_PRELOAD_PATH="$<TARGET_FILE:nest_preload>")
+                                                NEST_PRELOAD_PATH="$<TARGET_FILE:nest_preload>"
+                                                NEST_BINDERPROG_PATH="$<TARGET_FILE:nest_binderprog>")
   add_test(NAME nest_tests COMMAND nest_tests)
 endif()
