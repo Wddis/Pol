@@ -50,17 +50,34 @@ running() { alive server && alive tunnel; }
 adb_ok() { adb -s "$SERIAL" get-state 2>/dev/null | grep -q device; }
 mdns_port() { adb mdns services 2>/dev/null | awk -v t="$1" '$0 ~ t {print $NF}' | head -n1 | sed 's/.*://'; }
 
+boot_id() { cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown; }
+remember_link() { boot_id >"$STATE/boot_id"; }
+
+# Почему нужно переподключение через Wi-Fi (для понятного сообщения).
+why_wifi() {
+  [ -f "$STATE/boot_id" ] || { say "  Нужно один раз подключиться через Wi-Fi."; return; }
+  if [ "$(cat "$STATE/boot_id")" != "$(boot_id)" ]; then
+    say "  Телефон перезагружался — подключение без Wi-Fi сбросилось."
+  else
+    say "  Подключение без Wi-Fi сбросилось (скорее всего, выключали «Отладку по USB»)."
+  fi
+  say "  Нужен Wi-Fi ${B}на минуту${N} (подойдёт любой, даже без интернета: роутер или точка доступа другого телефона)."
+}
+
 adb_connect() {
   adb start-server >/dev/null 2>&1
-  adb_ok && return 0
+  adb_ok && { remember_link; return 0; }
   adb connect "$SERIAL" >/dev/null 2>&1; sleep 1
-  adb_ok && return 0
+  adb_ok && { remember_link; return 0; }
+  say ""
+  warn "Требуется переподключение."
+  why_wifi
   local port=""
   for _ in 1 2 3 4 5; do port="$(mdns_port _adb-tls-connect)"; [ -n "$port" ] && break; sleep 1; done
   if [ -z "$port" ]; then
-    say ""
-    warn "Нужна «Отладка по Wi-Fi» (Wi-Fi должен быть включён)."
-    say "  Открываю «Для разработчиков» → включите «Отладка по Wi-Fi» и вернитесь сюда."
+    say "  1) Подключитесь к Wi-Fi."
+    say "  2) Убедитесь, что включена ${B}«Отладка по USB»${N}."
+    say "  3) Включите ${B}«Отладка по Wi-Fi»${N} — открываю «Для разработчиков»."
     open_screen android.settings.APPLICATION_DEVELOPMENT_SETTINGS
     pause
     for _ in 1 2 3 4 5 6; do port="$(mdns_port _adb-tls-connect)"; [ -n "$port" ] && break; sleep 1; done
@@ -75,8 +92,22 @@ adb_connect() {
   adb -s "127.0.0.1:$port" tcpip 5555 >/dev/null 2>&1   # дальше работает и без Wi-Fi до перезагрузки
   sleep 3
   adb disconnect "127.0.0.1:$port" >/dev/null 2>&1
-  for _ in 1 2 3 4 5; do adb connect "$SERIAL" >/dev/null 2>&1; sleep 1; adb_ok && return 0; done
+  for _ in 1 2 3 4 5; do
+    adb connect "$SERIAL" >/dev/null 2>&1; sleep 1
+    if adb_ok; then
+      remember_link
+      ok "Подключено. ${B}Wi-Fi и «Отладку по Wi-Fi» уже можно выключить.${N}"
+      return 0
+    fi
+  done
   err "adb не подключился к $SERIAL."; return 1
+}
+
+wifi_hint() {
+  say ""
+  say "${B}Wi-Fi можно выключить${N} — дальше всё работает через мобильный интернет до перезагрузки."
+  say "${Y}Не выключайте «Отладку по USB»${N} — без неё Claude потеряет доступ к Chrome."
+  say "Wi-Fi понадобится снова только после перезагрузки телефона (программа сама подскажет)."
 }
 
 chrome_version() {
@@ -195,6 +226,7 @@ cmd_start() {
   show_url
   say ""
   ok "${B}Готово! Пишите задачи Claude. Termux можно свернуть (не смахивайте его).${N}"
+  wifi_hint
 }
 
 cmd_stop() {
@@ -208,7 +240,9 @@ cmd_stop() {
 cmd_status() {
   alive server && ok "Сервер работает" || warn "Сервер остановлен"
   alive tunnel && ok "Туннель: $(cat "$STATE/base_url" 2>/dev/null)" || warn "Туннель остановлен"
-  adb_ok && ok "adb подключён" || warn "adb не подключён"
+  if adb_ok; then ok "Связь с телефоном есть — Wi-Fi не нужен"
+  else warn "Связи с телефоном нет — нажмите «Запустить» (может понадобиться Wi-Fi на минуту)"; fi
+  say "«Отладка по USB»: держите ${B}включённой${N}, пока пользуетесь Claude"
   local v; v="$(adb_ok && chrome_version)"
   [ -n "$v" ] && ok "Chrome: $v" || warn "Chrome недоступен"
   [ "$ACM_ALL_TABS" = 1 ] && say "Ваши вкладки: Claude ${B}видит${N}" || say "Ваши вкладки: Claude ${B}не видит${N} (только свои)"
