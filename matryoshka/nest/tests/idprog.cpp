@@ -10,6 +10,7 @@
 #include <signal.h>
 #include <cstddef>
 #include <sys/mount.h>
+#include <sys/xattr.h>
 #include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/un.h>
@@ -28,7 +29,22 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
         const char* c = argv[i];
-        if (!strcmp(c, "open-fchown")) {
+        if (!strcmp(c, "nice")) {
+            // like init's `priority -20` for zygote
+            int rc = setpriority(PRIO_PROCESS, 0, atoi(argv[++i]));
+            printf("%s\n", rc == 0 ? "0" : strerror(errno));
+        } else if (!strcmp(c, "label")) {
+            // like bionic's property files: label a new file, by path and by fd
+            const char* p = argv[++i];
+            int fd = open(p, O_RDWR | O_CREAT | O_CLOEXEC, 0444);
+            const char* ctx = "u:object_r:default_prop:s0";
+            int a = fsetxattr(fd, "security.selinux", ctx, strlen(ctx) + 1, 0);
+            int ea = a ? errno : 0;
+            int b = setxattr(p, "security.selinux", ctx, strlen(ctx) + 1, 0);
+            int eb = b ? errno : 0;
+            printf("%s %s\n", a == 0 ? "0" : strerror(ea), b == 0 ? "0" : strerror(eb));
+            close(fd);
+        } else if (!strcmp(c, "open-fchown")) {
             // open() goes through the preload's tagged fast path; the libc fchown() right after
             // it must still be seen by the tracer (regression: the tag stayed in the 6th register)
             int fd = open(argv[++i], O_RDONLY | O_CLOEXEC);

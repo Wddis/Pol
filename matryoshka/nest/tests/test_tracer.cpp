@@ -1,3 +1,4 @@
+#include <sys/xattr.h>
 #include <fstream>
 #include <sstream>
 // End-to-end tests of the tracer through the nest-run supervisor, using real host binaries.
@@ -515,6 +516,43 @@ TEST(android_oom_score_adj_is_virtual_per_process) {
     auto r = run({NEST_RUN_PATH, "-b", "/=/", "--android", state, "--", NEST_IDPROG_PATH, "cat", "/proc/self/oom_score_adj",
                   "write", "/proc/self/oom_score_adj", "-1000", "cat", "/proc/self/oom_score_adj"});
     EXPECT_EQ(r.out, "0\n\n-1000\n");
+}
+
+// Like the phone: the guest root is a separate tree, the engine's state dir is not part of it.
+TEST(android_profile_on_separate_root_like_the_phone) {
+    std::string state = mktmp();
+    auto a = [&](const std::string& uid, std::vector<std::string> cmd) {
+        std::vector<std::string> v{NEST_RUN_PATH, "-b", "/=" + rootfs(), "--android", state};
+        if (!uid.empty()) { v.push_back("-u"); v.push_back(uid); }
+        v.push_back("--");
+        v.push_back("/bin/multi");
+        v.insert(v.end(), cmd.begin(), cmd.end());
+        return v;
+    };
+    // init writes /proc/1/oom_score_adj: virtual file inside the state dir
+    auto oom = runInState(a("", {"write", "/proc/self/oom_score_adj", "-1000", "cat", "/proc/self/oom_score_adj"}), state);
+    EXPECT_EQ(oom.out, "-1000\n");
+    // bionic labels each property file; init aborts if that fails. Never reaches the host.
+    auto root = runInState(a("", {"label", "/tmp/prop-label-test"}), state);
+    EXPECT_EQ(root.out, "0 0\n");
+    char buf[64];
+    EXPECT_TRUE(getxattr((rootfs() + "/tmp/prop-label-test").c_str(), "security.selinux", buf, sizeof(buf)) < 0);
+    auto app = runInState(a("10050", {"label", "/tmp/prop-label-app"}), state);
+    EXPECT_EQ(app.out, "Operation not permitted Operation not permitted\n");
+}
+
+TEST(lower_nice_is_never_refused_to_the_guest) {
+    // Like init's `priority -20` for zygote. Run as an unprivileged host user (RLIMIT_NICE 0):
+    // the host kernel refuses, the guest must still see success.
+    std::vector<std::string> drop{"/usr/bin/setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"};
+    auto with = [&](std::vector<std::string> v) { v.insert(v.begin(), drop.begin(), drop.end()); return v; };
+    auto host = run(with({NEST_IDPROG_PATH, "nice", "-5"}));
+    if (host.out != "Permission denied\n") {
+        fprintf(stderr, "  skipped: cannot run unprivileged here (%s)\n", trim(host.out).c_str());
+        return;
+    }
+    auto r = run(with({NEST_RUN_PATH, "-b", "/=/", "-u", "10050", "--", NEST_IDPROG_PATH, "nice", "5", "nice", "-5"}));
+    EXPECT_EQ(r.out, "0\n0\n");
 }
 
 TEST(mount_requires_root_identity) {

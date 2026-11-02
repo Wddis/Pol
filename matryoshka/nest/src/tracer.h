@@ -130,6 +130,7 @@ private:
     void fixSockName(pid_t tid, uint64_t addr, uint64_t lenAddr);
     bool clampRlimit(pid_t tid, struct Regs& r, long nr, uint64_t& scratch);
     long handleBpf(pid_t tid, struct Regs& r, int& openObject);
+    bool securityXattr(pid_t tid, struct Regs& r);
     bool openBpfObject(pid_t tid, struct Regs& r, uint64_t& scratch, int id, bool restart);
     int bpfObjectOfFd(pid_t tid, int fd);
     bool rewritePath(pid_t tid, struct Regs& r, int dirfdArg, int pathArg, bool followLast,

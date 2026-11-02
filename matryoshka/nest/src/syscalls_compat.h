@@ -103,6 +103,12 @@ constexpr long accept4 = 366;
 constexpr long setrlimit = 75;
 constexpr long prlimit64 = 369;
 constexpr long bpf = 386;
+constexpr long fsetxattr = 228;
+constexpr long fremovexattr = 237;
+constexpr long setpriority = 97;
+constexpr long ioprio_set = 314;
+constexpr long sched_setscheduler = 156;
+constexpr long sched_setattr = 380;
 }  // namespace arm
 
 namespace i386 {
@@ -204,5 +210,11 @@ constexpr long accept4 = 364;
 constexpr long setrlimit = 75;
 constexpr long prlimit64 = 340;
 constexpr long bpf = 357;
+constexpr long fsetxattr = 228;
+constexpr long fremovexattr = 237;
+constexpr long setpriority = 97;
+constexpr long ioprio_set = 289;
+constexpr long sched_setscheduler = 156;
+constexpr long sched_setattr = 351;
 }  // namespace i386
 }  // namespace nest::sys32

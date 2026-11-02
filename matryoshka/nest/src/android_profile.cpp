@@ -56,6 +56,9 @@ bool applyAndroidProfile(TracerConfig& cfg, const std::string& state, const std:
 
     // The guest's own /dev (init creates sockets and the property area in it), with the host
     // devices an app is allowed to use bound in.
+    // The engine's state dir is visible at its own path: files the tracer substitutes for guest
+    // ones (virtual /proc entries, bpf objects, preload copies) are host paths inside it.
+    cfg.vfs.bind(state, state, false, true);
     cfg.vfs.bind("/dev", state + "/dev");
     for (const char* d : {"null", "zero", "full", "random", "urandom", "tty", "ptmx", "ashmem", "tun"}) {
         std::string host = std::string("/dev/") + d;

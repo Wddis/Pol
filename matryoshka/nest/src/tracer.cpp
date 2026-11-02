@@ -69,6 +69,8 @@ enum class Kind {
     SockName,   // getsockname/getpeername/accept: AF_UNIX host paths back to guest paths
     Rlimit,     // setrlimit/prlimit64 raising limits: allowed for a privileged guest, clamped to the host's
     Bpf,        // bpf(): maps and programs emulated in userspace (bpf_emu.h)
+    Xattr,      // fsetxattr/fremovexattr: security.* labels are virtual (see securityXattr)
+    Sched,      // setpriority/ioprio_set/sched_set*: a host refusal is hidden from guests entitled to it
 };
 
 constexpr int NONE = -1;
@@ -158,6 +160,10 @@ std::vector<Spec> buildSpecs() {
     s.push_back({SYS_bind, Kind::Sock});
     for (long nr : {SYS_getsockname, SYS_getpeername, SYS_accept, SYS_accept4}) s.push_back({nr, Kind::SockName});
     s.push_back({SYS_bpf, Kind::Bpf});
+    for (long nr : {SYS_setpriority, SYS_ioprio_set, SYS_sched_setscheduler, SYS_sched_setattr})
+        s.push_back({nr, Kind::Sched});
+    s.push_back({SYS_fsetxattr, Kind::Xattr});
+    s.push_back({SYS_fremovexattr, Kind::Xattr});
     s.push_back({SYS_setrlimit, Kind::Rlimit});
     s.push_back({SYS_prlimit64, Kind::Rlimit});
     s.back().nonZeroArg = 2;
@@ -299,6 +305,12 @@ std::vector<Spec> buildCompatSpecs() {
     add(C::accept, SYS_accept, Kind::SockName);
     add(C::accept4, SYS_accept4, Kind::SockName);
     add(C::bpf, SYS_bpf, Kind::Bpf);
+    add(C::setpriority, SYS_setpriority, Kind::Sched);
+    add(C::ioprio_set, SYS_ioprio_set, Kind::Sched);
+    add(C::sched_setscheduler, SYS_sched_setscheduler, Kind::Sched);
+    add(C::sched_setattr, SYS_sched_setattr, Kind::Sched);
+    add(C::fsetxattr, SYS_fsetxattr, Kind::Xattr);
+    add(C::fremovexattr, SYS_fremovexattr, Kind::Xattr);
     add(C::setrlimit, SYS_setrlimit, Kind::Rlimit);
     add(C::prlimit64, SYS_prlimit64, Kind::Rlimit);
     s.back().nonZeroArg = 2;
@@ -1533,6 +1545,21 @@ long Tracer::handleBpf(pid_t tid, Regs& r, int& openObject) {
     }
 }
 
+// SELinux labels (security.* xattrs) are the guest's business: SELinux is disabled inside the
+// guest, and the host refuses an app to relabel files. bionic still labels every property file
+// it creates and init aborts if that fails, so a privileged guest's label writes succeed
+// without touching the host. Returns true when the call was answered here.
+bool Tracer::securityXattr(pid_t tid, Regs& r) {
+    if (!cfg_.fakeRoot || !r.arg[1]) return false;
+    char name[64] = {};
+    if (!readString(tid, r.arg[1], name, sizeof(name)) || strncmp(name, "security.", 9) != 0) return false;
+    constexpr int kCapSysAdmin = 21;
+    stats_.faked++;
+    setSyscall(tid, r, -1);
+    setReturn(tid, r, credsOf(tid).hasCap(kCapSysAdmin) ? 0 : -EPERM);
+    return true;
+}
+
 void Tracer::publishVfs() {
     if (share_) share_->publish(cfg_.vfs.serialize());
 }
@@ -1748,6 +1775,9 @@ void Tracer::handleSeccomp(pid_t tid) {
         };
         switch (s->kind) {
             case Kind::Path: {
+                if ((s->logical == SYS_setxattr || s->logical == SYS_lsetxattr || s->logical == SYS_removexattr ||
+                     s->logical == SYS_lremovexattr) && securityXattr(tid, r))
+                    break;
                 bool f = follow(*s);
                 // linkat: old path follows only with AT_SYMLINK_FOLLOW.
                 if (s->logical == SYS_linkat) f = (r.arg[4] & AT_SYMLINK_FOLLOW) != 0;
@@ -1802,6 +1832,17 @@ void Tracer::handleSeccomp(pid_t tid) {
             }
             case Kind::Sock:
                 if (rewriteSockaddr(tid, r, scratch, s->logical == SYS_connect)) setArgs(tid, r);
+                break;
+            case Kind::Xattr:
+                securityXattr(tid, r);
+                break;
+            case Kind::Sched:
+                if (cfg_.fakeRoot) {  // decided at exit, once the host kernel has answered
+                    Pending p;
+                    p.nr = s->logical;
+                    pending_[tid] = p;
+                    wantExit = true;
+                }
                 break;
             case Kind::Bpf: {
                 if (!cfg_.fakeRoot) break;
@@ -1923,6 +1964,19 @@ void Tracer::handleSyscallExit(pid_t tid) {
     }
     long ret = static_cast<long>(r.ret);
     if (r.compat) ret = static_cast<int32_t>(static_cast<uint32_t>(ret));
+    if (p.nr == SYS_setpriority || p.nr == SYS_ioprio_set || p.nr == SYS_sched_setscheduler || p.nr == SYS_sched_setattr) {
+        // Guest init sets `nice 40` for everyone (Android's init.rc), so lower nice values and I/O
+        // classes are allowed in the guest; real-time scheduling needs CAP_SYS_NICE as usual.
+        // When the host refuses, the call keeps the host's setting but reports success.
+        constexpr int kCapSysNice = 23;
+        bool rt = p.nr == SYS_sched_setscheduler || p.nr == SYS_sched_setattr;
+        if ((ret == -EACCES || ret == -EPERM) && (!rt || credsOf(tid).hasCap(kCapSysNice))) {
+            stats_.faked++;
+            setReturn(tid, r, 0);
+        }
+        ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+        return;
+    }
     if (p.nr == SYS_getsockname || p.nr == SYS_getpeername || p.nr == SYS_accept || p.nr == SYS_accept4) {
         if (ret >= 0) fixSockName(tid, p.buf, p.bufSize);
         ptrace(PTRACE_CONT, tid, nullptr, nullptr);
