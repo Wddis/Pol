@@ -87,6 +87,21 @@ constexpr long setns = 375;
 constexpr long init_module = 128;
 constexpr long finit_module = 379;
 constexpr long delete_module = 129;
+constexpr long capget = 184;
+constexpr long capset = 185;
+constexpr long prctl = 172;
+constexpr long getpid = 20;
+constexpr long gettid = 224;
+constexpr long getppid = 64;
+constexpr long kill = 37;
+constexpr long tkill = 238;
+constexpr long tgkill = 268;
+constexpr long getsockname = 286;
+constexpr long getpeername = 287;
+constexpr long accept = 285;
+constexpr long accept4 = 366;
+constexpr long setrlimit = 75;
+constexpr long prlimit64 = 369;
 }  // namespace arm
 
 namespace i386 {
@@ -172,5 +187,20 @@ constexpr long setns = 346;
 constexpr long init_module = 128;
 constexpr long finit_module = 350;
 constexpr long delete_module = 129;
+constexpr long capget = 184;
+constexpr long capset = 185;
+constexpr long prctl = 172;
+constexpr long getpid = 20;
+constexpr long gettid = 224;
+constexpr long getppid = 64;
+constexpr long kill = 37;
+constexpr long tkill = 238;
+constexpr long tgkill = 270;
+constexpr long getsockname = 367;
+constexpr long getpeername = 368;
+constexpr long accept = -1;
+constexpr long accept4 = 364;
+constexpr long setrlimit = 75;
+constexpr long prlimit64 = 340;
 }  // namespace i386
 }  // namespace nest::sys32

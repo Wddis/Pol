@@ -17,7 +17,7 @@
 namespace nest::vbinder {
 
 constexpr uint32_t kMagic = 0x564e4252;  // "RBNV"
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 constexpr int kMaxFds = 64;               // per message
 constexpr uint32_t kMaxReadSize = 64 * 1024;
 constexpr uint32_t kMaxWriteSize = 64 * 1024;
@@ -66,6 +66,14 @@ struct IoctlResp {
     uint32_t nfixups;
     uint64_t writeConsumed;
     uint64_t readBytes;
+    uint32_t flags;       // kRespDrainWake
+    uint32_t pad = 0;
 };
+
+// poll()/epoll on the binder fd (servicemanager's Looper): the process connection — the fd the
+// guest holds — becomes readable through a 1-byte wake message the broker sends when work is
+// queued that no blocked thread picks up. At most one is outstanding; a response flagged
+// kRespDrainWake tells the client to consume it because no work is left.
+constexpr uint32_t kRespDrainWake = 1;
 
 }  // namespace nest::vbinder

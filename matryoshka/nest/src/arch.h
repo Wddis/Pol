@@ -31,6 +31,11 @@ bool setSyscall(pid_t tid, Regs& r, long nr);
 // Sets the return value (at syscall exit, or together with a skipped syscall).
 bool setReturn(pid_t tid, Regs& r, long value);
 
+// Android 11+ on arm64 tags heap pointers in the top byte (hardware ignores it, TBI). The
+// kernel's process_vm_* calls do not, so remote accesses use the untagged address. x86_64 user
+// addresses never have top-byte bits, so this is a no-op there.
+inline uint64_t untagAddr(uint64_t addr) { return addr & 0x00ffffffffffffffull; }
+
 // Copies memory to/from the tracee.
 bool readMem(pid_t tid, uint64_t addr, void* buf, size_t len);
 bool writeMem(pid_t tid, uint64_t addr, const void* buf, size_t len);

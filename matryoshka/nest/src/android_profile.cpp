@@ -61,18 +61,24 @@ bool applyAndroidProfile(TracerConfig& cfg, const std::string& state, const std:
         std::string host = std::string("/dev/") + d;
         if (!exists(host)) continue;
         ensureMountPoint(state + "/dev/" + d, false);
-        cfg.vfs.bind(std::string("/dev/") + d, host);
+        cfg.vfs.bind(std::string("/dev/") + d, host, false, true);
+    }
+    // Binder device nodes: opened through the vbinder client, but they must exist for access()
+    // checks (ProcessState falls back to /dev/binder for a missing /dev/vndbinder).
+    for (const char* d : {"binder", "hwbinder", "vndbinder"}) {
+        ok &= writeFile(state + "/dev/" + d, "");
+        chmod((state + "/dev/" + d).c_str(), 0666);
     }
     mkdirs(state + "/dev/pts");
-    cfg.vfs.bind("/dev/pts", "/dev/pts");
+    cfg.vfs.bind("/dev/pts", "/dev/pts", false, true);
     ensureMountPoint(state + "/dev/kmsg", false);
-    cfg.vfs.bind("/dev/kmsg", state + "/kmsg");
+    cfg.vfs.bind("/dev/kmsg", state + "/kmsg", false, true);
 
     cfg.vfs.bind("/proc", "/proc");
     for (const char* f : {"version", "filesystems", "cmdline"})
-        cfg.vfs.bind(std::string("/proc/") + f, state + "/proc/" + f);
+        cfg.vfs.bind(std::string("/proc/") + f, state + "/proc/" + f, false, true);
     cfg.vfs.bind("/sys", "/sys");
-    cfg.vfs.bind("/sys/fs/selinux", state + "/empty");
+    cfg.vfs.bind("/sys/fs/selinux", state + "/empty", false, true);
     cfg.vfs.bind("/linkerconfig", state + "/linkerconfig");
 
     // Flattened APEXes: what apexd/init would bind at /apex/<name>.
@@ -88,6 +94,7 @@ bool applyAndroidProfile(TracerConfig& cfg, const std::string& state, const std:
     }
     cfg.stateDir = state;
     cfg.procAttrDir = state + "/attr";
+    cfg.virtualInitPid = true;  // init is pid 1
     return true;
 }
 

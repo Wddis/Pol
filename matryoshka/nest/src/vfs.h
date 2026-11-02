@@ -28,12 +28,24 @@ struct Mount {
     std::string guest;   // normalized guest prefix, "/" or "/a/b" (no trailing slash)
     std::string host;    // host directory or file ("" = hidden / not present)
     bool readOnly = false;
+    // Engine infrastructure (device nodes, generated /proc files, the preload library): stays
+    // visible when the guest mounts something over a parent directory.
+    bool sticky = false;
+    // Virtual cgroup filesystem: control files (tasks, cgroup.procs, ...) of new groups appear on
+    // first write, like the kernel creates them with the directory.
+    bool cgroup = false;
 };
 
 class Vfs {
 public:
     // Adds or replaces a binding. Later bindings of the same guest path replace earlier ones.
-    void bind(const std::string& guest, const std::string& host, bool readOnly = false);
+    void bind(const std::string& guest, const std::string& host, bool readOnly = false, bool sticky = false);
+    // A new mount on `guest` covers everything mounted below it (as in the kernel): drops those
+    // bindings, except sticky ones. Returns how many were hidden.
+    size_t hideUnder(const std::string& guest);
+    void setCgroup(const std::string& guest);
+    // True if the host path lies in a virtual cgroup filesystem.
+    bool isCgroupHost(const std::string& hostPath) const;
     // Removes a binding (used for virtual umount).
     bool unbind(const std::string& guest);
     const std::vector<Mount>& mounts() const { return mounts_; }

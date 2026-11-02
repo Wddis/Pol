@@ -256,6 +256,49 @@ TEST(ids_inherited_across_fork_and_exec) {
     EXPECT_EQ(r.out, "0\nchild 10077 10077\n10077\n");
 }
 
+TEST(rlimit_raise_succeeds_for_privileged_guest_only) {
+    EXPECT_EQ(run(idCmd({"rlimit-raise"})).out, "0\n");
+    EXPECT_EQ(run(idCmd({"rlimit-raise"}, "10050")).out, "-1 EPERM\n");
+}
+
+// ---- virtual pid 1 (Android init refuses cgroup setup unless getpid() == 1)
+
+TEST(pid1_guest_init_sees_itself_as_pid_1) {
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "--pid1", "--", NEST_IDPROG_PATH, "pids", "child-ppid", "proc1-exe"});
+    EXPECT_EQ(r.out, "1 1 kill1=0\nppid 1\nidprog\n");
+    auto off = run({NEST_RUN_PATH, "-b", "/=/", "--", NEST_IDPROG_PATH, "pids"});
+    EXPECT_TRUE(off.out.rfind("1 1 ", 0) != 0);
+}
+
+// ---- virtual capabilities (init's SetCapsForExec, zygote, Magisk su)
+
+TEST(caps_root_has_all_and_app_none) {
+    auto root = run(idCmd({"caps", "bset-read", "21"}));
+    EXPECT_EQ(root.out, "ffffffff ffffffff 0 amb00\n1\n");
+    auto app = run(idCmd({"caps", "capset", "1", "1", "0"}, "10050"));
+    EXPECT_EQ(app.out, "0 0 0 amb00\n-1 EPERM\n");
+}
+
+TEST(caps_init_style_service_keeps_ambient_across_exec) {
+    // What Android init does for a service with `capabilities` (e.g. lmkd: KILL, SYS_NICE...):
+    // keep caps over setuid, drop the bounding set, raise ambient, exec.
+    // Dropping the bounding set needs CAP_SETPCAP, so init keeps it until the final capset.
+    auto r = run(idCmd({"keepcaps", "1", "setresuid", "1000", "1000", "1000", "caps", "capset", "1c0", "1c0", "c0",
+                        "bset-drop", "21", "capset", "c0", "c0", "c0", "ambient-raise", "6", "ambient-raise", "7",
+                        "exec", NEST_IDPROG_PATH, "caps", "bset-read", "21", "bset-drop", "6", "uid"}));
+    EXPECT_EQ(r.out, "0\n0\n0 ffffffff 0 amb00\n0\n0\n0\n0\n0\nc0 c0 c0 amb11\n0\n-1 EPERM\n1000 1000 1000\n");
+}
+
+TEST(caps_dropped_without_keepcaps_and_cannot_raise) {
+    auto r = run(idCmd({"setuid", "1000", "caps", "capset", "c0", "c0", "0", "ambient-raise", "6"}));
+    EXPECT_EQ(r.out, "0\n0 0 0 amb00\n-1 EPERM\n-1 EPERM\n");
+}
+
+TEST(caps_root_exec_regains_full_set_from_bounding) {
+    auto r = run(idCmd({"bset-drop", "7", "capset", "0", "0", "0", "exec", NEST_IDPROG_PATH, "caps"}));
+    EXPECT_EQ(r.out, "0\n0\nffffff7f ffffff7f 0 amb00\n");
+}
+
 // Regression for the Redmi Note 8 probe: multi-call binaries (toybox) dispatch on argv[0], which must
 // survive symlink resolution and the switch to the guest's loader.
 TEST(exec_keeps_argv0_through_guest_loader) {
@@ -379,6 +422,31 @@ TEST(mount_tmpfs_bind_umount_seen_by_fast_path) {
         EXPECT_TRUE(stat((rootfs() + "/tmp/f").c_str(), &st) != 0);
         if (policy) EXPECT_TRUE(r.err.find("sigsys=0 ") == std::string::npos);  // came in as SIGSYS
     }
+}
+
+TEST(mount_cgroup_hierarchy_behaves_like_kernel) {
+    // Android init mounts cpuset/memcg and copies cpus/mems into new groups; libprocessgroup
+    // writes pids into tasks files of groups it just created, without O_CREAT.
+    for (bool fast : {false, true}) {
+        std::string state = mktmp();
+        auto args = mountCmd(false, "", {"mount-fs", "cpuset", "/tmp", "", "cat", "/tmp/mems", "mkdir", "/tmp/bg",
+                                         "write-existing", "/tmp/bg/tasks", "123", "cat", "/tmp/bg/tasks",
+                                         "write-existing", "/tmp/nope/tasks", "1"});
+        if (!fast) {  // drop "-P <preload>": every call goes through the tracer
+            for (size_t k = 0; k + 1 < args.size(); k++)
+                if (args[k] == "-P") { args.erase(args.begin() + k, args.begin() + k + 2); break; }
+        }
+        auto r = runInState(args, state);
+        EXPECT_EQ(r.out, "0\n0\n\n0\n0\n123\n-1 No such file or directory\n");
+    }
+}
+
+TEST(unix_socket_names_are_guest_paths) {
+    // android_get_control_socket() rejects init's sockets unless getsockname() says /dev/socket/<name>.
+    std::string host = mktmp();
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "-b", "/dev/socket=" + host, "--", NEST_IDPROG_PATH, "sockname",
+                  "/dev/socket/lmkd"});
+    EXPECT_EQ(r.out, "/dev/socket/lmkd 1 /dev/socket/lmkd\n");
 }
 
 TEST(mount_requires_root_identity) {

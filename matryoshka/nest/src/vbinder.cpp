@@ -4,6 +4,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <fcntl.h>
@@ -20,6 +22,7 @@
 #include <unistd.h>
 #include <vector>
 
+#include "arch.h"
 #include "vbinder_proto.h"
 
 namespace nest::vbinder {
@@ -119,6 +122,7 @@ struct Proc {
     int maxThreads = 0, requested = 0, started = 0;
     bool dead = false;
     uint32_t hostUid = 0;
+    bool wakeSent = false;  // a poll wake message is outstanding on conn
 };
 
 }  // namespace
@@ -135,6 +139,36 @@ struct Broker::Impl {
     Node* mgr[3] = {nullptr, nullptr, nullptr};
     mutable std::mutex statsMu;
     BrokerStats st;
+    FILE* trace = nullptr;  // NEST_BINDER_LOG: one line per transaction (debugging the guest boot)
+
+    // Interface name at the start of a parcel (AIDL: UTF-16 token after the header words;
+    // HIDL: a C string), for the trace.
+    std::string ifaceOf(Proc* p, const binder_transaction_data& tr) {
+        uint8_t b[160] = {};
+        size_t n = std::min<uint64_t>(tr.data_size, sizeof(b));
+        iovec l{b, n}, r{reinterpret_cast<void*>(static_cast<uintptr_t>(untagAddr(tr.data.ptr.buffer))), n};
+        if (n < 4 || process_vm_readv(p->pid, &l, 1, &r, 1, 0) != static_cast<ssize_t>(n)) return "";
+        if (b[0] >= 'a' && b[0] <= 'z') {  // HIDL "android.hidl.manager@1.0::IServiceManager"
+            size_t k = 0;
+            while (k < n && b[k] >= 0x20 && b[k] < 0x7f) k++;
+            return std::string(reinterpret_cast<char*>(b), k);
+        }
+        for (size_t off = 0; off + 8 <= n; off += 4) {
+            int32_t len;
+            memcpy(&len, b + off, 4);
+            if (len < 3 || len > 80 || off + 4 + static_cast<size_t>(len) * 2 > n) continue;
+            std::string out;
+            bool ok = true;
+            for (int i = 0; i < len && ok; i++) {
+                uint16_t c;
+                memcpy(&c, b + off + 4 + i * 2, 2);
+                ok = c >= 0x20 && c < 0x7f;
+                out += static_cast<char>(c);
+            }
+            if (ok) return out;
+        }
+        return "";
+    }
 
     // ---------------------------------------------------------------- memory
 
@@ -215,6 +249,11 @@ struct Broker::Impl {
         r.nfixups = static_cast<uint32_t>(fixups.size());
         r.writeConsumed = t->writeConsumed;
         r.readBytes = read.size();
+        Proc* p = t->proc;
+        if (p->wakeSent && p->todo.empty() && t->todo.empty()) {
+            r.flags |= kRespDrainWake;
+            p->wakeSent = false;
+        }
         std::vector<uint8_t> msg(sizeof(r) + read.size() + fixups.size() * 8);
         memcpy(msg.data(), &r, sizeof(r));
         if (!read.empty()) memcpy(msg.data() + sizeof(r), read.data(), read.size());
@@ -225,6 +264,12 @@ struct Broker::Impl {
 
     // ---------------------------------------------------------------- refs & nodes
 
+    void pollWake(Proc* p) {
+        if (p->wakeSent || p->dead) return;
+        uint8_t b = 1;
+        if (send(p->conn, &b, 1, MSG_DONTWAIT | MSG_NOSIGNAL) == 1) p->wakeSent = true;
+    }
+
     void queueProc(Proc* p, Work w) {
         p->todo.push_back(w);
         for (auto& [tid, t] : p->threads) {
@@ -233,11 +278,13 @@ struct Broker::Impl {
                 return;
             }
         }
+        pollWake(p);  // nobody is blocked in a read: a polling thread must notice
     }
 
     void queueThread(Thread* t, Work w) {
         t->todo.push_back(w);
         if (t->waiting) deliver(t);
+        else pollWake(t->proc);
     }
 
     static bool canTakeProcWork(Thread* t) { return !t->stack && t->todo.empty(); }
@@ -321,13 +368,25 @@ struct Broker::Impl {
     // BR_OK or the BR_* error for the sender.
     uint32_t buildBuffer(Proc* from, Proc* to, const binder_transaction_data& tr, uint64_t sgSize,
                          std::vector<int>& inFds, size_t& fdCursor, Txn* t) {
-        if (!to->base) return BR_FAILED_REPLY;
+        auto why = [&](const char* reason) {
+            if (trace) {
+                fprintf(trace, "%d buffer to %d failed: %s (errno %d)\n", from->pid, to->pid, reason, errno);
+                fflush(trace);
+            }
+        };
+        if (!to->base) {
+            why("receiver has no mapping");
+            return BR_FAILED_REPLY;
+        }
         uint64_t dataSize = tr.data_size, offsSize = tr.offsets_size;
         if (offsSize % 8) return BR_FAILED_REPLY;
         uint64_t sgStart = align8(dataSize) + align8(offsSize);
         uint64_t total = sgStart + align8(sgSize);
         uint64_t off;
-        if (!allocBuf(to, total, off)) return BR_FAILED_REPLY;
+        if (!allocBuf(to, total, off)) {
+            why("receiver buffer full");
+            return BR_FAILED_REPLY;
+        }
         auto* b = new Buffer{to, off, total};
         to->buffers[off] = b;
         t->buf = b;
@@ -346,10 +405,13 @@ struct Broker::Impl {
         };
         auto readFrom = [&](uint64_t addr, void* out, uint64_t len) {
             if (!len) return true;
-            iovec l{out, len}, r{reinterpret_cast<void*>(addr), len};
+            iovec l{out, len}, r{reinterpret_cast<void*>(static_cast<uintptr_t>(untagAddr(addr))), len};
             return process_vm_readv(from->pid, &l, 1, &r, 1, 0) == static_cast<ssize_t>(len);
         };
-        if (!readFrom(tr.data.ptr.buffer, dst, dataSize)) return fail(BR_FAILED_REPLY);
+        if (!readFrom(tr.data.ptr.buffer, dst, dataSize)) {
+            why("reading sender data");
+            return fail(BR_FAILED_REPLY);
+        }
         uint64_t* offs = reinterpret_cast<uint64_t*>(dst + align8(dataSize));
         if (!readFrom(tr.data.ptr.offsets, offs, offsSize)) return fail(BR_FAILED_REPLY);
 
@@ -463,6 +525,11 @@ struct Broker::Impl {
     }
 
     void sendError(Thread* t, uint32_t err) {
+        if (trace) {
+            fprintf(trace, "%d error %s to thread %d\n", t->proc->pid, err == BR_DEAD_REPLY ? "DEAD_REPLY" : "FAILED_REPLY",
+                    t->tid);
+            fflush(trace);
+        }
         std::lock_guard<std::mutex> g(statsMu);
         if (err == BR_DEAD_REPLY) st.deadReplies++;
         else st.failedReplies++;
@@ -474,6 +541,12 @@ struct Broker::Impl {
         Proc* p = t->proc;
         if (reply) {
             Txn* in = t->stack;
+            if (trace && (!in || in->toThread != t)) {
+                fprintf(trace, "%d stray reply (stack %p, toThread %d, thread %d) flags=%x size=%llu\n", p->pid,
+                        static_cast<void*>(in), in && in->toThread ? in->toThread->tid : -1, t->tid, tr.flags,
+                        static_cast<unsigned long long>(tr.data_size));
+                fflush(trace);
+            }
             if (!in || in->toThread != t) {
                 sendError(t, BR_FAILED_REPLY);
                 return;
@@ -484,6 +557,11 @@ struct Broker::Impl {
             Txn* senderParent = in->fromParent;
             delete in;
             t->todo.push_back({Work::COMPLETE});
+            if (trace) {
+                fprintf(trace, "%d reply -> %d size=%llu\n", p->pid, targetProc ? targetProc->pid : -1,
+                        static_cast<unsigned long long>(tr.data_size));
+                fflush(trace);
+            }
             if (!target || targetProc->dead) return;  // nobody waits for it anymore
             auto* r = new Txn();
             r->isReply = true;
@@ -514,6 +592,13 @@ struct Broker::Impl {
         } else {
             auto it = p->refs.find(tr.target.handle);
             if (it != p->refs.end()) node = it->second->node;
+        }
+        if (trace) {
+            fprintf(trace, "%d ctx%d -> h%u %s code=%u%s size=%llu %s\n", p->pid, static_cast<int>(p->ctx),
+                    tr.target.handle, node ? std::to_string(node->owner->pid).c_str() : "(none)", tr.code,
+                    (tr.flags & TF_ONE_WAY) ? " oneway" : "", static_cast<unsigned long long>(tr.data_size),
+                    ifaceOf(p, tr).c_str());
+            fflush(trace);
         }
         if (!node) {
             sendError(t, BR_FAILED_REPLY);
@@ -1011,10 +1096,13 @@ struct Broker::Impl {
 Broker::Broker(std::string socketPath, std::function<uint32_t(int)> euidOf) : d_(new Impl) {
     d_->path = std::move(socketPath);
     d_->euidOf = std::move(euidOf);
+    if (const char* t = getenv("NEST_BINDER_LOG"))
+        if (*t) d_->trace = fopen(t, "a");
 }
 
 Broker::~Broker() {
     stop();
+    if (d_->trace) fclose(d_->trace);
     if (d_->listenFd >= 0) close(d_->listenFd);
     if (d_->epfd >= 0) close(d_->epfd);
     if (d_->wakeFd >= 0) close(d_->wakeFd);

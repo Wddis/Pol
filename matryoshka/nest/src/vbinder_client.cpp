@@ -192,6 +192,10 @@ int roundTrip(BinderFd* b, const IoctlReq& req, const void* payload, size_t payl
         return -EIO;
     }
     memcpy(&resp, in.data(), sizeof(resp));
+    if (resp.flags & kRespDrainWake) {  // no work left: the fd must stop polling readable
+        uint8_t w[8];
+        recv(b->procSock, w, sizeof(w), MSG_DONTWAIT);
+    }
     readOut.assign(in.begin() + sizeof(resp), in.begin() + sizeof(resp) + resp.readBytes);
     // Store the numbers of the fds we just received where the transaction expects them.
     const uint8_t* fix = in.data() + sizeof(resp) + resp.readBytes;
@@ -276,7 +280,12 @@ void* clientMmap(void* addr, size_t len, int prot, int flags, int fd, off_t off)
     req.size = len;
     req.clientAddr = reinterpret_cast<uint64_t>(m);
     int32_t ack = -1;
-    bool ok = sendFds(b->procSock, &req, sizeof(req), {mfd}) && recv(b->procSock, &ack, sizeof(ack), 0) == sizeof(ack) && ack == 0;
+    bool ok = sendFds(b->procSock, &req, sizeof(req), {mfd});
+    ssize_t got = 0;
+    while (ok && (got = recv(b->procSock, &ack, sizeof(ack), 0)) == 1) {
+        // a poll wake ahead of the ack (work queued before the mapping existed): skip it
+    }
+    ok = ok && got == sizeof(ack) && ack == 0;
     syscall(SYS_close, mfd);
     if (!ok) {
         syscall(SYS_munmap, m, len);

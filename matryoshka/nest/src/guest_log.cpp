@@ -35,7 +35,8 @@ std::string formatLogdPacket(const unsigned char* p, size_t n) {
     return head + msg + "\n";
 }
 
-bool GuestLog::start(const std::string& socketPath, const std::string& outFile) {
+bool GuestLog::start(const std::string& socketPath, const std::string& outFile, const std::string& forwardPath) {
+    forward_ = forwardPath;
     sockaddr_un sa{};
     sa.sun_family = AF_UNIX;
     if (socketPath.size() >= sizeof(sa.sun_path)) return false;
@@ -46,6 +47,7 @@ bool GuestLog::start(const std::string& socketPath, const std::string& outFile) 
     chmod(socketPath.c_str(), 0666);
     out_ = open(outFile.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
     if (out_ < 0 || pipe(wake_) != 0) return false;
+    if (!forward_.empty()) fwd_ = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     th_ = std::thread([this] {
         unsigned char buf[5 * 1024];
         for (;;) {
@@ -54,6 +56,14 @@ bool GuestLog::start(const std::string& socketPath, const std::string& outFile) 
             if (pf[1].revents) break;
             ssize_t n = recv(fd_, buf, sizeof(buf), 0);
             if (n <= 0) continue;
+            if (fwd_ >= 0) {  // to the guest's logd (dropped while it is not up, like liblog does)
+                sockaddr_un to{};
+                to.sun_family = AF_UNIX;
+                if (forward_.size() < sizeof(to.sun_path)) {
+                    memcpy(to.sun_path, forward_.c_str(), forward_.size() + 1);
+                    sendto(fwd_, buf, static_cast<size_t>(n), MSG_DONTWAIT, reinterpret_cast<sockaddr*>(&to), sizeof(to));
+                }
+            }
             std::string line = formatLogdPacket(buf, static_cast<size_t>(n));
             if (!line.empty()) {
                 ssize_t w = write(out_, line.data(), line.size());
@@ -70,9 +80,9 @@ void GuestLog::stop() {
         (void)w;
     }
     if (th_.joinable()) th_.join();
-    for (int f : {fd_, out_, wake_[0], wake_[1]})
+    for (int f : {fd_, out_, fwd_, wake_[0], wake_[1]})
         if (f >= 0) close(f);
-    fd_ = out_ = wake_[0] = wake_[1] = -1;
+    fd_ = out_ = fwd_ = wake_[0] = wake_[1] = -1;
 }
 
 }  // namespace nest

@@ -1,7 +1,7 @@
 // Test helper speaking the raw binder protocol (the same ioctls and commands as Android's
 // libbinder), to exercise the vbinder broker through libnest_preload.so.
 //
-//   binderprog manager   context manager: 1=ADD(obj) 2=GET 3=ECHO 4=QUIT
+//   binderprog manager   context manager: 1=ADD(obj) 2=GET 3=ECHO 4=QUIT (poll-manager: via poll())
 //   binderprog server    registers node (0x1000, 0x2000): 10=pong 11=fd 13=nested callback 99=exit
 //   binderprog client    finds the service and runs the scenario, printing one line per step
 //
@@ -15,6 +15,7 @@
 #include <functional>
 #include <linux/android/binder.h>
 #include <string>
+#include <poll.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -238,10 +239,24 @@ Reply call(uint32_t handle, uint32_t code, const Parcel& p, uint32_t flags = 0) 
     return rep;
 }
 
+bool g_poll = false;  // serve like Android 11's servicemanager: epoll/poll on the binder fd
+
 void serveForever() {
     Out o;
     o.u32(BC_ENTER_LOOPER);
     std::vector<uint8_t> r;
+    if (g_poll) {
+        writeOnly(o);  // IPCThreadState::setupPolling()
+        for (;;) {
+            pollfd pf{g_fd, POLLIN, 0};
+            if (poll(&pf, 1, 8000) <= 0) {
+                printf("poll-timeout\n");
+                exit(5);
+            }
+            if (!talk(Out(), r)) return;  // handlePolledCommands(): work must be there
+            dispatch(r, nullptr, nullptr);
+        }
+    }
     talk(o, r);
     for (;;) {
         dispatch(r, nullptr, nullptr);
@@ -300,6 +315,10 @@ int main(int argc, char** argv) {
     if (argc < 2 || !openBinder()) return 2;
     std::string role = argv[1];
 
+    if (role == "poll-manager") {
+        g_poll = true;
+        role = "manager";
+    }
     if (role == "manager") {
         if (ioctl(g_fd, BINDER_SET_CONTEXT_MGR, 0) != 0) {
             perror("SET_CONTEXT_MGR");

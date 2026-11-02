@@ -55,6 +55,13 @@ struct TracerConfig {
     std::string preloadHost;
     std::string preload32Host;  // the same library built for 32-bit processes
     bool androidPreload = false;
+    // The root guest process sees itself as pid 1 (Android init insists on it): getpid/gettid/
+    // getppid answer 1 for it, and kill/tkill/tgkill and /proc/1 reach it. kill(-1) is confined
+    // to guest processes.
+    bool virtualInitPid = false;
+    // connect() to these host socket paths goes to another host path (bind() is unchanged):
+    // lets the log tee sit in front of the guest's logd.
+    std::map<std::string, std::string> connectRedirect;
 };
 
 struct TracerStats {
@@ -87,6 +94,11 @@ public:
     struct Creds {
         uint32_t ruid = 0, euid = 0, suid = 0, fsuid = 0;
         uint32_t rgid = 0, egid = 0, sgid = 0, fsgid = 0;
+        // Capability sets (bit n = capability n) and securebits, with the kernel's transitions on
+        // setuid and exec. The host kernel never sees them: privileged calls are emulated anyway.
+        uint64_t capEff = 0, capPrm = 0, capInh = 0, capBnd = 0, capAmb = 0;
+        uint32_t securebits = 0;
+        bool hasCap(int cap) const { return (capEff >> cap) & 1; }
     };
     // Current virtual identity of a guest process (by any of its thread ids).
     Creds credsOf(pid_t tid) const;
@@ -107,13 +119,19 @@ private:
     bool guestPathArg(pid_t tid, uint64_t addr, bool follow, std::string& guest, std::string* host = nullptr);
     void publishVfs();
     void handleIds(pid_t tid, struct Regs& r, long nr);
+    void handleCaps(pid_t tid, struct Regs& r, long nr);
+    void applyExecCaps(pid_t tgid);
+    bool handlePid(pid_t tid, struct Regs& r, long nr, long& result);
+    pid_t parentOf(pid_t tid) const;
     void onNewTask(pid_t parent, pid_t tid);
     pid_t tgidOf(pid_t tid) const;
     void handleSyscallExit(pid_t tid);
+    void fixSockName(pid_t tid, uint64_t addr, uint64_t lenAddr);
+    bool clampRlimit(pid_t tid, struct Regs& r, long nr, uint64_t& scratch);
     bool rewritePath(pid_t tid, struct Regs& r, int dirfdArg, int pathArg, bool followLast,
                      uint64_t& scratch, std::string* guestOut = nullptr);
     bool rewriteExec(pid_t tid, struct Regs& r, uint64_t& scratch);
-    bool rewriteSockaddr(pid_t tid, struct Regs& r, uint64_t& scratch);
+    bool rewriteSockaddr(pid_t tid, struct Regs& r, uint64_t& scratch, bool isConnect);
     std::string guestCwdOf(pid_t tid);
     std::string guestFdPath(pid_t tid, int fd);
     uint64_t pushBytes(pid_t tid, uint64_t& scratch, const void* data, size_t len);
@@ -129,6 +147,8 @@ private:
     std::string preloadEntryFor(const std::string& guestProgram, bool is32);
     std::string guestExeOf(pid_t tid);
     mutable std::mutex credsMu_;
+    pid_t initTgid_ = -1;
+    std::string lastHost_;  // host path of the latest rewritePath  // host pid of the root guest process (virtual pid 1)
     std::unique_ptr<VfsShareWriter> share_;
     int tmpfsCount_ = 0;
     bool shutdown_ = false;      // creds_/tgid_ are also read by the binder broker thread

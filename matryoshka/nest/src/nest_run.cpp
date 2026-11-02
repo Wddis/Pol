@@ -4,7 +4,7 @@
 // place apps may execute code from regardless of targetSdk). On Linux it is used by the tests.
 //
 //   nest-run --probe DIR                       run the capability probe
-//   nest-run [-b GUEST=HOST[:ro]]... [-w GUEST_CWD] [-0|-n] [-v]... [-s] [-E K=V]... [-c] -- PROGRAM [ARGS...]
+//   nest-run [-b GUEST=HOST[:ro]]... [-w GUEST_CWD] [-0|-n] [--pid1] [-v]... [-s] [-E K=V]... [-c] -- PROGRAM [ARGS...]
 //
 //   -b   bind a host directory/file at a guest path ("-b /=rootfs" sets the guest root)
 //   -w   guest working directory (default "/")
@@ -38,7 +38,7 @@
 extern char** environ;
 
 static void usage() {
-    fprintf(stderr, "usage: nest-run [-b GUEST=HOST[:ro]]... [-w CWD] [-0|-n] [-v] [-s] [-E K=V]... [-c] -- PROG [ARGS]\n");
+    fprintf(stderr, "usage: nest-run [-b GUEST=HOST[:ro]]... [-w CWD] [-0|-n] [--pid1] [-v] [-s] [-E K=V]... [-c] -- PROG [ARGS]\n");
 }
 
 int main(int argc, char** argv) {
@@ -84,6 +84,8 @@ int main(int argc, char** argv) {
 #if defined(__x86_64__)
             cfg.simulateTrap32 = {21, 52, 217, 61, 88, 87};  // i386: mount umount2 pivot_root chroot reboot swapon
 #endif
+        } else if (a == "--pid1") {
+            cfg.virtualInitPid = true;
         } else if (a == "-n") {
             cfg.fakeRoot = false;
         } else if (a == "-v") {
@@ -144,10 +146,14 @@ int main(int argc, char** argv) {
         if (st && *st) cfg.stateDir = st;
     }
     if (!binderSock.empty()) cfg.injectEnv.push_back("NEST_BINDER_SOCK=" + binderSock);
-    // Early guest logcat (until the guest's logd takes over /dev/socket/logdw).
+    // Guest logcat tee: liblog's connect to /dev/socket/logdw reaches the tee, which keeps a copy
+    // in STATE/logcat.txt and forwards to the guest logd's socket (created by guest init's bind).
     nest::GuestLog guestLog;
-    if (!androidState.empty())
-        guestLog.start(androidState + "/dev/socket/logdw", androidState + "/logcat.txt");
+    if (!androidState.empty()) {
+        std::string logdw = androidState + "/dev/socket/logdw", tee = androidState + "/logtee";
+        cfg.connectRedirect[logdw] = tee;
+        guestLog.start(tee, androidState + "/logcat.txt", logdw);
+    }
     timespec t0{}, t1{};
     clock_gettime(CLOCK_MONOTONIC, &t0);
     nest::Tracer tracer(std::move(cfg));

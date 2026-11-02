@@ -63,6 +63,10 @@ enum class Kind {
     Ids,        // uid/gid get/set family, answered from the virtual credentials
     Emulate,    // privileged calls a guest init needs (mount, pivot_root, ...)
     FakeChown,  // translate then skip, return 0
+    Caps,       // capget/capset/capability prctls, answered from the virtual capability sets
+    Pid,        // getpid & co. and signal targets, for the virtual pid 1
+    SockName,   // getsockname/getpeername/accept: AF_UNIX host paths back to guest paths
+    Rlimit,     // setrlimit/prlimit64 raising limits: allowed for a privileged guest, clamped to the host's
 };
 
 constexpr int NONE = -1;
@@ -79,7 +83,13 @@ struct Spec {
     long followMask = 0;
     bool followDefault = true;
     long logical = -1;  // native number with the same meaning (handlers dispatch on it)
+    std::vector<uint32_t> arg0Only;  // non-empty: trace only when arg0 is one of these (prctl)
+    int nonZeroArg = NONE;           // >= 0: trace only when this argument is non-zero (prlimit64's new limit)
 };
+
+// prctl options that read or change capability state; every other prctl runs untraced.
+const std::vector<uint32_t> kCapPrctls = {PR_GET_KEEPCAPS, PR_SET_KEEPCAPS, PR_CAPBSET_READ, PR_CAPBSET_DROP,
+                                          PR_GET_SECUREBITS, PR_SET_SECUREBITS, PR_CAP_AMBIENT};
 
 std::vector<Spec> buildSpecs() {
     std::vector<Spec> s;
@@ -144,6 +154,10 @@ std::vector<Spec> buildSpecs() {
     s.push_back({SYS_getcwd, Kind::GetCwd});
     s.push_back({SYS_connect, Kind::Sock});
     s.push_back({SYS_bind, Kind::Sock});
+    for (long nr : {SYS_getsockname, SYS_getpeername, SYS_accept, SYS_accept4}) s.push_back({nr, Kind::SockName});
+    s.push_back({SYS_setrlimit, Kind::Rlimit});
+    s.push_back({SYS_prlimit64, Kind::Rlimit});
+    s.back().nonZeroArg = 2;
     {
         Spec x{SYS_fchownat, Kind::FakeChown, 0, 1};
         x.flagArg = 4;
@@ -193,6 +207,12 @@ std::vector<Spec> buildSpecs() {
                     SYS_setuid, SYS_setgid, SYS_setreuid, SYS_setregid, SYS_setresuid, SYS_setresgid,
                     SYS_setfsuid, SYS_setfsgid, SYS_setgroups})
         s.push_back({nr, Kind::Ids});
+    for (long nr : {SYS_getpid, SYS_gettid, SYS_getppid, SYS_kill, SYS_tkill, SYS_tgkill})
+        s.push_back({nr, Kind::Pid});
+    s.push_back({SYS_capget, Kind::Caps});
+    s.push_back({SYS_capset, Kind::Caps});
+    s.push_back({SYS_prctl, Kind::Caps});
+    s.back().arg0Only = kCapPrctls;
     return s;
 }
 
@@ -271,6 +291,13 @@ std::vector<Spec> buildCompatSpecs() {
     add(C::getcwd, SYS_getcwd, Kind::GetCwd);
     add(C::connect, SYS_connect, Kind::Sock);
     add(C::bind, SYS_bind, Kind::Sock);
+    add(C::getsockname, SYS_getsockname, Kind::SockName);
+    add(C::getpeername, SYS_getpeername, Kind::SockName);
+    add(C::accept, SYS_accept, Kind::SockName);
+    add(C::accept4, SYS_accept4, Kind::SockName);
+    add(C::setrlimit, SYS_setrlimit, Kind::Rlimit);
+    add(C::prlimit64, SYS_prlimit64, Kind::Rlimit);
+    s.back().nonZeroArg = 2;
     add(C::fchownat, SYS_fchownat, Kind::FakeChown, 0, 1);
     s.back().flagArg = 4;
     s.back().noFollowMask = AT_SYMLINK_NOFOLLOW;
@@ -329,6 +356,16 @@ std::vector<Spec> buildCompatSpecs() {
     add(C::setfsuid32, SYS_setfsuid, Kind::Ids);
     add(C::setfsgid32, SYS_setfsgid, Kind::Ids);
     add(C::setgroups32, SYS_setgroups, Kind::Ids);
+    add(C::getpid, SYS_getpid, Kind::Pid);
+    add(C::gettid, SYS_gettid, Kind::Pid);
+    add(C::getppid, SYS_getppid, Kind::Pid);
+    add(C::kill, SYS_kill, Kind::Pid);
+    add(C::tkill, SYS_tkill, Kind::Pid);
+    add(C::tgkill, SYS_tgkill, Kind::Pid);
+    add(C::capget, SYS_capget, Kind::Caps);
+    add(C::capset, SYS_capset, Kind::Caps);
+    add(C::prctl, SYS_prctl, Kind::Caps);
+    s.back().arg0Only = kCapPrctls;
     return s;
 }
 
@@ -374,22 +411,45 @@ bool installTraceFilter() {
         f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
         f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)));
         for (const auto& s : sp) {
-            f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, static_cast<uint32_t>(s.nr), 0, 1));
+            if (s.nonZeroArg >= 0) {
+                uint32_t lo = offsetof(seccomp_data, args) + 8 * s.nonZeroArg;
+                f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, static_cast<uint32_t>(s.nr), 0, 6));
+                f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, lo));
+                f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, 3));
+                f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, lo + 4));
+                f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, 0, 0, 1));
+                f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+                f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRACE));
+                continue;
+            }
+            if (s.arg0Only.empty()) {
+                f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, static_cast<uint32_t>(s.nr), 0, 1));
+                f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRACE));
+                continue;
+            }
+            // nr matches: trace only for the listed arg0 values, allow otherwise.
+            size_t k = s.arg0Only.size();
+            f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, static_cast<uint32_t>(s.nr), 0,
+                                 static_cast<uint8_t>(k + 3)));
+            f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[0])));
+            for (size_t i = 0; i < k; i++)
+                f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, s.arg0Only[i], static_cast<uint8_t>(k - i), 0));
+            f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
             f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRACE));
         }
         f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
     };
     f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, arch)));
-    size_t archJump = f.size();
-    f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, kAuditArch, 0, 0));  // patched below
+    f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, kAuditArch, 0, 1));
+    size_t toNative = f.size();
+    f.push_back(BPF_STMT(BPF_JMP | BPF_JA, 0));  // 32-bit offset, patched below
     // compat (32-bit) or unknown arch
     f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, kAuditArchCompat, 1, 0));
     f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
     block(compatSpecs(), C::execve, true);
     size_t nativeStart = f.size();
     block(specs(), SYS_execve, false);
-    f[archJump].jt = static_cast<uint8_t>(nativeStart - archJump - 1);
-    if (nativeStart - archJump - 1 > 255) return false;  // BPF jump range
+    f[toNative].k = static_cast<uint32_t>(nativeStart - toNative - 1);
     sock_fprog prog{static_cast<unsigned short>(f.size()), f.data()};
     if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) != 0) return false;
     return prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) == 0;
@@ -480,6 +540,9 @@ bool Tracer::rewritePath(pid_t tid, Regs& r, int dirfdArg, int pathArg, bool fol
     std::string full = Vfs::join(base.empty() ? "/" : base, path);
     if (full.compare(0, 6, "/proc/") == 0) {
         full = fixProcSelf(tid, full);
+        if (cfg_.virtualInitPid && initTgid_ > 0 && full.compare(0, 7, "/proc/1") == 0 &&
+            (full.size() == 7 || full[7] == '/'))
+            full = "/proc/" + std::to_string(initTgid_) + full.substr(7);
         if (!cfg_.procAttrDir.empty()) {
             // /proc/<pid>[/task/<tid>]/attr/<name>  ->  <procAttrDir>/<name>
             size_t a = full.find("/attr/");
@@ -498,6 +561,7 @@ bool Tracer::rewritePath(pid_t tid, Regs& r, int dirfdArg, int pathArg, bool fol
     std::string host, guest;
     if (!cfg_.vfs.resolve(full, "/", followLast, host, &guest)) return false;
     if (guestOut) *guestOut = guest;
+    lastHost_ = host;
     if (host == path) return true;  // identity mapping, nothing to rewrite
     uint64_t addr = pushBytes(tid, scratch, host.c_str(), host.size() + 1);
     if (!addr) return false;
@@ -507,7 +571,7 @@ bool Tracer::rewritePath(pid_t tid, Regs& r, int dirfdArg, int pathArg, bool fol
     return true;
 }
 
-bool Tracer::rewriteSockaddr(pid_t tid, Regs& r, uint64_t& scratch) {
+bool Tracer::rewriteSockaddr(pid_t tid, Regs& r, uint64_t& scratch, bool isConnect) {
     socklen_t len = static_cast<socklen_t>(r.arg[2]);
     if (r.arg[1] == 0 || len <= offsetof(sockaddr_un, sun_path) || len > sizeof(sockaddr_un)) return false;
     sockaddr_un sa{};
@@ -516,7 +580,12 @@ bool Tracer::rewriteSockaddr(pid_t tid, Regs& r, uint64_t& scratch) {
     std::string p(sa.sun_path, strnlen(sa.sun_path, len - offsetof(sockaddr_un, sun_path)));
     std::string base = p[0] == '/' ? "/" : guestCwdOf(tid);
     std::string host;
-    if (!cfg_.vfs.resolve(p, base, true, host) || host == p) return false;
+    if (!cfg_.vfs.resolve(p, base, true, host)) return false;
+    if (isConnect) {
+        auto it = cfg_.connectRedirect.find(host);
+        if (it != cfg_.connectRedirect.end()) host = it->second;
+    }
+    if (host == p) return false;
     if (host.size() >= sizeof(sa.sun_path)) {
         logf(1, "[%d] socket path too long for host: %s", tid, host.c_str());
         return false;
@@ -652,7 +721,7 @@ std::string Tracer::preloadEntryFor(const std::string& prog, bool is32) {
             if (out >= 0) close(out);
             rename((copy + ".tmp").c_str(), copy.c_str());
         }
-        cfg_.vfs.bind(guest, copy, true);
+        cfg_.vfs.bind(guest, copy, true, true);
         publishVfs();
     }
     return "LD_PRELOAD=" + guest;
@@ -858,6 +927,51 @@ pid_t Tracer::tgidOf(pid_t tid) const {
     return it == tgid_.end() ? tid : it->second;
 }
 
+namespace {
+
+constexpr uint32_t kSecNoRoot = 1u << 0, kSecNoSetuidFixup = 1u << 2, kSecKeepCaps = 1u << 4,
+                   kSecNoAmbientRaise = 1u << 6;
+constexpr uint32_t kSecLockMask = (1u << 1) | (1u << 3) | (1u << 5) | (1u << 7);
+constexpr uint32_t kSecAll = 0xffu;
+// CAP_CHOWN, DAC_OVERRIDE, DAC_READ_SEARCH, FOWNER, FSETID, LINUX_IMMUTABLE, MAC_OVERRIDE
+constexpr uint64_t kFsCaps = 0x1full | (1ull << 9) | (1ull << 32);
+constexpr int kCapSetuid = 7, kCapSetgid = 6, kCapSetpcap = 8, kCapChown = 0;
+
+// Capabilities the kernel knows (the guest reads the same /proc/sys/kernel/cap_last_cap).
+int lastCap() {
+    static const int last = [] {
+        int v = 40;
+        if (FILE* f = fopen("/proc/sys/kernel/cap_last_cap", "r")) {
+            if (fscanf(f, "%d", &v) != 1) v = 40;
+            fclose(f);
+        }
+        return v < 0 || v > 63 ? 40 : v;
+    }();
+    return last;
+}
+
+// Kernel cap_emulate_setxuid / cap_task_fix_setuid: dropping root drops capabilities.
+void fixupSetuid(Tracer::Creds& c, const Tracer::Creds& old, bool fsOnly) {
+    if (c.securebits & kSecNoSetuidFixup) return;
+    if (fsOnly) {
+        if (old.fsuid == 0 && c.fsuid != 0) c.capEff &= ~kFsCaps;
+        if (old.fsuid != 0 && c.fsuid == 0) c.capEff |= c.capPrm & kFsCaps;
+        return;
+    }
+    bool hadRoot = old.ruid == 0 || old.euid == 0 || old.suid == 0;
+    bool noRoot = c.ruid != 0 && c.euid != 0 && c.suid != 0;
+    if (hadRoot && noRoot) {
+        if (!(c.securebits & kSecKeepCaps)) c.capPrm = c.capEff = 0;
+        c.capAmb = 0;
+    }
+    if (old.euid == 0 && c.euid != 0) c.capEff = 0;
+    if (old.euid != 0 && c.euid == 0) c.capEff = c.capPrm;
+}
+
+}  // namespace
+
+uint64_t allCaps() { return lastCap() >= 63 ? ~0ull : (1ull << (lastCap() + 1)) - 1; }
+
 Tracer::Creds Tracer::credsOf(pid_t tid) const {
     std::lock_guard<std::mutex> g(credsMu_);
     auto it = creds_.find(tgidOf(tid));
@@ -865,6 +979,8 @@ Tracer::Creds Tracer::credsOf(pid_t tid) const {
     Creds c;
     c.ruid = c.euid = c.suid = c.fsuid = cfg_.initialUid;
     c.rgid = c.egid = c.sgid = c.fsgid = cfg_.initialGid;
+    c.capBnd = allCaps();
+    if (cfg_.initialUid == 0) c.capEff = c.capPrm = c.capBnd;  // root starts fully privileged
     return c;
 }
 
@@ -895,9 +1011,10 @@ void Tracer::handleIds(pid_t tid, Regs& r, long nr) {
     const uint32_t keep = 0xffffffffu;  // "-1": leave unchanged
     auto a = [&](int i) { return static_cast<uint32_t>(r.arg[i]); };
     long ret = 0;
-    bool privileged = c.euid == 0;
-    auto allowedU = [&](uint32_t v) { return privileged || v == c.ruid || v == c.euid || v == c.suid; };
-    auto allowedG = [&](uint32_t v) { return privileged || v == c.rgid || v == c.egid || v == c.sgid; };
+    const Creds old = c;
+    const bool privU = c.hasCap(kCapSetuid), privG = c.hasCap(kCapSetgid);
+    auto allowedU = [&](uint32_t v) { return privU || v == c.ruid || v == c.euid || v == c.suid; };
+    auto allowedG = [&](uint32_t v) { return privG || v == c.rgid || v == c.egid || v == c.sgid; };
 
     if (nr == SYS_getuid) ret = c.ruid;
     else if (nr == SYS_geteuid) ret = c.euid;
@@ -910,12 +1027,12 @@ void Tracer::handleIds(pid_t tid, Regs& r, long nr) {
             if (r.arg[i] && !writeMem(tid, r.arg[i], &v[i], sizeof(uint32_t))) ret = -EFAULT;
     } else if (nr == SYS_setuid) {
         uint32_t u = a(0);
-        if (privileged) c.ruid = c.euid = c.suid = c.fsuid = u;
+        if (privU) c.ruid = c.euid = c.suid = c.fsuid = u;
         else if (u == c.ruid || u == c.suid) c.euid = c.fsuid = u;
         else ret = -EPERM;
     } else if (nr == SYS_setgid) {
         uint32_t g = a(0);
-        if (privileged) c.rgid = c.egid = c.sgid = c.fsgid = g;
+        if (privG) c.rgid = c.egid = c.sgid = c.fsgid = g;
         else if (g == c.rgid || g == c.sgid) c.egid = c.fsgid = g;
         else ret = -EPERM;
     } else if (nr == SYS_setresuid) {
@@ -938,7 +1055,7 @@ void Tracer::handleIds(pid_t tid, Regs& r, long nr) {
         }
     } else if (nr == SYS_setreuid) {
         uint32_t nr_ = a(0), ne = a(1);
-        bool ok = (nr_ == keep || privileged || nr_ == c.ruid || nr_ == c.euid) && (ne == keep || allowedU(ne));
+        bool ok = (nr_ == keep || privU || nr_ == c.ruid || nr_ == c.euid) && (ne == keep || allowedU(ne));
         if (!ok) ret = -EPERM;
         else {
             uint32_t oldR = c.ruid;
@@ -949,7 +1066,7 @@ void Tracer::handleIds(pid_t tid, Regs& r, long nr) {
         }
     } else if (nr == SYS_setregid) {
         uint32_t nr_ = a(0), ne = a(1);
-        bool ok = (nr_ == keep || privileged || nr_ == c.rgid || nr_ == c.egid) && (ne == keep || allowedG(ne));
+        bool ok = (nr_ == keep || privG || nr_ == c.rgid || nr_ == c.egid) && (ne == keep || allowedG(ne));
         if (!ok) ret = -EPERM;
         else {
             uint32_t oldR = c.rgid;
@@ -965,7 +1082,11 @@ void Tracer::handleIds(pid_t tid, Regs& r, long nr) {
         ret = c.fsgid;
         if (allowedG(a(0)) || a(0) == c.fsgid) c.fsgid = a(0);
     } else if (nr == SYS_setgroups) {
-        ret = privileged ? 0 : -EPERM;
+        ret = privG ? 0 : -EPERM;
+    }
+    if (ret >= 0 || nr == SYS_setfsuid) {
+        if (nr == SYS_setuid || nr == SYS_setresuid || nr == SYS_setreuid) fixupSetuid(c, old, false);
+        else if (nr == SYS_setfsuid) fixupSetuid(c, old, true);
     }
     if (ret == -EPERM) stats_.denied++;
     {
@@ -974,6 +1095,231 @@ void Tracer::handleIds(pid_t tid, Regs& r, long nr) {
     }
     setSyscall(tid, r, -1);
     setReturn(tid, r, ret);
+}
+
+// capget/capset and the capability prctls, with the kernel's rules (security/commoncap.c).
+void Tracer::handleCaps(pid_t tid, Regs& r, long nr) {
+    stats_.faked++;
+    Creds c = credsOf(tid);
+    long ret = 0;
+    auto finish = [&](long v) {
+        if (v == -EPERM) stats_.denied++;
+        setSyscall(tid, r, -1);
+        setReturn(tid, r, v);
+    };
+    auto validCap = [](uint64_t cap) { return cap <= static_cast<uint64_t>(lastCap()); };
+    auto bit = [](uint64_t cap) { return 1ull << cap; };
+
+    if (nr == SYS_capget || nr == SYS_capset) {
+        constexpr uint32_t kV1 = 0x19980330, kV2 = 0x20071026, kV3 = 0x20080522;
+        uint32_t hdr[2];
+        if (!r.arg[0] || !readMem(tid, r.arg[0], hdr, sizeof(hdr))) return finish(-EFAULT);
+        int words = hdr[0] == kV1 ? 1 : (hdr[0] == kV2 || hdr[0] == kV3) ? 2 : 0;
+        if (!words) {
+            uint32_t v = kV3;
+            writeMem(tid, r.arg[0], &v, sizeof(v));
+            return finish(r.arg[1] ? -EINVAL : 0);
+        }
+        int pid = static_cast<int>(hdr[1]);
+        if (pid < 0) return finish(-EINVAL);
+        uint32_t data[6] = {};
+        if (nr == SYS_capget) {
+            if (!r.arg[1]) return finish(0);
+            Creds t = c;
+            if (pid != 0 && pid != tgidOf(tid)) {
+                std::lock_guard<std::mutex> g(credsMu_);
+                auto it = creds_.find(tgidOf(pid));
+                if (it == creds_.end()) return finish(-ESRCH);
+                t = it->second;
+            }
+            for (int w = 0; w < words; w++) {
+                data[w * 3 + 0] = static_cast<uint32_t>(t.capEff >> (32 * w));
+                data[w * 3 + 1] = static_cast<uint32_t>(t.capPrm >> (32 * w));
+                data[w * 3 + 2] = static_cast<uint32_t>(t.capInh >> (32 * w));
+            }
+            return finish(writeMem(tid, r.arg[1], data, words * 12) ? 0 : -EFAULT);
+        }
+        if (pid != 0 && pid != tgidOf(tid) && pid != tid) return finish(-EPERM);
+        if (!r.arg[1] || !readMem(tid, r.arg[1], data, words * 12)) return finish(-EFAULT);
+        uint64_t eff = 0, prm = 0, inh = 0;
+        for (int w = 0; w < words; w++) {
+            eff |= static_cast<uint64_t>(data[w * 3 + 0]) << (32 * w);
+            prm |= static_cast<uint64_t>(data[w * 3 + 1]) << (32 * w);
+            inh |= static_cast<uint64_t>(data[w * 3 + 2]) << (32 * w);
+        }
+        if (words == 1) {  // v1 leaves the upper capabilities as they are
+            eff |= c.capEff & ~0xffffffffull;
+            prm |= c.capPrm & ~0xffffffffull;
+            inh |= c.capInh & ~0xffffffffull;
+        }
+        eff &= allCaps(); prm &= allCaps(); inh &= allCaps();
+        uint64_t inhLimit = c.hasCap(kCapSetpcap) ? (c.capInh | c.capBnd) : (c.capInh | c.capPrm);
+        if ((inh & ~inhLimit) || (inh & ~(c.capInh | c.capBnd)) || (prm & ~c.capPrm) || (eff & ~prm))
+            return finish(-EPERM);
+        c.capEff = eff; c.capPrm = prm; c.capInh = inh;
+        c.capAmb &= prm & inh;
+    } else {  // prctl
+        uint64_t a1 = r.compat ? static_cast<uint32_t>(r.arg[1]) : r.arg[1];
+        uint64_t a2 = r.compat ? static_cast<uint32_t>(r.arg[2]) : r.arg[2];
+        uint32_t opt = static_cast<uint32_t>(r.arg[0]);
+        switch (opt) {
+            case PR_GET_KEEPCAPS: ret = (c.securebits & kSecKeepCaps) ? 1 : 0; break;
+            case PR_SET_KEEPCAPS:
+                if (a1 > 1) ret = -EINVAL;
+                else if (c.securebits & (kSecKeepCaps << 1)) ret = -EPERM;
+                else c.securebits = a1 ? (c.securebits | kSecKeepCaps) : (c.securebits & ~kSecKeepCaps);
+                break;
+            case PR_CAPBSET_READ: ret = validCap(a1) ? ((c.capBnd >> a1) & 1) : -EINVAL; break;
+            case PR_CAPBSET_DROP:
+                if (!c.hasCap(kCapSetpcap)) ret = -EPERM;
+                else if (!validCap(a1)) ret = -EINVAL;
+                else c.capBnd &= ~bit(a1);
+                break;
+            case PR_GET_SECUREBITS: ret = c.securebits; break;
+            case PR_SET_SECUREBITS: {
+                uint32_t v = static_cast<uint32_t>(a1);
+                uint32_t lockedBits = (c.securebits & kSecLockMask) >> 1;
+                if (!c.hasCap(kCapSetpcap) || (v & ~kSecAll) || (lockedBits & (v ^ c.securebits)) ||
+                    (c.securebits & kSecLockMask & ~v))  // a set lock cannot be cleared
+                    ret = -EPERM;
+                else c.securebits = v;
+                break;
+            }
+            case PR_CAP_AMBIENT:
+                if (a1 == PR_CAP_AMBIENT_CLEAR_ALL) c.capAmb = 0;
+                else if (!validCap(a2)) ret = -EINVAL;
+                else if (a1 == PR_CAP_AMBIENT_IS_SET) ret = (c.capAmb >> a2) & 1;
+                else if (a1 == PR_CAP_AMBIENT_LOWER) c.capAmb &= ~bit(a2);
+                else if (a1 == PR_CAP_AMBIENT_RAISE) {
+                    if (!(c.capPrm & c.capInh & bit(a2)) || (c.securebits & kSecNoAmbientRaise)) ret = -EPERM;
+                    else c.capAmb |= bit(a2);
+                } else ret = -EINVAL;
+                break;
+            default: ret = -EINVAL;
+        }
+    }
+    {
+        std::lock_guard<std::mutex> g(credsMu_);
+        creds_[tgidOf(tid)] = c;
+    }
+    finish(ret);
+}
+
+// Kernel cap_bprm_creds_from_file for a program without file capabilities or set-id bits.
+void Tracer::applyExecCaps(pid_t tgid) {
+    std::lock_guard<std::mutex> g(credsMu_);
+    auto it = creds_.find(tgid);
+    if (it == creds_.end()) return;
+    Creds& c = it->second;
+    bool root = !(c.securebits & kSecNoRoot) && (c.euid == 0 || c.ruid == 0);
+    c.capAmb &= c.capPrm & c.capInh;
+    c.capPrm = root ? ((c.capBnd | c.capInh) & allCaps()) : 0;
+    c.capPrm |= c.capAmb;
+    c.capEff = (root && c.euid == 0) ? c.capPrm : c.capAmb;
+    c.securebits &= ~kSecKeepCaps;
+}
+
+pid_t Tracer::parentOf(pid_t tid) const {
+    char status[64];
+    snprintf(status, sizeof(status), "/proc/%d/status", tid);
+    pid_t ppid = -1;
+    if (FILE* f = fopen(status, "r")) {
+        char line[128];
+        while (fgets(line, sizeof(line), f))
+            if (sscanf(line, "PPid: %d", &ppid) == 1) break;
+        fclose(f);
+    }
+    return ppid;
+}
+
+// Virtual pid 1. Returns true when the call is answered here (result), false to let it run
+// (possibly with translated arguments).
+bool Tracer::handlePid(pid_t tid, Regs& r, long nr, long& result) {
+    const pid_t init = initTgid_;
+    // Signal targets: virtual pid 1 is the guest init's host pid.
+    auto mapArgs = [&](std::initializer_list<int> idx) {
+        bool changed = false;
+        for (int i : idx)
+            if (static_cast<int>(r.arg[i]) == 1) {
+                r.arg[i] = static_cast<uint64_t>(init);
+                changed = true;
+            }
+        if (changed) setArgs(tid, r);
+        return false;
+    };
+    switch (nr) {
+        case SYS_getpid:
+            if (tgidOf(tid) != init) return false;
+            result = 1;
+            return true;
+        case SYS_gettid:
+            if (tid != init) return false;
+            result = 1;
+            return true;
+        case SYS_getppid:
+            if (parentOf(tgidOf(tid)) != init) return false;
+            result = 1;
+            return true;
+        case SYS_kill:
+            if (static_cast<int>(r.arg[0]) == -1) {
+                // "Every process" means every guest process, never the host app around the VM.
+                std::vector<pid_t> targets;
+                {
+                    std::lock_guard<std::mutex> g(credsMu_);
+                    for (const auto& c : creds_)
+                        if (c.first != tgidOf(tid) && c.first != init) targets.push_back(c.first);
+                }
+                int sent = 0;
+                for (pid_t t : targets) sent += ::kill(t, static_cast<int>(r.arg[1])) == 0;
+                result = sent || targets.empty() ? 0 : -EPERM;
+                if (targets.empty()) result = -ESRCH;
+                stats_.emulated++;
+                return true;
+            }
+            return mapArgs({0});
+        case SYS_tkill: return mapArgs({0});
+        case SYS_tgkill: return mapArgs({0, 1});
+    }
+    return false;
+}
+
+// A privileged guest (CAP_SYS_RESOURCE) may raise hard limits; the host process may not. Such a
+// request is clamped to the host's hard limit so it succeeds, as init's `rlimit` and `setrlimit`
+// commands expect (bpfloader's memlock, nofile, nice).
+bool Tracer::clampRlimit(pid_t tid, Regs& r, long nr, uint64_t& scratch) {
+    constexpr int kCapSysResource = 24;
+    if (!credsOf(tid).hasCap(kCapSysResource)) return false;
+    bool pl = nr == SYS_prlimit64;
+    int resource = static_cast<int>(r.arg[pl ? 1 : 0]);
+    uint64_t addr = r.arg[pl ? 2 : 1];
+    pid_t target = pl && static_cast<int>(r.arg[0]) != 0 ? static_cast<pid_t>(r.arg[0]) : tid;
+    if (pl && target == 1 && cfg_.virtualInitPid) target = initTgid_;
+    bool narrow = r.compat && !pl;  // 32-bit setrlimit: struct of two u32, RLIM_INFINITY = ~0u
+    uint64_t want[2] = {0, 0};
+    if (narrow) {
+        uint32_t w32[2];
+        if (!readMem(tid, addr, w32, sizeof(w32))) return false;
+        want[0] = w32[0] == 0xffffffffu ? ~0ull : w32[0];
+        want[1] = w32[1] == 0xffffffffu ? ~0ull : w32[1];
+    } else if (!readMem(tid, addr, want, sizeof(want))) {
+        return false;
+    }
+    struct rlimit64 { uint64_t cur, max; } host{};
+    if (syscall(SYS_prlimit64, target, resource, nullptr, &host) != 0) return false;
+    if (want[1] <= host.max) return false;  // within the host's limit: the kernel allows it anyway
+    uint64_t lim[2] = {std::min(want[0], host.max), host.max};
+    stats_.faked++;
+    uint64_t at;
+    if (narrow) {
+        uint32_t l32[2] = {lim[0] >= 0xffffffffull ? 0xffffffffu : static_cast<uint32_t>(lim[0]),
+                           lim[1] >= 0xffffffffull ? 0xffffffffu : static_cast<uint32_t>(lim[1])};
+        at = pushBytes(tid, scratch, l32, sizeof(l32));
+    } else {
+        at = pushBytes(tid, scratch, lim, sizeof(lim));
+    }
+    if (!at) return false;
+    r.arg[pl ? 2 : 1] = at;
+    return true;
 }
 
 void Tracer::publishVfs() {
@@ -1004,6 +1350,40 @@ void ensureMountPoint(const std::string& hostPath, bool dir) {
     }
 }
 
+// Control files a freshly mounted cgroup hierarchy shows at its root.
+static void populateCgroupRoot(const std::string& dir, const std::string& fs, const std::string& opts) {
+    auto put = [&](const char* name, const std::string& text) {
+        std::string p = dir + "/" + name;
+        int fd = open(p.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+        if (fd < 0) return;
+        ssize_t w = write(fd, text.data(), text.size());
+        (void)w;
+        close(fd);
+    };
+    put("cgroup.procs", "");
+    if (fs == "cgroup2") {
+        put("cgroup.controllers", "");
+        put("cgroup.subtree_control", "");
+        return;
+    }
+    put("tasks", "");
+    put("notify_on_release", "0\n");
+    if (fs == "cpuset" || opts.find("cpuset") != std::string::npos) {
+        long n = sysconf(_SC_NPROCESSORS_CONF);
+        put("cpus", n > 1 ? "0-" + std::to_string(n - 1) + "\n" : "0\n");
+        put("mems", "0\n");
+    }
+    if (opts.find("memory") != std::string::npos) {
+        put("memory.pressure_level", "");
+        put("memory.limit_in_bytes", "9223372036854771712\n");
+        put("memory.usage_in_bytes", "0\n");
+        put("memory.swappiness", "60\n");
+    }
+    if (opts.find("cpu") != std::string::npos && opts.find("cpuset") == std::string::npos) {
+        put("cpu.shares", "1024\n");
+    }
+}
+
 long Tracer::doMount(pid_t tid, Regs& r) {
     stats_.mounts++;
     unsigned long flags = r.arg[3];
@@ -1021,6 +1401,7 @@ long Tracer::doMount(pid_t tid, Regs& r) {
         struct stat st;
         if (stat(srcHost.c_str(), &st) != 0) return -ENOENT;
         ensureMountPoint(targetHost, S_ISDIR(st.st_mode));
+        cfg_.vfs.hideUnder(target);
         cfg_.vfs.bind(target, srcHost);
         if (flags & MS_MOVE) cfg_.vfs.unbind(src);
         logf(1, "[%d] mount %s %s -> %s", tid, (flags & MS_MOVE) ? "--move" : "--bind", src.c_str(), target.c_str());
@@ -1032,7 +1413,7 @@ long Tracer::doMount(pid_t tid, Regs& r) {
     else if (fs == "sysfs") host = "/sys";
     else if (fs == "devpts") host = "/dev/pts";
     else if (fs == "selinuxfs") return 0;  // stays hidden: the guest sees SELinux as disabled
-    else if (fs == "tmpfs" || fs == "ramfs" || fs == "cgroup" || fs == "cgroup2" || fs == "bpf" ||
+    else if (fs == "tmpfs" || fs == "ramfs" || fs == "cgroup" || fs == "cgroup2" || fs == "cpuset" || fs == "bpf" ||
              fs == "tracefs" || fs == "debugfs" || fs == "pstore" || fs == "configfs" || fs == "functionfs" ||
              fs == "binder") {
         // A fresh, empty, writable directory behind the target.
@@ -1045,7 +1426,14 @@ long Tracer::doMount(pid_t tid, Regs& r) {
         return 0;  // real filesystems: the engine already provides the content
     }
     ensureMountPoint(targetHost, true);
+    cfg_.vfs.hideUnder(target);
     cfg_.vfs.bind(target, host);
+    if (fs == "cgroup" || fs == "cgroup2" || fs == "cpuset") {
+        char data[256] = {};
+        if (r.arg[4]) readString(tid, r.arg[4], data, sizeof(data));
+        populateCgroupRoot(host, fs, data);
+        cfg_.vfs.setCgroup(target);
+    }
     logf(1, "[%d] mount -t %s %s", tid, fstype, target.c_str());
     publishVfs();
     return 0;
@@ -1130,7 +1518,18 @@ void Tracer::handleSeccomp(pid_t tid) {
                 bool f = follow(*s);
                 // linkat: old path follows only with AT_SYMLINK_FOLLOW.
                 if (s->logical == SYS_linkat) f = (r.arg[4] & AT_SYMLINK_FOLLOW) != 0;
+                lastHost_.clear();
                 if (s->path1 >= 0) changed |= rewritePath(tid, r, s->dirfd1, s->path1, f, scratch);
+                bool isOpen = s->logical == SYS_openat;
+#if defined(__x86_64__)
+                isOpen |= s->logical == SYS_open;
+#endif
+                if (isOpen && s->flagArg >= 0 && !lastHost_.empty() && (r.arg[s->flagArg] & O_ACCMODE) != O_RDONLY &&
+                    !(r.arg[s->flagArg] & O_CREAT) && cfg_.vfs.isCgroupHost(lastHost_)) {
+                    r.arg[s->flagArg] |= O_CREAT;  // cgroup control file of a new group
+                    r.arg[s->flagArg + 1] = 0644;
+                    changed = true;
+                }
                 if (s->path2 >= 0) changed |= rewritePath(tid, r, s->dirfd2, s->path2, false, scratch);
                 if (changed) setArgs(tid, r);
                 break;
@@ -1164,13 +1563,26 @@ void Tracer::handleSeccomp(pid_t tid) {
                 break;
             }
             case Kind::Sock:
-                if (rewriteSockaddr(tid, r, scratch)) setArgs(tid, r);
+                if (rewriteSockaddr(tid, r, scratch, s->logical == SYS_connect)) setArgs(tid, r);
+                break;
+            case Kind::Rlimit:
+                if (cfg_.fakeRoot && clampRlimit(tid, r, s->logical, scratch)) setArgs(tid, r);
+                break;
+            case Kind::SockName:
+                if (r.arg[1] && r.arg[2]) {  // address wanted: fix it up at exit
+                    Pending p;
+                    p.nr = s->logical;
+                    p.buf = r.arg[1];
+                    p.bufSize = r.arg[2];  // address of the socklen_t
+                    pending_[tid] = p;
+                    wantExit = true;
+                }
                 break;
             case Kind::FakeChown:
                 if (cfg_.fakeRoot) {
                     stats_.faked++;
                     setSyscall(tid, r, -1);
-                    setReturn(tid, r, credsOf(tid).euid == 0 ? 0 : -EPERM);
+                    setReturn(tid, r, credsOf(tid).hasCap(kCapChown) ? 0 : -EPERM);
                 } else {
                     if (rewritePath(tid, r, s->dirfd1, s->path1, follow(*s), scratch)) setArgs(tid, r);
                 }
@@ -1180,11 +1592,22 @@ void Tracer::handleSeccomp(pid_t tid) {
                 if (!cfg_.fakeRoot) break;
                 stats_.faked++;
                 setSyscall(tid, r, -1);
-                setReturn(tid, r, credsOf(tid).euid == 0 ? 0 : -EPERM);
+                setReturn(tid, r, credsOf(tid).hasCap(kCapChown) ? 0 : -EPERM);
                 break;
             case Kind::Ids:
                 if (cfg_.fakeRoot) handleIds(tid, r, s->logical);
                 break;
+            case Kind::Caps:
+                if (cfg_.fakeRoot) handleCaps(tid, r, s->logical);
+                break;
+            case Kind::Pid: {
+                long res = 0;
+                if (cfg_.virtualInitPid && handlePid(tid, r, s->logical, res)) {
+                    setSyscall(tid, r, -1);
+                    setReturn(tid, r, res);
+                }
+                break;
+            }
             case Kind::Emulate: {
                 bool handled = false;
                 long res = emulate(tid, r, s->logical, handled);
@@ -1197,6 +1620,28 @@ void Tracer::handleSeccomp(pid_t tid) {
         }
     }
     ptrace(wantExit ? PTRACE_SYSCALL : PTRACE_CONT, tid, nullptr, nullptr);
+}
+
+// An AF_UNIX address the kernel reported (host path) is shown as the guest path, e.g. init's
+// control sockets that android_get_control_socket() checks by name.
+void Tracer::fixSockName(pid_t tid, uint64_t addr, uint64_t lenAddr) {
+    uint32_t cap = 0;
+    if (!readMem(tid, lenAddr, &cap, sizeof(cap))) return;
+    sockaddr_un sa{};
+    size_t have = std::min<size_t>(cap, sizeof(sa));
+    if (have <= offsetof(sockaddr_un, sun_path) || !readMem(tid, addr, &sa, have)) return;
+    if (sa.sun_family != AF_UNIX || sa.sun_path[0] != '/') return;
+    std::string host(sa.sun_path, strnlen(sa.sun_path, have - offsetof(sockaddr_un, sun_path)));
+    for (const auto& kv : cfg_.connectRedirect)
+        if (kv.second == host) host = kv.first;
+    std::string guest;
+    if (!cfg_.vfs.reverse(host, guest) || guest == host || guest.size() >= sizeof(sa.sun_path)) return;
+    sockaddr_un out{};
+    out.sun_family = AF_UNIX;
+    memcpy(out.sun_path, guest.c_str(), guest.size() + 1);
+    uint32_t full = static_cast<uint32_t>(offsetof(sockaddr_un, sun_path) + guest.size() + 1);
+    writeMem(tid, addr, &out, std::min<uint32_t>(full, cap));
+    writeMem(tid, lenAddr, &full, sizeof(full));  // like the kernel: the full length, even if truncated
 }
 
 void Tracer::handleSyscallExit(pid_t tid) {
@@ -1213,6 +1658,12 @@ void Tracer::handleSyscallExit(pid_t tid) {
         return;
     }
     long ret = static_cast<long>(r.ret);
+    if (r.compat) ret = static_cast<int32_t>(static_cast<uint32_t>(ret));
+    if (p.nr == SYS_getsockname || p.nr == SYS_getpeername || p.nr == SYS_accept || p.nr == SYS_accept4) {
+        if (ret >= 0) fixSockName(tid, p.buf, p.bufSize);
+        ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+        return;
+    }
     if (p.nr != SYS_getcwd && p.guestPath.size() > 10 && p.guestPath.compare(p.guestPath.size() - 4, 4, "/exe") == 0) {
         // readlink("/proc/<pid>/exe"): report the guest program, not the loader running it.
         std::string exe = guestExeOf(static_cast<pid_t>(atoi(p.guestPath.c_str() + 6)));
@@ -1313,6 +1764,7 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
         std::lock_guard<std::mutex> g(credsMu_);
         tgid_[child] = child;
         creds_[child] = initial;  // initial identity from the config
+        initTgid_ = child;
     }
     // A new task is resumed only once BOTH its initial SIGSTOP and its parent's fork/clone event
     // were seen (they arrive in either order): its identity must be inherited before it runs.
@@ -1378,6 +1830,7 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
                     pendingExe_.erase(it);
                 }
             }
+            if (cfg_.fakeRoot) applyExecCaps(tid);
             ptrace(PTRACE_CONT, tid, nullptr, nullptr);
         } else if (sig == SIGTRAP && event != 0) {
             if (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_VFORK || event == PTRACE_EVENT_CLONE) {

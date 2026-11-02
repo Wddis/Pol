@@ -168,3 +168,59 @@ TEST(guest_log_formats_liblog_packet) {
     n += 11;
     EXPECT_EQ(nest::formatLogdPacket(pkt, n), "E/apexd(42): boom\n");
 }
+
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <fstream>
+#include <sstream>
+TEST(guest_log_tee_keeps_copy_and_forwards_to_logd) {
+    char dir[] = "/tmp/nest-tee-XXXXXX";
+    EXPECT_TRUE(mkdtemp(dir) != nullptr);
+    std::string d = dir, logd = d + "/logdw", tee = d + "/tee", out = d + "/logcat.txt";
+    auto addr = [](const std::string& p) {
+        sockaddr_un a{};
+        a.sun_family = AF_UNIX;
+        memcpy(a.sun_path, p.c_str(), p.size() + 1);
+        return a;
+    };
+    int logdFd = socket(AF_UNIX, SOCK_DGRAM, 0);
+    sockaddr_un la = addr(logd);
+    EXPECT_EQ(bind(logdFd, reinterpret_cast<sockaddr*>(&la), sizeof(la)), 0);
+    nest::GuestLog g;
+    EXPECT_TRUE(g.start(tee, out, logd));
+    unsigned char pkt[32] = {};
+    pkt[1] = 7;
+    size_t n = 11;
+    pkt[n++] = 4;  // INFO
+    memcpy(pkt + n, "lmkd\0hi", 8);
+    n += 8;
+    int c = socket(AF_UNIX, SOCK_DGRAM, 0);
+    sockaddr_un ta = addr(tee);
+    EXPECT_EQ(connect(c, reinterpret_cast<sockaddr*>(&ta), sizeof(ta)), 0);
+    EXPECT_EQ(send(c, pkt, n, 0), static_cast<ssize_t>(n));
+    unsigned char got[64];
+    timeval tv{2, 0};
+    setsockopt(logdFd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    EXPECT_EQ(recv(logdFd, got, sizeof(got), 0), static_cast<ssize_t>(n));
+    EXPECT_EQ(memcmp(got, pkt, n), 0);
+    g.stop();
+    std::ifstream f(out);
+    std::stringstream ss;
+    ss << f.rdbuf();
+    EXPECT_EQ(ss.str(), "I/lmkd(7): hi\n");
+    close(c);
+    close(logdFd);
+}
+
+TEST(vfs_mount_over_parent_hides_submounts_but_not_sticky) {
+    nest::Vfs v;
+    v.bind("/", "/r");
+    v.bind("/apex/com.a", "/r/system/apex/com.a");
+    v.bind("/apex/lib.so", "/state/preload/x", true, true);
+    v.bind("/apexes", "/other");
+    EXPECT_EQ(v.hideUnder("/apex"), 1u);
+    v.bind("/apex", "/state/mnt/1");
+    EXPECT_EQ(v.mapLexical("/apex/com.a/x"), "/state/mnt/1/com.a/x");
+    EXPECT_EQ(v.mapLexical("/apex/lib.so"), "/state/preload/x");
+    EXPECT_EQ(v.mapLexical("/apexes/y"), "/other/y");
+}

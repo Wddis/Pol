@@ -116,8 +116,13 @@ long pathCall(long nr, long dirfd, const char* path, long a2, long a3, long a4, 
         if (b != -2) return b;
     }
     std::string host;
-    if (translate(path, follow, host))
+    if (translate(path, follow, host)) {
+        if (nr == SYS_openat && (a2 & O_ACCMODE) != O_RDONLY && !(a2 & O_CREAT) && currentVfs()->isCgroupHost(host)) {
+            a2 |= O_CREAT;  // cgroup control file of a new group
+            a3 = 0644;
+        }
         return ret(taggedSyscall(nr, dirfd, reinterpret_cast<long>(host.c_str()), a2, a3, a4));
+    }
     return (syscall(nr, dirfd, path, a2, a3, a4));
 }
 

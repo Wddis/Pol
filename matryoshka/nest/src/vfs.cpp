@@ -68,14 +68,38 @@ std::string Vfs::join(const std::string& base, const std::string& path) {
     return normalize(base + "/" + path);
 }
 
-void Vfs::bind(const std::string& guest, const std::string& host, bool readOnly) {
+void Vfs::bind(const std::string& guest, const std::string& host, bool readOnly, bool sticky) {
     std::string g = normalize(guest);
     std::string h = host.empty() ? host : stripTrailing(host);
     mounts_.erase(std::remove_if(mounts_.begin(), mounts_.end(), [&](const Mount& m) { return m.guest == g; }),
                   mounts_.end());
-    mounts_.push_back({g, h, readOnly});
+    mounts_.push_back({g, h, readOnly, sticky || g == h});  // identity binds are infrastructure too
     std::stable_sort(mounts_.begin(), mounts_.end(),
                      [](const Mount& a, const Mount& b) { return a.guest.size() > b.guest.size(); });
+}
+
+void Vfs::setCgroup(const std::string& guest) {
+    std::string g = normalize(guest);
+    for (auto& m : mounts_)
+        if (m.guest == g) m.cgroup = true;
+}
+
+bool Vfs::isCgroupHost(const std::string& hostPath) const {
+    for (const auto& m : mounts_)
+        if (m.cgroup && !m.host.empty() && hasPrefix(hostPath, m.host)) return true;
+    return false;
+}
+
+size_t Vfs::hideUnder(const std::string& guest) {
+    std::string g = normalize(guest);
+    std::string prefix = g == "/" ? "/" : g + "/";
+    auto before = mounts_.size();
+    mounts_.erase(std::remove_if(mounts_.begin(), mounts_.end(),
+                                 [&](const Mount& m) {
+                                     return !m.sticky && m.guest != g && m.guest.compare(0, prefix.size(), prefix) == 0;
+                                 }),
+                  mounts_.end());
+    return before - mounts_.size();
 }
 
 bool Vfs::unbind(const std::string& guest) {
@@ -161,7 +185,8 @@ bool Vfs::resolve(const std::string& path, const std::string& guestCwd, bool fol
 
 std::string Vfs::serialize() const {
     std::string out;
-    for (const auto& m : mounts_) out += m.guest + "\t" + m.host + "\t" + (m.readOnly ? "ro" : "rw") + "\n";
+    for (const auto& m : mounts_)
+        out += m.guest + "\t" + m.host + "\t" + (m.readOnly ? "ro" : "rw") + (m.cgroup ? ",cg" : "") + "\n";
     return out;
 }
 
@@ -179,6 +204,7 @@ bool Vfs::deserialize(const std::string& text) {
         std::string host = line.substr(t1 + 1, (t2 == std::string::npos ? line.size() : t2) - t1 - 1);
         bool ro = t2 != std::string::npos && line.compare(t2 + 1, 2, "ro") == 0;
         bind(guest, host, ro);
+        if (t2 != std::string::npos && line.find(",cg", t2) != std::string::npos) setCgroup(guest);
     }
     return true;
 }

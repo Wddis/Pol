@@ -64,13 +64,13 @@ int reap(Child& c, int timeoutMs = 10000) {
 
 }  // namespace
 
-TEST(vbinder_manager_service_client_scenario) {
-    std::string sock = "/tmp/nest-vb-" + std::to_string(getpid());
+static void managerServiceClientScenario(const std::string& managerRole) {
+    std::string sock = "/tmp/nest-vb-" + std::to_string(getpid()) + managerRole;
     nest::vbinder::Broker broker(sock, [](int) { return 10123u; });  // virtual euid from the "tracer"
     EXPECT_TRUE(broker.listen());
     std::thread th([&] { broker.serve(); });
 
-    Child mgr = spawn("manager", sock);
+    Child mgr = spawn(managerRole, sock);
     EXPECT_TRUE(waitFor(mgr, "ready").find("ready") != std::string::npos);
     Child srv = spawn("server", sock);
     EXPECT_TRUE(waitFor(srv, "registered").find("registered added") != std::string::npos);
@@ -100,6 +100,12 @@ TEST(vbinder_manager_service_client_scenario) {
     broker.stop();
     th.join();
 }
+
+TEST(vbinder_manager_service_client_scenario) { managerServiceClientScenario("manager"); }
+
+// Android 11's servicemanager waits for work with epoll on the binder fd (Looper), not in a
+// blocking read: the fd has to turn readable exactly when work is queued.
+TEST(vbinder_polling_context_manager) { managerServiceClientScenario("poll-manager"); }
 
 // Full stack: the three processes run under the tracer with the fast path; the broker runs inside
 // nest-run (-B) and reports each process's *virtual* euid (-u 10077) to the service.

@@ -132,12 +132,14 @@ bool setReturn(pid_t tid, Regs& r, long value) {
 #endif
 
 bool readMem(pid_t tid, uint64_t addr, void* buf, size_t len) {
+    addr = untagAddr(addr);
     iovec local{buf, len};
     iovec remote{reinterpret_cast<void*>(addr), len};
     return process_vm_readv(tid, &local, 1, &remote, 1, 0) == static_cast<ssize_t>(len);
 }
 
 bool writeMem(pid_t tid, uint64_t addr, const void* buf, size_t len) {
+    addr = untagAddr(addr);
     iovec local{const_cast<void*>(buf), len};
     iovec remote{reinterpret_cast<void*>(addr), len};
     if (process_vm_writev(tid, &local, 1, &remote, 1, 0) == static_cast<ssize_t>(len)) return true;
@@ -159,6 +161,7 @@ bool writeMem(pid_t tid, uint64_t addr, const void* buf, size_t len) {
 }
 
 bool readString(pid_t tid, uint64_t addr, char* buf, size_t max) {
+    addr = untagAddr(addr);
     // Read in chunks that never cross a page boundary (the next page may be unmapped).
     size_t got = 0;
     while (got < max) {
