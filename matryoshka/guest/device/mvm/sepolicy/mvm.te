@@ -1,0 +1,18 @@
+# Guest vendor policy for the host hand-off hook.
+type mvm_setup, domain;
+type mvm_setup_exec, exec_type, vendor_file_type, file_type;
+type mvm_handoff_file, file_type;
+
+init_daemon_domain(mvm_setup)
+
+allow mvm_setup mvm_handoff_file:dir r_dir_perms;
+allow mvm_setup mvm_handoff_file:file r_file_perms;
+allow mvm_setup vendor_shell_exec:file rx_file_perms;
+allow mvm_setup vendor_toolbox_exec:file rx_file_perms;
+allow mvm_setup adb_keys_file:dir create_dir_perms;
+allow mvm_setup adb_keys_file:file create_file_perms;
+allow mvm_setup system_data_file:dir rw_dir_perms;
+allow mvm_setup ethernet_data_file:dir create_dir_perms;
+allow mvm_setup ethernet_data_file:file create_file_perms;
+allow mvm_setup self:capability { chown fowner dac_override };
+set_prop(mvm_setup, vendor_default_prop)

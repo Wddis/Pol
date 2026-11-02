@@ -1,0 +1,9 @@
+# Device node permissions for the paravirtual board.
+/dev/dri/*                0666   system     graphics
+/dev/block/vd*            0600   root       root
+/dev/kmsg                 0620   root       system
+/dev/fuse                 0660   system     system
+/dev/tun                  0660   system     vpn
+/dev/rtc0                 0640   system     system
+/dev/input/*              0660   root       input
+/dev/hw_random            0440   root       system

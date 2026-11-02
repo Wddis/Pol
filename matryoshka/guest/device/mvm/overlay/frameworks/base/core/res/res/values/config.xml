@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- The virtual phone's only network is the host-provided Ethernet link. -->
+    <string name="config_ethernet_iface_regex" translatable="false">eth\\d</string>
+    <string-array name="config_ethernet_interfaces" translatable="false" />
+    <bool name="config_wifi_dual_band_support">false</bool>
+    <!-- No battery, no doze: the host decides when the VM runs. -->
+    <bool name="config_enableAutoPowerModes">false</bool>
+    <bool name="config_automatic_brightness_available">false</bool>
+    <integer name="config_screenBrightnessSettingDefault">200</integer>
+    <!-- Navigation: the app provides back/home/recents, so default to gestures-free 3-button. -->
+    <integer name="config_navBarInteractionMode">0</integer>
+    <bool name="config_showNavigationBar">true</bool>
+    <!-- Keep fewer cached processes: RAM is shared with the host. -->
+    <integer name="config_customizedMaxCachedProcesses">16</integer>
+</resources>

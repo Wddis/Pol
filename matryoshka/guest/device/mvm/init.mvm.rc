@@ -1,0 +1,27 @@
+# Matryoshka VM guest board init.
+#
+# /mvm is the host hand-off directory:
+#   hypervisor / emulator engines: a virtio 9p share with tag "mvmcfg"
+#   container engine:              a bind mount prepared by the host before init starts
+
+on early-init
+    setprop ro.hardware.egl ${ro.boot.hardware.egl:-mesa}
+
+on fs
+    mkdir /mvm 0755 root root
+    # Fails harmlessly in container mode, where /mvm is already bind-mounted.
+    mount 9p mvmcfg /mvm trans=virtio,version=9p2000.L,msize=262144 nodev nosuid noexec
+    mount_all /vendor/etc/fstab.mvm --late
+
+on post-fs-data
+    # Installs the host app's ADB key, the static Ethernet config and display properties.
+    exec - root root -- /vendor/bin/mvm-guest-setup.sh
+
+on boot
+    setprop service.adb.tcp.port 5555
+    # The host app streams the screen; keep the guest from blanking it.
+    setprop persist.sys.screen_off_timeout 2147483647
+
+on property:sys.boot_completed=1
+    # Trim caches once after boot: lower steady-state RAM inside the VM.
+    write /proc/sys/vm/drop_caches 3

@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "images": [
+    {
+      "id": "test-img",
+      "name": "Test",
+      "androidVersion": "11",
+      "abi": "arm64-v8a",
+      "engines": [
+        "HYPERVISOR",
+        "EMULATOR",
+        "CONTAINER"
+      ],
+      "files": [
+        {
+          "name": "boot.img",
+          "sha256": "0b7cf4c43b59a5fa9dc8d988b7f6ad101f5373e3ca7c21ed649738d374cd8653",
+          "size": 1000,
+          "url": "https://example.org/r/boot.img"
+        },
+        {
+          "name": "kernel",
+          "sha256": "c309750997c5ce38eecc9e91a148dbfb159c4b1edebf7cf30db9abae940d961e",
+          "size": 1000,
+          "url": "https://example.org/r/kernel"
+        },
+        {
+          "name": "ramdisk.img",
+          "sha256": "05e609f07d63b48e9cc4dd298fe58c6f55aa1ec1a0d40702c7940c0c2788b2c4",
+          "size": 1000,
+          "url": "https://example.org/r/ramdisk.img"
+        },
+        {
+          "name": "rootfs.tar.gz",
+          "sha256": "1785a1c08fe367e04e9fdbf8598a727306ee378cdf5dc09a8b5c72ff77576403",
+          "size": 1000,
+          "url": "https://example.org/r/rootfs.tar.gz"
+        },
+        {
+          "name": "system.img",
+          "sha256": "88a11205734f552aefef0702bc2aedc8d4884c8aec1d4b2085f26c67be332311",
+          "size": 1000,
+          "url": "https://example.org/r/system.img"
+        },
+        {
+          "name": "vendor.img",
+          "sha256": "57077ef9b28e49d898c634fda89d7ada4fa5e2a5c06c0232532b084081bbc963",
+          "size": 1000,
+          "url": "https://example.org/r/vendor.img"
+        }
+      ],
+      "kernelCmdline": "loglevel=4 androidboot.selinux=permissive",
+      "description": "Compact AOSP 11 build for Matryoshka VM (microG-ready, Magisk-patchable).",
+      "licenseNotice": "AOSP (Apache-2.0) and Linux kernel (GPL-2.0). Corresponding source: see guest/README.md."
+    }
+  ]
+}

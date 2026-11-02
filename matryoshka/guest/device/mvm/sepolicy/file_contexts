@@ -1,0 +1,2 @@
+/vendor/bin/mvm-guest-setup\.sh    u:object_r:mvm_setup_exec:s0
+/mvm(/.*)?                         u:object_r:mvm_handoff_file:s0

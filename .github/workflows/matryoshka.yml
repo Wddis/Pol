@@ -1,0 +1,36 @@
+name: Matryoshka APK
+
+on:
+  push:
+    paths: ["matryoshka/**", ".github/workflows/matryoshka.yml"]
+  pull_request:
+    paths: ["matryoshka/**", ".github/workflows/matryoshka.yml"]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: matryoshka
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Lint shell scripts
+        run: shellcheck -s sh -e SC1090,SC1091,SC2034 app/src/main/assets/engine/*.sh guest/device/mvm/mvm-guest-setup.sh
+      - name: Unit + screenshot tests, lint, build
+        run: ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease --stacktrace
+      - uses: actions/upload-artifact@v4
+        with:
+          name: matryoshka-apk
+          path: |
+            matryoshka/app/build/outputs/apk/release/app-release.apk
+            matryoshka/app/build/outputs/apk/debug/app-debug.apk
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-screenshots
+          path: matryoshka/app/build/outputs/roborazzi/
