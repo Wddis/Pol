@@ -262,7 +262,11 @@ void* clientMmap(void* addr, size_t len, int prot, int flags, int fd, off_t off)
     }
     // Shared and writable for us (fd numbers are patched in place); the guest only reads it.
     int mflags = MAP_SHARED | (flags & MAP_FIXED);
+#if defined(SYS_mmap2)
+    void* m = reinterpret_cast<void*>(syscall(SYS_mmap2, addr, len, PROT_READ | PROT_WRITE, mflags, mfd, 0));
+#else
     void* m = reinterpret_cast<void*>(syscall(SYS_mmap, addr, len, PROT_READ | PROT_WRITE, mflags, mfd, 0));
+#endif
     if (m == MAP_FAILED) {
         syscall(SYS_close, mfd);
         errno = ENOMEM;

@@ -21,19 +21,30 @@ static user_regs_struct* U(Regs& r) { return reinterpret_cast<user_regs_struct*>
 bool getRegs(pid_t tid, Regs& r) {
     if (ptrace(PTRACE_GETREGS, tid, nullptr, r.raw) != 0) return false;
     auto* u = U(r);
+    r.compat = u->cs == 0x23;  // i386 code segment
     r.nr = u->orig_rax;
-    r.arg[0] = u->rdi; r.arg[1] = u->rsi; r.arg[2] = u->rdx;
-    r.arg[3] = u->r10; r.arg[4] = u->r8; r.arg[5] = u->r9;
+    if (r.compat) {
+        r.arg[0] = u->rbx & 0xffffffff; r.arg[1] = u->rcx & 0xffffffff; r.arg[2] = u->rdx & 0xffffffff;
+        r.arg[3] = u->rsi & 0xffffffff; r.arg[4] = u->rdi & 0xffffffff; r.arg[5] = u->rbp & 0xffffffff;
+    } else {
+        r.arg[0] = u->rdi; r.arg[1] = u->rsi; r.arg[2] = u->rdx;
+        r.arg[3] = u->r10; r.arg[4] = u->r8; r.arg[5] = u->r9;
+    }
     r.ret = u->rax;
-    r.sp = u->rsp;
+    r.sp = r.compat ? (u->rsp & 0xffffffff) : u->rsp;
     r.pc = u->rip;
     return true;
 }
 
 bool setArgs(pid_t tid, Regs& r) {
     auto* u = U(r);
-    u->rdi = r.arg[0]; u->rsi = r.arg[1]; u->rdx = r.arg[2];
-    u->r10 = r.arg[3]; u->r8 = r.arg[4]; u->r9 = r.arg[5];
+    if (r.compat) {
+        u->rbx = r.arg[0]; u->rcx = r.arg[1]; u->rdx = r.arg[2];
+        u->rsi = r.arg[3]; u->rdi = r.arg[4]; u->rbp = r.arg[5];
+    } else {
+        u->rdi = r.arg[0]; u->rsi = r.arg[1]; u->rdx = r.arg[2];
+        u->r10 = r.arg[3]; u->r8 = r.arg[4]; u->r9 = r.arg[5];
+    }
     return ptrace(PTRACE_SETREGS, tid, nullptr, r.raw) == 0;
 }
 
@@ -44,7 +55,7 @@ bool setSyscall(pid_t tid, Regs& r, long nr) {
 }
 
 bool setReturn(pid_t tid, Regs& r, long value) {
-    U(r)->rax = static_cast<uint64_t>(value);
+    U(r)->rax = r.compat ? static_cast<uint64_t>(static_cast<uint32_t>(value)) : static_cast<uint64_t>(value);
     r.ret = static_cast<uint64_t>(value);
     return ptrace(PTRACE_SETREGS, tid, nullptr, r.raw) == 0;
 }
@@ -53,10 +64,25 @@ bool setReturn(pid_t tid, Regs& r, long value) {
 
 struct ArmRegs { uint64_t regs[31]; uint64_t sp; uint64_t pc; uint64_t pstate; };
 static ArmRegs* A(Regs& r) { return reinterpret_cast<ArmRegs*>(r.raw); }
+// arm32 (compat) NT_PRSTATUS: r0..r15, cpsr, orig_r0 as 32-bit words.
+static uint32_t* A32(Regs& r) { return reinterpret_cast<uint32_t*>(r.raw); }
+constexpr size_t kArm32RegsSize = 18 * 4;
 
 bool getRegs(pid_t tid, Regs& r) {
     iovec io{r.raw, sizeof(ArmRegs)};
     if (ptrace(PTRACE_GETREGSET, tid, reinterpret_cast<void*>(NT_PRSTATUS), &io) != 0) return false;
+    r.compat = io.iov_len == kArm32RegsSize;
+    if (r.compat) {
+        uint32_t* g = A32(r);
+        for (int i = 0; i < 6; i++) r.arg[i] = g[i];
+        r.ret = g[0];
+        r.sp = g[13];
+        r.pc = g[15];
+        int nr = 0;
+        iovec sio{&nr, sizeof(nr)};
+        r.nr = ptrace(PTRACE_GETREGSET, tid, reinterpret_cast<void*>(NT_ARM_SYSTEM_CALL), &sio) == 0 ? nr : g[7];
+        return true;
+    }
     auto* a = A(r);
     for (int i = 0; i < 6; i++) r.arg[i] = a->regs[i];
     r.ret = a->regs[0];
@@ -70,11 +96,17 @@ bool getRegs(pid_t tid, Regs& r) {
 }
 
 static bool putRegs(pid_t tid, Regs& r) {
-    iovec io{r.raw, sizeof(ArmRegs)};
+    iovec io{r.raw, r.compat ? kArm32RegsSize : sizeof(ArmRegs)};
     return ptrace(PTRACE_SETREGSET, tid, reinterpret_cast<void*>(NT_PRSTATUS), &io) == 0;
 }
 
 bool setArgs(pid_t tid, Regs& r) {
+    if (r.compat) {
+        uint32_t* g = A32(r);
+        for (int i = 0; i < 6; i++) g[i] = static_cast<uint32_t>(r.arg[i]);
+        g[13] = static_cast<uint32_t>(r.sp);
+        return putRegs(tid, r);
+    }
     auto* a = A(r);
     for (int i = 0; i < 6; i++) a->regs[i] = r.arg[i];
     a->sp = r.sp;
@@ -89,7 +121,8 @@ bool setSyscall(pid_t tid, Regs& r, long nr) {
 }
 
 bool setReturn(pid_t tid, Regs& r, long value) {
-    A(r)->regs[0] = static_cast<uint64_t>(value);
+    if (r.compat) A32(r)[0] = static_cast<uint32_t>(value);
+    else A(r)->regs[0] = static_cast<uint64_t>(value);
     r.ret = static_cast<uint64_t>(value);
     return putRegs(tid, r);
 }

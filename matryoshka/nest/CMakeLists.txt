@@ -4,8 +4,20 @@ cmake_minimum_required(VERSION 3.18)
 project(nest CXX)
 
 set(CMAKE_CXX_STANDARD 17)
+# NEST_PRELOAD_ONLY: build just the fast-path library (used for the 32-bit ARM copy on Android).
+option(NEST_PRELOAD_ONLY "Build only libnest_preload" OFF)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -O2 -fno-exceptions)
+
+if(NEST_PRELOAD_ONLY)
+  add_library(nest_preload SHARED src/preload.cpp src/vfs.cpp src/vfs_share.cpp src/vbinder_client.cpp)
+  target_include_directories(nest_preload PRIVATE src)
+  set_target_properties(nest_preload PROPERTIES CXX_VISIBILITY_PRESET hidden)
+  target_compile_options(nest_preload PRIVATE $<$<STREQUAL:${ANDROID_ABI},armeabi-v7a>:-marm>)
+  target_link_options(nest_preload PRIVATE -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/preload.map
+                                           -Wl,--exclude-libs,ALL)
+  return()
+endif()
 
 add_library(nest_core STATIC src/vfs.cpp src/arch.cpp src/tracer.cpp src/probe.cpp src/vbinder.cpp src/vfs_share.cpp src/android_profile.cpp src/guest_log.cpp)
 target_include_directories(nest_core PUBLIC src)
@@ -49,4 +61,26 @@ else()
                                                 NEST_PRELOAD_PATH="$<TARGET_FILE:nest_preload>"
                                                 NEST_BINDERPROG_PATH="$<TARGET_FILE:nest_binderprog>")
   add_test(NAME nest_tests COMMAND nest_tests)
+
+  # 32-bit (compat) processes: i386 builds of the fast path and a test program exercise the same
+  # code paths arm32 processes use on phones.
+  include(CheckCXXSourceCompiles)
+  set(CMAKE_REQUIRED_FLAGS -m32)
+  check_cxx_source_compiles("int main(){return 0;}" NEST_HAVE_M32)
+  unset(CMAKE_REQUIRED_FLAGS)
+  if(NEST_HAVE_M32)
+    add_library(nest_preload32 SHARED src/preload.cpp src/vfs.cpp src/vfs_share.cpp src/vbinder_client.cpp)
+    target_include_directories(nest_preload32 PRIVATE src)
+    set_target_properties(nest_preload32 PROPERTIES CXX_VISIBILITY_PRESET hidden)
+    target_compile_options(nest_preload32 PRIVATE -m32)
+    target_link_options(nest_preload32 PRIVATE -m32 -static-libstdc++ -static-libgcc
+                        -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/src/preload.map -Wl,--exclude-libs,ALL)
+    add_executable(nest_idprog32 tests/idprog.cpp)
+    target_compile_options(nest_idprog32 PRIVATE -m32 -D_FILE_OFFSET_BITS=64)
+    target_link_options(nest_idprog32 PRIVATE -m32)
+    add_dependencies(nest_tests nest_preload32 nest_idprog32)
+    target_compile_definitions(nest_tests PRIVATE NEST_HAVE_M32=1
+                                                  NEST_PRELOAD32_PATH="$<TARGET_FILE:nest_preload32>"
+                                                  NEST_IDPROG32_PATH="$<TARGET_FILE:nest_idprog32>")
+  endif()
 endif()

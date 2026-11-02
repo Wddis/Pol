@@ -34,9 +34,17 @@ namespace {
 nest::Vfs* g_vfs = nullptr;
 
 int fastLstat(const char* p, struct stat* st) {
-    long r = taggedSyscall(SYS_newfstatat, AT_FDCWD, reinterpret_cast<long>(p), reinterpret_cast<long>(st),
+    // The kernel writes its 64-bit stat layout; vfs only needs st_mode, so use a buffer that
+    // fits that layout on every ABI.
+    alignas(8) unsigned char buf[256];
+    long r = taggedSyscall(nest::kSysFstatat, AT_FDCWD, reinterpret_cast<long>(p), reinterpret_cast<long>(buf),
                            AT_SYMLINK_NOFOLLOW);
-    return r < 0 ? -1 : 0;
+    if (r < 0) return -1;
+    struct stat64 k;
+    memcpy(&k, buf, sizeof(k));
+    memset(st, 0, sizeof(*st));
+    st->st_mode = k.st_mode;
+    return 0;
 }
 
 long fastReadlink(const char* p, char* buf, unsigned long n) {
@@ -173,18 +181,22 @@ NEST_EXPORT int __openat_2(int dirfd, const char* path, int flags) {
     return static_cast<int>(pathCall(SYS_openat, dirfd, path, flags, 0, 0, openFlagsFollow(flags)));
 }
 
-NEST_EXPORT int fstatat(int dirfd, const char* path, struct stat* st, int flags) {
-    return static_cast<int>(pathCall(SYS_newfstatat, dirfd, path, reinterpret_cast<long>(st), flags, 0,
+// The *64 variants receive the kernel's stat layout on every ABI.
+NEST_EXPORT int fstatat64(int dirfd, const char* path, struct stat64* st, int flags) {
+    return static_cast<int>(pathCall(nest::kSysFstatat, dirfd, path, reinterpret_cast<long>(st), flags, 0,
                                      !(flags & AT_SYMLINK_NOFOLLOW)));
+}
+NEST_EXPORT int stat64(const char* path, struct stat64* st) { return fstatat64(AT_FDCWD, path, st, 0); }
+NEST_EXPORT int lstat64(const char* path, struct stat64* st) { return fstatat64(AT_FDCWD, path, st, AT_SYMLINK_NOFOLLOW); }
+#if !(defined(__i386__) && defined(__GLIBC__))
+// Plain stat: same layout as stat64 on 64-bit ABIs and on bionic. (32-bit glibc's legacy struct
+// stat is smaller, so it is left to the traced slow path there.)
+NEST_EXPORT int fstatat(int dirfd, const char* path, struct stat* st, int flags) {
+    return fstatat64(dirfd, path, reinterpret_cast<struct stat64*>(st), flags);
 }
 NEST_EXPORT int stat(const char* path, struct stat* st) { return fstatat(AT_FDCWD, path, st, 0); }
 NEST_EXPORT int lstat(const char* path, struct stat* st) { return fstatat(AT_FDCWD, path, st, AT_SYMLINK_NOFOLLOW); }
-// On 64-bit glibc and bionic, struct stat64 has the same layout as struct stat.
-NEST_EXPORT int fstatat64(int dirfd, const char* path, struct stat64* st, int flags) {
-    return fstatat(dirfd, path, reinterpret_cast<struct stat*>(st), flags);
-}
-NEST_EXPORT int stat64(const char* path, struct stat64* st) { return stat(path, reinterpret_cast<struct stat*>(st)); }
-NEST_EXPORT int lstat64(const char* path, struct stat64* st) { return lstat(path, reinterpret_cast<struct stat*>(st)); }
+#endif
 
 NEST_EXPORT int faccessat(int dirfd, const char* path, int mode, int flags) {
     // The kernel's faccessat has no flags argument; libc emulates AT_* flags. Keep it simple: plain call.
@@ -241,11 +253,21 @@ NEST_EXPORT int ioctl(int fd, unsigned long request, ...) {
 NEST_EXPORT void* mmap(void* addr, size_t len, int prot, int flags, int fd, off_t off) {
     if (fd >= 0 && nest::vbinder::clientIsBinderFd(fd)) return nest::vbinder::clientMmap(addr, len, prot, flags, fd, off);
     // libc syscall() already returns -1 / sets errno on failure.
+#if defined(SYS_mmap2)
+    long r = syscall(SYS_mmap2, addr, len, prot, flags, fd, static_cast<long>(off) >> 12);
+#else
     long r = syscall(SYS_mmap, addr, len, prot, flags, fd, off);
+#endif
     return r == -1 ? MAP_FAILED : reinterpret_cast<void*>(r);
 }
 NEST_EXPORT void* mmap64(void* addr, size_t len, int prot, int flags, int fd, off64_t off) {
+#if defined(SYS_mmap2)
+    if (fd >= 0 && nest::vbinder::clientIsBinderFd(fd)) return nest::vbinder::clientMmap(addr, len, prot, flags, fd, 0);
+    long r = syscall(SYS_mmap2, addr, len, prot, flags, fd, static_cast<long>(off >> 12));
+    return r == -1 ? MAP_FAILED : reinterpret_cast<void*>(r);
+#else
     return mmap(addr, len, prot, flags, fd, static_cast<off_t>(off));
+#endif
 }
 
 NEST_EXPORT int close(int fd) {

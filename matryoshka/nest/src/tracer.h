@@ -45,6 +45,7 @@ struct TracerConfig {
     // Tests only: install an extra filter that SIGSYS-traps these syscalls, like Android's app
     // seccomp policy does for mount & co.
     std::vector<long> simulateTrap;
+    std::vector<long> simulateTrap32;
     // If set, /proc/<pid>/attr/* (SELinux process attributes) map to files in this directory,
     // so the guest's setcon()/getcon() work without touching the host's SELinux.
     std::string procAttrDir;
@@ -52,6 +53,7 @@ struct TracerConfig {
     // library directory the program's linker namespace may load from (/system/lib64,
     // /vendor/lib64, /apex/<name>/lib64) and injected as LD_PRELOAD on every exec.
     std::string preloadHost;
+    std::string preload32Host;  // the same library built for 32-bit processes
     bool androidPreload = false;
 };
 
@@ -104,7 +106,7 @@ private:
     long doUmount(pid_t tid, struct Regs& r);
     bool guestPathArg(pid_t tid, uint64_t addr, bool follow, std::string& guest, std::string* host = nullptr);
     void publishVfs();
-    void handleIds(pid_t tid, struct Regs& r);
+    void handleIds(pid_t tid, struct Regs& r, long nr);
     void onNewTask(pid_t parent, pid_t tid);
     pid_t tgidOf(pid_t tid) const;
     void handleSyscallExit(pid_t tid);
@@ -124,7 +126,7 @@ private:
     std::map<pid_t, Creds> creds_;    // process id -> virtual credentials
     std::map<pid_t, std::string> exe_;      // process id -> guest program (it may run via the loader)
     std::map<pid_t, std::string> pendingExe_;  // tid -> program of an in-flight execve
-    std::string preloadEntryFor(const std::string& guestProgram);
+    std::string preloadEntryFor(const std::string& guestProgram, bool is32);
     std::string guestExeOf(pid_t tid);
     mutable std::mutex credsMu_;
     std::unique_ptr<VfsShareWriter> share_;

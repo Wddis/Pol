@@ -120,3 +120,40 @@ dependencies {
     testImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.test.manifest)
 }
+
+// ---------------------------------------------------------------------------------------------
+// 32-bit ARM copy of the fast-path library for 32-bit guest processes (zygote32, 32-bit games).
+// The app installs as 64-bit, and Android extracts only lib/arm64-v8a, so the armeabi-v7a build
+// is shipped inside that directory as libnest_preload32.so.
+val nest32Out = layout.buildDirectory.dir("generated/nest32/jniLibs")
+val buildNestPreload32 by tasks.registering {
+    val sdkDir = android.sdkDirectory
+    val ndkVersion = android.ndkVersion
+    val src = file("../nest")
+    val work = layout.buildDirectory.dir("nest32").get().asFile
+    val out = nest32Out.get().dir("arm64-v8a").asFile
+    inputs.dir(src)
+    outputs.dir(out)
+    doLast {
+        val ndk = File(sdkDir, "ndk/$ndkVersion")
+        val cmakeBin = File(sdkDir, "cmake/3.22.1/bin")
+        work.mkdirs()
+        out.mkdirs()
+        fun run(vararg cmd: String) {
+            val p = ProcessBuilder(*cmd).directory(work).redirectErrorStream(true).start()
+            val log = p.inputStream.bufferedReader().readText()
+            if (p.waitFor() != 0) throw GradleException("nest32 build failed: ${cmd.joinToString(" ")}\n$log")
+        }
+        run(
+            File(cmakeBin, "cmake").path, "-S", src.path, "-B", work.path, "-G", "Ninja",
+            "-DCMAKE_MAKE_PROGRAM=${File(cmakeBin, "ninja").path}",
+            "-DCMAKE_TOOLCHAIN_FILE=${File(ndk, "build/cmake/android.toolchain.cmake").path}",
+            "-DANDROID_ABI=armeabi-v7a", "-DANDROID_PLATFORM=android-26", "-DANDROID_STL=c++_static",
+            "-DCMAKE_BUILD_TYPE=Release", "-DNEST_PRELOAD_ONLY=ON",
+        )
+        run(File(cmakeBin, "cmake").path, "--build", work.path)
+        File(work, "libnest_preload.so").copyTo(File(out, "libnest_preload32.so"), overwrite = true)
+    }
+}
+android.sourceSets["main"].jniLibs.srcDir(nest32Out)
+tasks.named("preBuild") { dependsOn(buildNestPreload32) }

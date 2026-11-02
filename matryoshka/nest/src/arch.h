@@ -1,4 +1,5 @@
-// Register access for syscall interception (arm64 = phones, x86_64 = host tests).
+// Register access for syscall interception (arm64 = phones, x86_64 = host tests), including
+// 32-bit (compat) processes: arm32 on arm64, i386 on x86_64.
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
@@ -13,6 +14,7 @@ struct Regs {
     uint64_t ret = 0;       // return value (valid at syscall exit)
     uint64_t sp = 0;        // stack pointer
     uint64_t pc = 0;
+    bool compat = false;    // 32-bit process (arm32 on arm64, i386 on x86_64)
 #if defined(__x86_64__)
     unsigned char raw[27 * 8];  // struct user_regs_struct
 #elif defined(__aarch64__)

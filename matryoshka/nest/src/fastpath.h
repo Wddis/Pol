@@ -9,10 +9,18 @@
 #pragma once
 
 #include <cstdint>
+#include <sys/syscall.h>
 
 namespace nest {
 
-constexpr uint64_t kFastPathTag = 0x4e4553546d766d21ull;  // "NESTmvm!"
+constexpr uint64_t kFastPathTag = 0x4e4553546d766d21ull;  // "NESTmvm!" (32-bit: low word only)
+
+// fstatat with the kernel's 64-bit stat layout on every ABI.
+#if defined(SYS_newfstatat)
+constexpr long kSysFstatat = SYS_newfstatat;
+#else
+constexpr long kSysFstatat = SYS_fstatat64;
+#endif
 
 inline long taggedSyscall(long nr, long a0 = 0, long a1 = 0, long a2 = 0, long a3 = 0, long a4 = 0) {
 #if defined(__aarch64__)
@@ -35,6 +43,24 @@ inline long taggedSyscall(long nr, long a0 = 0, long a1 = 0, long a2 = 0, long a
                  : "a"(nr), "D"(a0), "S"(a1), "d"(a2), "r"(r10), "r"(r8), "r"(r9)
                  : "rcx", "r11", "memory");
     return ret;
+#elif defined(__i386__)
+    // 32-bit: only the low word of the tag fits; ebp is the 6th argument register.
+    long ret;
+    asm volatile("push %%ebp\n\tmov $0x6d766d21, %%ebp\n\tint $0x80\n\tpop %%ebp"
+                 : "=a"(ret)
+                 : "a"(nr), "b"(a0), "c"(a1), "d"(a2), "S"(a3), "D"(a4)
+                 : "memory");
+    return ret;
+#elif defined(__arm__)
+    register long r7 asm("r7") = nr;
+    register long r0 asm("r0") = a0;
+    register long r1 asm("r1") = a1;
+    register long r2 asm("r2") = a2;
+    register long r3 asm("r3") = a3;
+    register long r4 asm("r4") = a4;
+    register long r5 asm("r5") = static_cast<long>(kFastPathTag & 0xffffffffu);
+    asm volatile("svc #0" : "+r"(r0) : "r"(r7), "r"(r1), "r"(r2), "r"(r3), "r"(r4), "r"(r5) : "memory", "cc");
+    return r0;
 #else
 #error unsupported architecture
 #endif

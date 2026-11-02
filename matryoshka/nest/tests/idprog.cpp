@@ -19,7 +19,16 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
         const char* c = argv[i];
-        if (!strcmp(c, "mount-tmpfs")) {
+        if (!strcmp(c, "statloop")) {
+            int n = atoi(argv[++i]);
+            const char* p = argv[++i];
+            int ok = 0;
+            struct stat st;
+            for (int k = 0; k < n; k++) ok += stat(p, &st) == 0;
+            printf("%d\n", ok);
+        } else if (!strcmp(c, "bits")) {
+            printf("%d\n", static_cast<int>(sizeof(void*) * 8));
+        } else if (!strcmp(c, "mount-tmpfs")) {
             printRes(mount("tmpfs", argv[++i], "tmpfs", 0, nullptr));
         } else if (!strcmp(c, "bind")) {
             const char* src = argv[++i];

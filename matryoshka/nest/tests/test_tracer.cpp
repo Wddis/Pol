@@ -385,3 +385,39 @@ TEST(mount_requires_root_identity) {
     auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
     EXPECT_EQ(r.out, "-1 EPERM\n");
 }
+
+// ---- 32-bit (compat) processes: i386 here, arm32 on phones; same tracer code paths.
+#ifdef NEST_HAVE_M32
+TEST(compat32_paths_ids_and_mounts) {
+    std::string state = mktmp();
+    auto r = runInState({NEST_RUN_PATH, "-b", "/=/", "-b", "/etc/nest-test=" + hostDataDir(), "-u", "10050", "-s", "--",
+                         NEST_IDPROG32_PATH, "bits", "cat", "/etc/nest-test/hello.txt", "uid", "setuid", "0"},
+                        state);
+    EXPECT_EQ(r.out, "32\nbound file\n\n10050 10050 10050\n-1 EPERM\n");
+    auto m = runInState({NEST_RUN_PATH, "-b", "/=/", "--simulate-app-seccomp", "-s", "--", NEST_IDPROG32_PATH,
+                         "mount-tmpfs", "/mnt", "write", "/mnt/x", "t32", "cat", "/mnt/x"},
+                        state);
+    EXPECT_EQ(m.out, "0\nt32\n");
+    EXPECT_TRUE(m.err.find("sigsys=0 ") == std::string::npos);
+}
+
+TEST(compat32_identity_crosses_abi_boundaries) {
+    // 64-bit -> 32-bit -> 64-bit exec chain keeps the virtual identity.
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "--", NEST_IDPROG_PATH, "setuid", "10077", "exec", NEST_IDPROG32_PATH,
+                  "bits", "uid", "exec", NEST_IDPROG_PATH, "bits", "uid"});
+    EXPECT_EQ(r.out, "0\n32\n10077 10077 10077\n64\n10077 10077 10077\n");
+}
+
+TEST(compat32_fast_path) {
+    auto slow = run({NEST_RUN_PATH, "-b", "/=/", "-b", "/etc/nest-test=" + hostDataDir(), "-s", "--", NEST_IDPROG32_PATH,
+                     "statloop", "2000", "/etc/nest-test/hello.txt"});
+    auto fast = run({NEST_RUN_PATH, "-b", "/=/", "-b", "/etc/nest-test=" + hostDataDir(), "-P", NEST_PRELOAD_PATH,
+                     "-P32", NEST_PRELOAD32_PATH, "-s", "--", NEST_IDPROG32_PATH, "statloop", "2000",
+                     "/etc/nest-test/hello.txt"});
+    EXPECT_EQ(slow.out, "2000\n");
+    EXPECT_EQ(fast.out, "2000\n");
+    long s = statValue(slow.err, "stops"), f = statValue(fast.err, "stops");
+    EXPECT_TRUE(f >= 0 && f * 5 < s);
+    fprintf(stderr, "  compat32: 2000 stat() slow path %ld stops, fast path %ld stops\n", s, f);
+}
+#endif

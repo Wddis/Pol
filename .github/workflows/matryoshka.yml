@@ -23,6 +23,7 @@ jobs:
         run: shellcheck -s sh -e SC1090,SC1091,SC2034 app/src/main/assets/engine/*.sh guest/device/mvm/mvm-guest-setup.sh
       - name: Nest engine host tests (ptrace + seccomp on Linux)
         run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq g++-multilib
           cmake -S nest -B build-nest -DCMAKE_BUILD_TYPE=Release
           cmake --build build-nest -j
           ./build-nest/nest_tests

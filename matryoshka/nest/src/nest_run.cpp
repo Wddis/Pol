@@ -12,6 +12,7 @@
 //   -v   verbose (repeat for more)    ; -s  print statistics to stderr on exit
 //   --android DIR  guest-Android environment (private /dev, /proc overrides, APEXes); DIR = state
 //   -B   serve /dev/{,hw,vnd}binder for the guest from a userspace broker on this socket
+//   -P32 the same library for 32-bit guest processes
 //   -P   fast-path preload library (host path); NEST_STATE_DIR = where to write the mount table
 //   -E   add/override an environment variable ; -c  start with a clean environment
 //
@@ -73,11 +74,16 @@ int main(int argc, char** argv) {
             binderSock = argv[++i];
         } else if (a == "-P" && i + 1 < argc) {
             preload = argv[++i];
+        } else if (a == "-P32" && i + 1 < argc) {
+            cfg.preload32Host = argv[++i];
         } else if (a == "--android" && i + 1 < argc) {
             androidState = argv[++i];
         } else if (a == "--simulate-app-seccomp") {
             // Tests: behave like Android's app seccomp policy (SIGSYS on mount & co.).
             cfg.simulateTrap = {SYS_mount, SYS_umount2, SYS_pivot_root, SYS_chroot, SYS_reboot, SYS_swapon};
+#if defined(__x86_64__)
+            cfg.simulateTrap32 = {21, 52, 217, 61, 88, 87};  // i386: mount umount2 pivot_root chroot reboot swapon
+#endif
         } else if (a == "-n") {
             cfg.fakeRoot = false;
         } else if (a == "-v") {
@@ -121,8 +127,11 @@ int main(int argc, char** argv) {
         cfg.preloadHost = preload;
         cfg.androidPreload = !androidState.empty();
         if (!cfg.androidPreload) {
-            std::string dir = preload.substr(0, preload.rfind('/'));
-            cfg.vfs.bind(dir, dir, true);
+            for (const std::string& lib : {preload, cfg.preload32Host}) {
+                if (lib.empty()) continue;
+                std::string dir = lib.substr(0, lib.rfind('/'));
+                cfg.vfs.bind(dir, dir, true);
+            }
         }
         const char* st = getenv("NEST_STATE_DIR");
         std::string vfsFile = std::string(st && *st ? st : "/tmp") + "/nest-vfs-" + std::to_string(getpid());
