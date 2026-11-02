@@ -21,6 +21,12 @@ jobs:
       - uses: gradle/actions/setup-gradle@v4
       - name: Lint shell scripts
         run: shellcheck -s sh -e SC1090,SC1091,SC2034 app/src/main/assets/engine/*.sh guest/device/mvm/mvm-guest-setup.sh
+      - name: Nest engine host tests (ptrace + seccomp on Linux)
+        run: |
+          cmake -S nest -B build-nest -DCMAKE_BUILD_TYPE=Release
+          cmake --build build-nest -j
+          ./build-nest/nest_tests
+          mkdir -p /tmp/nest-probe && ./build-nest/nest_run --probe /tmp/nest-probe
       - name: Unit + screenshot tests, lint, build
         run: ./gradlew testDebugUnitTest lintDebug assembleDebug assembleRelease --stacktrace
       - uses: actions/upload-artifact@v4

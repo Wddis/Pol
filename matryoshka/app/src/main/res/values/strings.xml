@@ -148,4 +148,17 @@
     <string name="notif_starting">Starting virtual device</string>
     <string name="notif_running">Virtual Android is running</string>
     <string name="action_stop_all">Stop all</string>
+    <string name="nest_check">Nest engine check</string>
+    <string name="nest_check_desc">Tests this phone for everything the Nest engine needs</string>
+    <string name="allow_background">Allow background</string>
+    <string name="autostart">Autostart</string>
+    <string name="send_log">Send log to developer</string>
+    <string name="probe_engine">Engine mechanisms</string>
+    <string name="probe_phone">Phone settings</string>
+    <string name="probe_info">Information</string>
+    <string name="probe_running">Checking the phone…</string>
+    <string name="probe_ready">Phone is ready for the Nest engine</string>
+    <string name="probe_problems">Problems found: %1$d</string>
+    <string name="probe_explain">These are real tests of the engine on this phone, not a simulation. Send the log if anything is red.</string>
+    <string name="tester_log">Tester log</string>
 </resources>

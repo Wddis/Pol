@@ -1,0 +1,8 @@
+# ninja log v5
+1	1872	1793648736245587652	CMakeFiles/nest_core.dir/src/arch.cpp.o	5c3a6176d25c2927
+13	4030	1793648738377587779	CMakeFiles/nest_run.dir/src/nest_run.cpp.o	f9dd7f525e8ba0db
+0	4585	1793648738941587812	CMakeFiles/nest_core.dir/src/vfs.cpp.o	40cc4d7a4f9e8c0
+11	4772	1793648739137587824	CMakeFiles/nest_core.dir/src/probe.cpp.o	ac5e6bd3df2e15e3
+3	5376	1793648739737587859	CMakeFiles/nest_core.dir/src/tracer.cpp.o	b4b6c006961b7087
+5376	5424	1793648739783454165	libnest_core.a	d48625fa2fc611a4
+5424	5513	1793648739877587868	/home/user/Pol/matryoshka/app/build/intermediates/cxx/Debug/5fzjm3k5/obj/arm64-v8a/libnest_run.so	36e31fb6c2637dc2

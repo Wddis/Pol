@@ -1,0 +1,1 @@
+/home/user/Pol/matryoshka/app/build/intermediates/cxx/Debug/5fzjm3k5/obj/arm64-v8a

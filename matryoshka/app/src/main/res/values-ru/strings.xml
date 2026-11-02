@@ -147,4 +147,17 @@
     <string name="notif_starting">Запуск виртуального устройства</string>
     <string name="notif_running">Виртуальный Android работает</string>
     <string name="action_stop_all">Остановить все</string>
+    <string name="nest_check">Проверка движка Nest</string>
+    <string name="nest_check_desc">Проверяет телефон на всё, что нужно движку Nest</string>
+    <string name="allow_background">Разрешить фон</string>
+    <string name="autostart">Автозапуск</string>
+    <string name="send_log">Отправить лог разработчику</string>
+    <string name="probe_engine">Механизмы движка</string>
+    <string name="probe_phone">Настройки телефона</string>
+    <string name="probe_info">Информация</string>
+    <string name="probe_running">Проверяю телефон…</string>
+    <string name="probe_ready">Телефон готов к движку Nest</string>
+    <string name="probe_problems">Найдено проблем: %1$d</string>
+    <string name="probe_explain">Это настоящие тесты движка на этом телефоне, а не имитация. Если что-то красное — отправьте лог.</string>
+    <string name="tester_log">Лог тестера</string>
 </resources>

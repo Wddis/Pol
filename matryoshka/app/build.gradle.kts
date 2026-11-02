@@ -12,11 +12,22 @@ android {
     defaultConfig {
         applicationId = "dev.matryoshka.vm"
         minSdk = 26
-        targetSdk = 35
-        versionCode = 1
-        versionName = "0.1.0"
+        // targetSdk 28 on purpose: from 29 on Android forbids exec() of files in app data (W^X),
+        // and the Nest engine runs the guest system's own binaries from there (like Termux).
+        // Consequence: the APK is distributed outside Google Play.
+        targetSdk = 28
+        versionCode = 2
+        versionName = "0.2.0-nest"
+
+        // Phones only: the Nest engine and the guest image are arm64.
+        ndk { abiFilters += listOf("arm64-v8a") }
+        externalNativeBuild {
+            cmake { arguments += listOf("-DANDROID_STL=c++_static") }
+        }
 
         buildConfigField("String", "SCRCPY_SERVER_VERSION", "\"2.7\"")
+        // Temporary tester tools (log export button). Turn off for public releases.
+        buildConfigField("boolean", "TESTER_TOOLS", "true")
         buildConfigField(
             "String",
             "DEFAULT_IMAGE_CATALOG",
@@ -32,6 +43,19 @@ android {
             // CI signs with the debug key unless a release keystore is configured.
             signingConfig = signingConfigs.getByName("debug")
         }
+    }
+
+    ndkVersion = "27.2.12479018"
+    externalNativeBuild {
+        cmake {
+            path = file("../nest/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    lint {
+        // Intentional, see targetSdk above.
+        disable += listOf("ExpiredTargetSdkVersion", "OldTargetApi")
     }
 
     compileOptions {
@@ -65,6 +89,8 @@ android {
 
     packaging {
         resources.excludes += "/META-INF/{AL2.0,LGPL2.1}"
+        // libnest_run.so is an executable: it must exist as a real file in nativeLibraryDir.
+        jniLibs.useLegacyPackaging = true
     }
 }
 

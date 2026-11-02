@@ -1,0 +1,4 @@
+/home/user/Pol/matryoshka/app/.cxx/RelWithDebInfo/64a535oh/arm64-v8a/CMakeFiles/nest_core.dir
+/home/user/Pol/matryoshka/app/.cxx/RelWithDebInfo/64a535oh/arm64-v8a/CMakeFiles/nest_run.dir
+/home/user/Pol/matryoshka/app/.cxx/RelWithDebInfo/64a535oh/arm64-v8a/CMakeFiles/edit_cache.dir
+/home/user/Pol/matryoshka/app/.cxx/RelWithDebInfo/64a535oh/arm64-v8a/CMakeFiles/rebuild_cache.dir

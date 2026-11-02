@@ -1,0 +1,217 @@
+// End-to-end tests of the tracer through the nest-run supervisor, using real host binaries.
+// The "rootfs" tests build a tiny guest root (binaries + their shared libraries + the dynamic
+// loader) — the same situation as an Android guest, whose binaries need the guest's own linker.
+// SPDX-License-Identifier: Apache-2.0
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <ctime>
+#include <fcntl.h>
+#include <set>
+#include <string>
+#include <sys/stat.h>
+#include <sys/wait.h>
+#include <unistd.h>
+#include <vector>
+
+#include "test.h"
+
+#ifndef NEST_RUN_PATH
+#error "NEST_RUN_PATH must point to the nest_run binary"
+#endif
+
+namespace {
+
+struct Result {
+    int status = -1;
+    std::string out, err;
+};
+
+std::string readAll(int fd) {
+    std::string s;
+    char buf[4096];
+    ssize_t n;
+    while ((n = read(fd, buf, sizeof(buf))) > 0) s.append(buf, static_cast<size_t>(n));
+    return s;
+}
+
+Result run(const std::vector<std::string>& args) {
+    int out[2], err[2];
+    if (pipe(out) != 0 || pipe(err) != 0) return {};
+    pid_t pid = fork();
+    if (pid == 0) {
+        dup2(out[1], 1);
+        dup2(err[1], 2);
+        close(out[0]);
+        close(err[0]);
+        std::vector<char*> av;
+        for (auto& a : args) av.push_back(const_cast<char*>(a.c_str()));
+        av.push_back(nullptr);
+        execv(av[0], av.data());
+        _exit(127);
+    }
+    close(out[1]);
+    close(err[1]);
+    Result r;
+    // stderr is small; read stdout first, then stderr.
+    r.out = readAll(out[0]);
+    r.err = readAll(err[0]);
+    close(out[0]);
+    close(err[0]);
+    int st = 0;
+    waitpid(pid, &st, 0);
+    r.status = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + WTERMSIG(st);
+    return r;
+}
+
+std::string trim(std::string s) {
+    while (!s.empty() && (s.back() == '\n' || s.back() == ' ')) s.pop_back();
+    return s;
+}
+
+void writeFile(const std::string& path, const std::string& content, mode_t mode = 0644) {
+    FILE* f = fopen(path.c_str(), "w");
+    fputs(content.c_str(), f);
+    fclose(f);
+    chmod(path.c_str(), mode);
+}
+
+std::string mktmp() {
+    char tpl[] = "/tmp/nesttrXXXXXX";
+    return mkdtemp(tpl);
+}
+
+void mkdirs(const std::string& path) {
+    std::string cur;
+    for (size_t i = 1; i <= path.size(); i++) {
+        if (i == path.size() || path[i] == '/') {
+            cur = path.substr(0, i);
+            mkdir(cur.c_str(), 0755);
+        }
+    }
+}
+
+// Copies `bin` and every library it needs (per ldd) into root, preserving absolute paths.
+void copyWithDeps(const std::string& root, const std::string& bin, const std::string& as = "") {
+    std::set<std::string> files{bin};
+    std::string cmd = "ldd " + bin + " 2>/dev/null";
+    FILE* p = popen(cmd.c_str(), "r");
+    char line[1024];
+    while (p && fgets(line, sizeof(line), p)) {
+        std::string l(line);
+        size_t slash = l.find('/');
+        if (slash == std::string::npos) continue;
+        std::string path = l.substr(slash, l.find_first_of(" (\n", slash) - slash);
+        files.insert(path);
+    }
+    if (p) pclose(p);
+    for (const auto& f : files) {
+        std::string dst = root + (f == bin && !as.empty() ? as : f);
+        mkdirs(dst.substr(0, dst.rfind('/')));
+        std::string c = "cp -L '" + f + "' '" + dst + "'";
+        if (system(c.c_str()) != 0) fprintf(stderr, "copy failed: %s\n", c.c_str());
+    }
+}
+
+const std::string& rootfs() {
+    static std::string root;
+    if (!root.empty()) return root;
+    root = mktmp();
+    copyWithDeps(root, "/bin/cat");
+    copyWithDeps(root, "/bin/dash", "/bin/sh");
+    copyWithDeps(root, "/usr/bin/readlink");
+    copyWithDeps(root, "/usr/bin/id");
+    mkdirs(root + "/proc");
+    mkdirs(root + "/dev");
+    mkdirs(root + "/tmp");
+    writeFile(root + "/hello.txt", "hello from the guest root\n");
+    writeFile(root + "/script.sh", "#!/bin/sh\necho script-ok \"$1\"\n", 0755);
+    (void)!symlink("/bin/cat", (root + "/bin/mycat").c_str());  // absolute guest symlink
+    return root;
+}
+
+std::vector<std::string> guestCmd(std::vector<std::string> extra) {
+    std::vector<std::string> a{NEST_RUN_PATH, "-b", "/=" + rootfs(), "-b", "/proc=/proc", "-b", "/dev=/dev", "-s", "--"};
+    a.insert(a.end(), extra.begin(), extra.end());
+    return a;
+}
+
+std::string hostDataDir() {
+    static std::string d;
+    if (d.empty()) {
+        d = mktmp();
+        writeFile(d + "/hello.txt", "bound file\n");
+    }
+    return d;
+}
+
+}  // namespace
+
+TEST(tracer_bind_on_host_root) {
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "-b", "/etc/nest-test=" + hostDataDir(), "--", "/bin/cat",
+                  "/etc/nest-test/hello.txt"});
+    EXPECT_EQ(r.status, 0);
+    EXPECT_EQ(r.out, "bound file\n");
+}
+
+TEST(tracer_getcwd_reports_guest_path) {
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "-b", "/etc/nest-test=" + hostDataDir(), "--", "/bin/dash", "-c",
+                  "cd /etc/nest-test && pwd -P"});
+    EXPECT_EQ(trim(r.out), "/etc/nest-test");
+}
+
+TEST(tracer_follows_children) {
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "-b", "/etc/nest-test=" + hostDataDir(), "--", "/bin/dash", "-c",
+                  "/bin/cat /etc/nest-test/hello.txt; (/bin/cat /etc/nest-test/hello.txt) | /bin/cat"});
+    EXPECT_EQ(r.out, "bound file\nbound file\n");
+}
+
+TEST(tracer_rootfs_exec_uses_guest_loader) {
+    auto r = run(guestCmd({"/bin/cat", "/hello.txt"}));
+    EXPECT_EQ(r.status, 0);
+    EXPECT_EQ(r.out, "hello from the guest root\n");
+    EXPECT_TRUE(r.err.find("exec_rewrites=1") != std::string::npos);
+    if (r.status != 0) fprintf(stderr, "%s", r.err.c_str());
+}
+
+TEST(tracer_rootfs_shell_and_children) {
+    auto r = run(guestCmd({"/bin/sh", "-c", "/bin/cat /hello.txt && /bin/mycat /hello.txt"}));
+    EXPECT_EQ(r.out, "hello from the guest root\nhello from the guest root\n");
+}
+
+TEST(tracer_rootfs_shebang_script) {
+    auto r = run(guestCmd({"/script.sh", "arg1"}));
+    EXPECT_EQ(trim(r.out), "script-ok arg1");
+}
+
+TEST(tracer_rootfs_proc_links_are_guest_paths) {
+    auto r = run(guestCmd({"/bin/sh", "-c", "cd /tmp && /usr/bin/readlink /proc/self/cwd"}));
+    EXPECT_EQ(trim(r.out), "/tmp");
+}
+
+TEST(tracer_rootfs_missing_file_errors_normally) {
+    auto r = run(guestCmd({"/bin/cat", "/does/not/exist"}));
+    EXPECT_TRUE(r.status != 0);
+    EXPECT_TRUE(r.err.find("No such file") != std::string::npos);
+}
+
+TEST(tracer_fake_root_identity) {
+    auto r = run(guestCmd({"/usr/bin/id", "-u"}));
+    EXPECT_EQ(trim(r.out), "0");
+    EXPECT_TRUE(r.err.find("faked=") != std::string::npos && r.err.find("faked=0 ") == std::string::npos);
+}
+
+TEST(tracer_benchmark_stat_loop) {
+    const char* loop = "i=0; while [ $i -lt 3000 ]; do [ -e /hello.txt ]; i=$((i+1)); done; echo done";
+    timespec a{}, b{}, c{};
+    clock_gettime(CLOCK_MONOTONIC, &a);
+    auto traced = run(guestCmd({"/bin/sh", "-c", loop}));
+    clock_gettime(CLOCK_MONOTONIC, &b);
+    auto native = run({"/bin/dash", "-c", loop});
+    clock_gettime(CLOCK_MONOTONIC, &c);
+    double tt = (b.tv_sec - a.tv_sec) * 1e3 + (b.tv_nsec - a.tv_nsec) / 1e6;
+    double tn = (c.tv_sec - b.tv_sec) * 1e3 + (c.tv_nsec - b.tv_nsec) / 1e6;
+    EXPECT_EQ(trim(traced.out), "done");
+    fprintf(stderr, "  bench: 3000 stat() traced %.1f ms vs native %.1f ms (%.1f us/intercepted call)\n", tt, tn,
+            (tt - tn) * 1000.0 / 3000.0);
+}

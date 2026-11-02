@@ -17,6 +17,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.Info
+import androidx.compose.material.icons.outlined.RocketLaunch
 import androidx.compose.material3.Button
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.LinearProgressIndicator
@@ -46,7 +47,7 @@ import dev.matryoshka.vm.ui.theme.Brand
 import kotlinx.coroutines.launch
 
 @Composable
-fun SystemScreen(onAbout: () -> Unit) {
+fun SystemScreen(onAbout: () -> Unit, onNestCheck: () -> Unit = {}) {
     val m = manager()
     val scope = rememberCoroutineScope()
     var report by remember { mutableStateOf<HostReport?>(null) }
@@ -58,6 +59,15 @@ fun SystemScreen(onAbout: () -> Unit) {
             Column(Modifier.statusBarsPadding().padding(top = 8.dp, start = 4.dp)) {
                 Text(stringResource(R.string.tab_system), style = MaterialTheme.typography.headlineMedium)
                 Text(stringResource(R.string.system_subtitle), style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        item {
+            Spacer(Modifier.height(12.dp))
+            Panel {
+                ListRow(
+                    Icons.Outlined.RocketLaunch, stringResource(R.string.nest_check), stringResource(R.string.nest_check_desc),
+                    onClick = onNestCheck,
+                )
             }
         }
         val r = report

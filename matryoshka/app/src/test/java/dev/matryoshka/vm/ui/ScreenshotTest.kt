@@ -67,5 +67,6 @@ class ScreenshotTest {
     @Test fun create() = shot("02-create") { CreateVmScreen({}, {}, {}) }
     @Test fun deviceOverview() = shot("03-device") { DeviceScreen("vm-games", {}, {}, {}, {}) }
     @Test fun settings() = shot("04-settings") { VmSettingsScreen("vm-work", {}, {}) }
-    @Test fun system() = shot("05-system") { SystemScreen {} }
+    @Test fun system() = shot("05-system") { SystemScreen(onAbout = {}) }
+    @Test fun nestCheck() = shot("06-nest-check") { dev.matryoshka.vm.ui.system.NestCheckScreen(onBack = {}) }
 }
