@@ -390,7 +390,15 @@ cmd_status() {
   else warn "Связи с телефоном нет — нажмите «Запустить» (может понадобиться Wi-Fi на минуту)"; fi
   say "«Отладка по USB»: держите ${B}включённой${N}, пока пользуетесь Claude"
   local v; v="$(adb_ok && chrome_version)"
-  [ -n "$v" ] && ok "Chrome: $v" || warn "Chrome недоступен"
+  if [ -n "$v" ]; then ok "Chrome: $v"
+  elif adb_ok; then
+    local d; d="$(adb -s "$SERIAL" shell 'echo "a=$(settings get global adb_enabled) p=$(pidof '"$ACM_CHROME_PACKAGE"')"' 2>/dev/null)"
+    case "$d" in
+      *a=0*) warn "Chrome недоступен: выключена «Отладка по USB» — включите её" ;;
+      *"p= "*|*"p=") warn "Chrome закрыт — сервер откроет его сам при первой задаче" ;;
+      *) warn "Chrome запущен без отладки — сервер перезапустит его при первой задаче (вкладки сохранятся)" ;;
+    esac
+  else warn "Chrome недоступен (нет связи с телефоном)"; fi
   [ "$ACM_ALL_TABS" = 1 ] && say "Ваши вкладки: Claude ${B}видит${N}" || say "Ваши вкладки: Claude ${B}не видит${N} (только свои)"
 }
 

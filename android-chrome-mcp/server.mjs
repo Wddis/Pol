@@ -17760,6 +17760,20 @@ var shq = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'", Android = class {
       ].join(" ")
     ), prev;
   }
+  /** Why is Chrome's DevTools socket missing? */
+  async diagnose() {
+    let out = await this.shell(
+      `echo "adb=$(settings get global adb_enabled)"; echo "pid=$(pidof ${shq(this.chromePackage)})"; grep -c '@chrome_devtools_remote$' /proc/net/unix`
+    ).catch(() => ""), adb = !/adb=0/.test(out), running = /pid=\d+/.test(out), last = out.trim().split(`
+`).pop() || "0", socket = /^\d+$/.test(last.trim()) && Number(last.trim()) > 0;
+    return { adbEnabled: adb, chromeRunning: running, socket };
+  }
+  /** Restart Chrome so it picks up the debugging setting (tabs are restored by Chrome). */
+  async restartChrome() {
+    let prev = await this.foreground();
+    return await this.shell(`am force-stop ${shq(this.chromePackage)}`).catch(() => {
+    }), await this.shell(`monkey -p ${shq(this.chromePackage)} -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1`), prev;
+  }
   async startChrome() {
     let prev = await this.foreground();
     return await this.shell(`monkey -p ${shq(this.chromePackage)} -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1`), prev;
@@ -18094,9 +18108,13 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
       try {
         return await this.http.version();
       } catch {
-        this.log("Chrome DevTools not reachable, starting Chrome");
-        let prev = await this.android.startChrome(), lastErr;
-        for (let i = 0; i < 40; i++) {
+        let d = await this.android.diagnose();
+        if (this.log(`devtools missing: ${JSON.stringify(d)}`), !d.adbEnabled)
+          throw new CdpError("\xAB\u041E\u0442\u043B\u0430\u0434\u043A\u0430 \u043F\u043E USB\xBB \u0432\u044B\u043A\u043B\u044E\u0447\u0435\u043D\u0430 \u0432 \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0430\u0445 \u0440\u0430\u0437\u0440\u0430\u0431\u043E\u0442\u0447\u0438\u043A\u0430. \u0412\u043A\u043B\u044E\u0447\u0438\u0442\u0435 \u0435\u0451 (\u043A\u0430\u0431\u0435\u043B\u044C \u043D\u0435 \u043D\u0443\u0436\u0435\u043D) \u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u0435.");
+        let prev = null;
+        d.socket ? this.log("socket exists: re-forwarding only") : d.chromeRunning ? (prev = await this.android.restartChrome(), this.log("Chrome ran without debugging socket: restarted it")) : (prev = await this.android.startChrome(), this.log("Chrome was not running: started it"));
+        let lastErr;
+        for (let i = 0; i < 60; i++) {
           await sleep(250);
           try {
             await this.android.ensureForward();
@@ -18107,7 +18125,7 @@ var sleep = (ms) => new Promise((r) => setTimeout(r, ms)), KEYS = {
           }
         }
         throw await this.android.restore(prev), new CdpError(
-          `Chrome DevTools is unavailable (${lastErr?.message}). Check that "USB debugging" is ON in Developer options and that adb is connected (run: chrome-mcp status).`
+          `Chrome \u043D\u0435 \u043E\u0442\u043A\u0440\u044B\u0432\u0430\u0435\u0442 DevTools (${lastErr?.message}). \u041F\u0440\u043E\u0432\u0435\u0440\u044C\u0442\u0435, \u0447\u0442\u043E \u0432\u043A\u043B\u044E\u0447\u0435\u043D\u0430 \xAB\u041E\u0442\u043B\u0430\u0434\u043A\u0430 \u043F\u043E USB\xBB, \u043E\u0442\u043A\u0440\u043E\u0439\u0442\u0435 Chrome \u0432\u0440\u0443\u0447\u043D\u0443\u044E \u0438 \u043F\u043E\u0432\u0442\u043E\u0440\u0438\u0442\u0435.`
         );
       }
     }

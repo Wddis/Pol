@@ -85,11 +85,18 @@ export class Browser {
       try {
         return await this.http.version();
       } catch {
-        // Chrome is not running (or was killed by the battery manager): start it.
-        this.log('Chrome DevTools not reachable, starting Chrome');
-        const prev = await this.android.startChrome();
+        // Find out why the DevTools socket is missing and fix what we can.
+        const d = await this.android.diagnose();
+        this.log(`devtools missing: ${JSON.stringify(d)}`);
+        if (!d.adbEnabled) {
+          throw new CdpError('«Отладка по USB» выключена в настройках разработчика. Включите её (кабель не нужен) и повторите.');
+        }
+        let prev = null;
+        if (d.socket) this.log('socket exists: re-forwarding only');
+        else if (d.chromeRunning) { prev = await this.android.restartChrome(); this.log('Chrome ran without debugging socket: restarted it'); }
+        else { prev = await this.android.startChrome(); this.log('Chrome was not running: started it'); }
         let lastErr;
-        for (let i = 0; i < 40; i++) {
+        for (let i = 0; i < 60; i++) {
           await sleep(250);
           try {
             await this.android.ensureForward();
@@ -103,7 +110,7 @@ export class Browser {
         }
         await this.android.restore(prev);
         throw new CdpError(
-          `Chrome DevTools is unavailable (${lastErr?.message}). Check that "USB debugging" is ON in Developer options and that adb is connected (run: chrome-mcp status).`,
+          `Chrome не открывает DevTools (${lastErr?.message}). Проверьте, что включена «Отладка по USB», откройте Chrome вручную и повторите.`,
         );
       }
     }

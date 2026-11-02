@@ -90,6 +90,27 @@ export class Android {
     return prev;
   }
 
+  /** Why is Chrome's DevTools socket missing? */
+  async diagnose() {
+    const out = await this.shell(
+      `echo "adb=$(settings get global adb_enabled)"; echo "pid=$(pidof ${shq(this.chromePackage)})"; ` +
+      `grep -c '@chrome_devtools_remote$' /proc/net/unix`,
+    ).catch(() => '');
+    const adb = !/adb=0/.test(out); // unknown counts as enabled
+    const running = /pid=\d+/.test(out);
+    const last = out.trim().split('\n').pop() || '0';
+    const socket = /^\d+$/.test(last.trim()) && Number(last.trim()) > 0;
+    return { adbEnabled: adb, chromeRunning: running, socket };
+  }
+
+  /** Restart Chrome so it picks up the debugging setting (tabs are restored by Chrome). */
+  async restartChrome() {
+    const prev = await this.foreground();
+    await this.shell(`am force-stop ${shq(this.chromePackage)}`).catch(() => {});
+    await this.shell(`monkey -p ${shq(this.chromePackage)} -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1`);
+    return prev;
+  }
+
   async startChrome() {
     const prev = await this.foreground();
     await this.shell(`monkey -p ${shq(this.chromePackage)} -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1`);
