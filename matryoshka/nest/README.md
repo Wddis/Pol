@@ -15,6 +15,10 @@ KVM. Это движок для телефонов вроде Redmi Note 8. По
 | fast path | `src/preload.cpp`, `src/fastpath.h` | `libnest_preload.so` подгружается в каждый гостевой процесс (трассировщик подставляет `LD_PRELOAD` при каждом `execve`), сам переводит абсолютные пути и вызывает ядро с меткой в 6-м регистре; seccomp пропускает такие вызовы без остановки. Экспортирует только обёртки libc |
 | vbinder | `src/vbinder.*`, `src/vbinder_client.*`, `src/vbinder_proto.h` | Binder-драйвер в userspace для трёх контекстов (binder / hwbinder / vndbinder). Брокер работает потоком внутри `nest-run` (`-B сокет`), клиент — в `libnest_preload.so` и прозрачно подменяет `/dev/*binder` для неизменённого `libbinder`. Реализованы узлы и handles, стеки транзакций у каждого потока (вложенные вызовы), oneway, `BR_ACQUIRE`/`BR_RELEASE`, уведомления о смерти, передача fd (`FD`, `FDA`), scatter-gather буферы (`PTR`, hwbinder), пул потоков. Данные транзакций копируются один раз (`process_vm_readv` в общий буфер получателя). Отправителю сообщается виртуальный UID из трассировщика |
 | android | `src/android_profile.*`, `src/guest_log.*`, `src/vfs_share.*` | Окружение для Android-гостя без root: свой `/dev` с разрешёнными приложению устройствами, `/dev/kmsg` в файл (журнал загрузки), подмена `/proc/version`, `/proc/filesystems`, `/proc/cmdline` (без selinuxfs — libselinux гостя видит SELinux выключенным), SELinux-атрибуты процессов (`/proc/*/attr/*`), APEX-модули; ранний logcat гостя из `/dev/socket/logdw`; живая таблица монтирования для быстрого пути. Эмуляция `mount`/`umount2`/`pivot_root`/`reboot` и др., включая случай SIGSYS от seccomp-политики Android |
+| caps / pid 1 | `src/tracer.cpp` | Виртуальные capabilities (`capget`/`capset`, bounding/ambient, securebits, keepcaps) с переходами ядра при `setuid` и `exec`; гостевой init видит себя PID 1 (`getpid`, `kill`, `/proc/1`), `kill(-1)` не выходит за пределы гостя; `setrlimit` выше лимита хоста для привилегированного гостя |
+| cgroups / mounts | `src/tracer.cpp`, `src/vfs.*` | Новое монтирование скрывает всё смонтированное под ним (кроме инфраструктуры движка); виртуальные cgroup/cpuset с управляющими файлами; `getsockname`/`accept` возвращают гостевые пути сокетов |
+| bpf | `src/bpf_emu.*` | eBPF-карты и программы в userspace (для bpfloader, netd, статистики трафика): семантика hash/array/per-CPU/LRU, pin/get в `/sys/fs/bpf`, настоящие fd через подмену вызова на `openat` |
+| logcat tee | `src/guest_log.*` | Копия всего logcat гостя в `STATE/logcat.txt` с пересылкой в гостевой logd |
 | probe | `src/probe.*` | Реальная проверка механизмов на телефоне (`libnest_run.so --probe DIR`) |
 | nest-run | `src/nest_run.cpp` | Супервизор: `nest-run -b /=rootfs -b /data=… -- /system/bin/sh` |
 
@@ -28,7 +32,7 @@ KVM. Это движок для телефонов вроде Redmi Note 8. По
 cmake -S nest -B build-nest && cmake --build build-nest -j && ./build-nest/nest_tests
 ```
 
-38 тестов. Тесты трассировщика собирают мини-rootfs из настоящих бинарников Linux вместе с их
+58 тестов (+ 32-битные варианты на хостах с `g++-multilib`). Тесты трассировщика собирают мини-rootfs из настоящих бинарников Linux вместе с их
 библиотеками и загрузчиком. Это та же ситуация, что с гостевым Android, которому нужен свой
 `linker64`. Проверяются: чужой корень, запуск через гостевой загрузчик, shebang, абсолютные
 гостевые симлинки, потомки, `getcwd`, `/proc/self/*`, поддельный root, ошибки `ENOENT`, а также
@@ -37,4 +41,10 @@ cmake -S nest -B build-nest && cmake --build build-nest -j && ./build-nest/nest_
 ## Дальше
 
 - **Оптимизация перехвата:** кэш разрешённых путей; перевод в быстрый путь `getuid` и других частых вызовов.
-- **Этап 3:** загрузка Android 11.
+- **Этап 3 (идёт):** загрузка Android 11. На локальном стенде (qemu-user вместо процессора
+  телефона) настоящий init LineageOS 18.1 доходит до `zygote-start` и `boot`: работают logd, lmkd,
+  servicemanager, hwservicemanager, vold, apexd, bpfloader, statsd, zygote/zygote64, surfaceflinger,
+  audioserver и HAL-службы. Дальше стенд упирается в ограничения qemu-user (нет seccomp для гостя,
+  нет netlink sock_diag), поэтому следующий шаг — пробная загрузка на телефоне (экран «Проверка
+  движка Nest» → «Пробная загрузка Android 11»).
+- **Этап 4:** графика (свой HWC/gralloc поверх GPU хоста), ввод, звук, сеть.

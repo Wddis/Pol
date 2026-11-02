@@ -160,4 +160,21 @@
     <string name="probe_problems">Найдено проблем: %1$d</string>
     <string name="probe_explain">Это настоящие тесты движка на этом телефоне, а не имитация. Если что-то красное — отправьте лог.</string>
     <string name="tester_log">Лог тестера</string>
+    <string name="nest_boot_title">Пробная загрузка Android 11</string>
+    <string name="nest_boot_explain">Запускает настоящую систему Android 11 на движке Nest прямо на этом телефоне. Экрана пока нет: этот этап проверяет, как далеко загрузится система. Не закрывайте экран, затем отправьте лог.</string>
+    <string name="nest_boot_not_installed">Образ системы не скачан (692 МБ, после распаковки 1,6 ГБ).</string>
+    <string name="nest_boot_downloading">Скачивание… %1$d / %2$d МБ</string>
+    <string name="nest_boot_verifying">Проверка загрузки…</string>
+    <string name="nest_boot_extracting">Распаковка… %1$d%%</string>
+    <string name="nest_boot_ready">Готово к загрузке.</string>
+    <string name="nest_boot_running">Загрузка · этап: %1$s</string>
+    <string name="nest_boot_stopped">Остановлено (код %1$d) через %2$d с · последний этап: %3$s</string>
+    <string name="nest_boot_failed">Ошибка: %1$s</string>
+    <string name="nest_boot_download">Скачать образ системы</string>
+    <string name="nest_boot_retry">Повторить</string>
+    <string name="nest_boot_start">Загрузить Android 11</string>
+    <string name="nest_boot_stop">Остановить</string>
+    <string name="nest_boot_show_logcat">Показать logcat</string>
+    <string name="nest_boot_show_kmsg">Показать лог загрузки</string>
+    <string name="nest_boot_binder_trace">Подробный лог binder (файл больше)</string>
 </resources>

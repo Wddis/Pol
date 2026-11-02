@@ -161,4 +161,21 @@
     <string name="probe_problems">Problems found: %1$d</string>
     <string name="probe_explain">These are real tests of the engine on this phone, not a simulation. Send the log if anything is red.</string>
     <string name="tester_log">Tester log</string>
+    <string name="nest_boot_title">Android 11 boot test</string>
+    <string name="nest_boot_explain">Boots the real Android 11 system under the Nest engine on this phone. There is no screen yet: this stage checks how far the system gets. Keep this screen open, then send the log.</string>
+    <string name="nest_boot_not_installed">System image is not downloaded (692 MB, unpacks to 1.6 GB).</string>
+    <string name="nest_boot_downloading">Downloading… %1$d / %2$d MB</string>
+    <string name="nest_boot_verifying">Checking the download…</string>
+    <string name="nest_boot_extracting">Unpacking… %1$d%%</string>
+    <string name="nest_boot_ready">Ready to boot.</string>
+    <string name="nest_boot_running">Booting · stage: %1$s</string>
+    <string name="nest_boot_stopped">Stopped (code %1$d) after %2$d s · last stage: %3$s</string>
+    <string name="nest_boot_failed">Error: %1$s</string>
+    <string name="nest_boot_download">Download system image</string>
+    <string name="nest_boot_retry">Retry</string>
+    <string name="nest_boot_start">Boot Android 11</string>
+    <string name="nest_boot_stop">Stop</string>
+    <string name="nest_boot_show_logcat">Show logcat</string>
+    <string name="nest_boot_show_kmsg">Show boot log</string>
+    <string name="nest_boot_binder_trace">Detailed binder log (bigger file)</string>
 </resources>

@@ -7,6 +7,7 @@ import android.os.Process
 import androidx.core.content.FileProvider
 import dev.matryoshka.vm.BuildConfig
 import dev.matryoshka.vm.core.VmManager
+import dev.matryoshka.vm.core.nest.NestGuest
 import dev.matryoshka.vm.core.nest.ProbeReport
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -44,6 +45,19 @@ object TesterLog {
                 w.appendLine("-- raw")
                 w.appendLine(p.raw)
             } ?: w.appendLine("== Nest probe: not run yet")
+            w.appendLine()
+
+            w.appendLine("== Nest boot test: state=${NestGuest.state.value} image=${NestGuest.installedImage(context)}")
+            for ((title, f, n) in listOf(
+                Triple("engine output", NestGuest.engineOut(context), 300),
+                Triple("guest kmsg", NestGuest.kmsg(context), 1500),
+                Triple("guest logcat", NestGuest.logcat(context), 4000),
+                Triple("binder trace", NestGuest.binderLog(context), 3000),
+            )) {
+                if (!f.exists()) continue
+                w.appendLine("-- $title (${f.length()} bytes, last $n lines)")
+                NestGuest.tail(f, n, maxBytes = 4 * 1024 * 1024).forEach { w.appendLine(it) }
+            }
             w.appendLine()
 
             w.appendLine("== Virtual devices")

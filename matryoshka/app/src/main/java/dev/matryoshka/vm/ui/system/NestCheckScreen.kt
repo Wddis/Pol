@@ -40,6 +40,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -52,6 +53,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.matryoshka.vm.R
 import dev.matryoshka.vm.core.debug.TesterLog
+import dev.matryoshka.vm.core.nest.NestGuest
 import dev.matryoshka.vm.core.nest.NestProbe
 import dev.matryoshka.vm.core.nest.ProbeLevel
 import dev.matryoshka.vm.core.nest.ProbeReport
@@ -108,6 +110,8 @@ fun NestCheckScreen(onBack: () -> Unit) {
                 ) {
                     Icon(Icons.Outlined.BugReport, null); Spacer(Modifier.width(8.dp)); Text(stringResource(R.string.send_log))
                 }
+                Spacer(Modifier.height(12.dp))
+                NestBootPanel()
             }
             val r = report
             if (r != null) {
@@ -137,6 +141,99 @@ fun NestCheckScreen(onBack: () -> Unit) {
                             },
                         )
                     }
+                }
+            }
+        }
+    }
+}
+
+/** Tester tool: boots the real Android 11 guest under Nest and shows its boot log live. */
+@Composable
+private fun NestBootPanel() {
+    val context = LocalContext.current
+    val view = androidx.compose.ui.platform.LocalView.current
+    val state by NestGuest.state.collectAsState()
+    var lines by remember { mutableStateOf(emptyList<String>()) }
+    var stage by remember { mutableStateOf<String?>(null) }
+    var showLogcat by remember { mutableStateOf(false) }
+    var binderTrace by remember { mutableStateOf(NestGuest.verboseBinder) }
+    LaunchedEffect(Unit) { NestGuest.refresh(context) }
+    androidx.compose.runtime.DisposableEffect(state) {
+        view.keepScreenOn = state is NestGuest.State.Running  // MIUI may freeze a backgrounded boot
+        onDispose { view.keepScreenOn = false }
+    }
+    LaunchedEffect(state, showLogcat) {
+        while (state is NestGuest.State.Running || state is NestGuest.State.Stopped) {
+            val f = if (showLogcat) NestGuest.logcat(context) else NestGuest.kmsg(context)
+            lines = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { NestGuest.tail(f, 30) }
+            stage = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { NestGuest.bootStage(context) }
+            if (state is NestGuest.State.Stopped) break
+            kotlinx.coroutines.delay(2000)
+        }
+    }
+    Panel {
+        Column(Modifier.padding(18.dp)) {
+            Text(stringResource(R.string.nest_boot_title), style = MaterialTheme.typography.titleMedium)
+            Spacer(Modifier.height(4.dp))
+            Text(stringResource(R.string.nest_boot_explain), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.height(10.dp))
+            val s = state
+            val status = when (s) {
+                NestGuest.State.NotInstalled -> stringResource(R.string.nest_boot_not_installed)
+                is NestGuest.State.Downloading -> stringResource(R.string.nest_boot_downloading, s.done / 1_000_000, s.total / 1_000_000)
+                NestGuest.State.Verifying -> stringResource(R.string.nest_boot_verifying)
+                is NestGuest.State.Extracting -> stringResource(R.string.nest_boot_extracting, (100 * s.done / s.total.coerceAtLeast(1)).toInt())
+                NestGuest.State.Ready -> stringResource(R.string.nest_boot_ready)
+                is NestGuest.State.Running -> stringResource(R.string.nest_boot_running, stage ?: "…")
+                is NestGuest.State.Stopped -> stringResource(R.string.nest_boot_stopped, s.exitCode, s.seconds, stage ?: "—")
+                is NestGuest.State.Failed -> stringResource(R.string.nest_boot_failed, s.message)
+            }
+            Text(status, style = MaterialTheme.typography.bodyMedium)
+            when (s) {
+                is NestGuest.State.Downloading -> LinearProgressIndicator(
+                    progress = { s.done.toFloat() / s.total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                is NestGuest.State.Extracting -> LinearProgressIndicator(
+                    progress = { s.done.toFloat() / s.total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
+                NestGuest.State.Verifying, is NestGuest.State.Running ->
+                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                else -> Unit
+            }
+            Spacer(Modifier.height(10.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                when (s) {
+                    NestGuest.State.NotInstalled, is NestGuest.State.Failed ->
+                        Button(onClick = { NestGuest.install(context) }) {
+                            Text(stringResource(if (NestGuest.installedImage(context) == null) R.string.nest_boot_download else R.string.nest_boot_retry))
+                        }
+                    NestGuest.State.Ready, is NestGuest.State.Stopped ->
+                        Button(onClick = { NestGuest.verboseBinder = binderTrace; NestGuest.boot(context) }) {
+                            Text(stringResource(R.string.nest_boot_start))
+                        }
+                    is NestGuest.State.Running ->
+                        Button(onClick = { NestGuest.stop() }) { Text(stringResource(R.string.nest_boot_stop)) }
+                    else -> Unit
+                }
+                if (s is NestGuest.State.Running || s is NestGuest.State.Stopped) {
+                    OutlinedButton(onClick = { showLogcat = !showLogcat }) {
+                        Text(stringResource(if (showLogcat) R.string.nest_boot_show_kmsg else R.string.nest_boot_show_logcat))
+                    }
+                }
+            }
+            if (s is NestGuest.State.Ready || s is NestGuest.State.Stopped) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(checked = binderTrace, onCheckedChange = { binderTrace = it })
+                    Text(stringResource(R.string.nest_boot_binder_trace), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (lines.isNotEmpty()) {
+                Spacer(Modifier.height(10.dp))
+                androidx.compose.foundation.text.selection.SelectionContainer {
+                    Text(
+                        lines.joinToString("\n"),
+                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
         }
