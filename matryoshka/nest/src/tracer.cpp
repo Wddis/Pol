@@ -20,11 +20,14 @@
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/un.h>
+#include <sys/mount.h>
+#include <sys/reboot.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
 #include "arch.h"
 #include "fastpath.h"
+#include "vfs_share.h"
 
 #ifndef PTRACE_EVENT_SECCOMP
 #define PTRACE_EVENT_SECCOMP 7
@@ -57,6 +60,7 @@ enum class Kind {
     Sock,       // connect/bind with AF_UNIX path
     FakeZero,   // skip syscall, return 0 (privileged no-ops)
     Ids,        // uid/gid get/set family, answered from the virtual credentials
+    Emulate,    // privileged calls a guest init needs (mount, pivot_root, ...)
     FakeChown,  // translate then skip, return 0
 };
 
@@ -145,6 +149,10 @@ std::vector<Spec> buildSpecs() {
         s.push_back(x);
     }
     s.push_back({SYS_fchown, Kind::FakeZero});
+    for (long nr : {SYS_mount, SYS_umount2, SYS_pivot_root, SYS_chroot, SYS_sethostname, SYS_setdomainname,
+                    SYS_swapon, SYS_swapoff, SYS_acct, SYS_reboot, SYS_unshare, SYS_setns, SYS_init_module,
+                    SYS_finit_module, SYS_delete_module})
+        s.push_back({nr, Kind::Emulate});
 #if defined(__x86_64__)
     path(SYS_open, CWD, 0, true, 1, O_NOFOLLOW);
     path(SYS_creat, CWD, 0);
@@ -310,7 +318,22 @@ bool Tracer::rewritePath(pid_t tid, Regs& r, int dirfdArg, int pathArg, bool fol
         }
     }
     std::string full = Vfs::join(base.empty() ? "/" : base, path);
-    if (full.compare(0, 6, "/proc/") == 0) full = fixProcSelf(tid, full);
+    if (full.compare(0, 6, "/proc/") == 0) {
+        full = fixProcSelf(tid, full);
+        if (!cfg_.procAttrDir.empty()) {
+            // /proc/<pid>[/task/<tid>]/attr/<name>  ->  <procAttrDir>/<name>
+            size_t a = full.find("/attr/");
+            if (a != std::string::npos && full.find('/', a + 6) == std::string::npos) {
+                bool ok = true;
+                for (size_t i = 6; i < a; i++)
+                    if (!isdigit(static_cast<unsigned char>(full[i])) && full[i] != '/' &&
+                        full.compare(i, 4, "task") != 0) {
+                        if (full.compare(i - 1, 5, "/task") != 0) ok = false;
+                    }
+                if (ok) full = cfg_.procAttrDir + full.substr(a + 5);
+            }
+        }
+    }
     if (path[strlen(path) - 1] == '/' && full != "/") full += '/';
     std::string host, guest;
     if (!cfg_.vfs.resolve(full, "/", followLast, host, &guest)) return false;
@@ -407,10 +430,77 @@ bool inspectExecutable(const std::string& hostPath, ExecInfo& info) {
 
 }  // namespace
 
+std::string Tracer::guestExeOf(pid_t tid) {
+    std::lock_guard<std::mutex> g(credsMu_);
+    auto it = exe_.find(tgidOf(tid));
+    return it == exe_.end() ? std::string() : it->second;
+}
+
+// LD_PRELOAD entry for a program. Android's linker only loads libraries from directories its
+// namespace permits, so the library is exposed next to the program's own libraries.
+std::string Tracer::preloadEntryFor(const std::string& prog) {
+    if (cfg_.preloadHost.empty()) return {};
+    if (!cfg_.androidPreload) return "LD_PRELOAD=" + cfg_.preloadHost;
+    std::string dir = "/system/lib64";
+    if (prog.rfind("/vendor/", 0) == 0 || prog.rfind("/odm/", 0) == 0) {
+        dir = "/vendor/lib64";
+    } else if (prog.rfind("/apex/", 0) == 0) {
+        size_t e = prog.find('/', 6);
+        if (e != std::string::npos) dir = prog.substr(0, e) + "/lib64";
+    }
+    std::string guest = dir + "/libnest_preload.so";
+    const Mount* m = nullptr;
+    cfg_.vfs.mapLexical(guest, &m);
+    if (!m || m->guest != guest) {
+        std::string host;
+        if (cfg_.vfs.resolve(guest, "/", false, host)) ensureMountPoint(host, false);
+        cfg_.vfs.bind(guest, cfg_.preloadHost, true);
+        publishVfs();
+    }
+    return "LD_PRELOAD=" + guest;
+}
+
 bool Tracer::rewriteExec(pid_t tid, Regs& r, uint64_t& scratch) {
     stats_.execs++;
     char path[PATH_MAX];
     if (!r.arg[0] || !readString(tid, r.arg[0], path, sizeof(path))) return false;
+    // Re-exec of itself (init does this for subcontexts): /proc/self/exe is the loader for
+    // programs started through it, so substitute the real guest program.
+    {
+        std::string p = fixProcSelf(tid, path);
+        if (p.rfind("/proc/", 0) == 0 && p.size() > 10 && p.compare(p.size() - 4, 4, "/exe") == 0) {
+            pid_t pid = static_cast<pid_t>(atoi(p.c_str() + 6));
+            std::string exe = guestExeOf(pid);
+            if (!exe.empty()) snprintf(path, sizeof(path), "%s", exe.c_str());
+        }
+    }
+    // Re-exec of the bare loader (e.g. via AT_EXECFN) without a program argument: the process
+    // means its own program.
+    {
+        std::string exe = guestExeOf(tid);
+        uint64_t a1 = 0;
+        char arg1[8] = {};
+        bool arg1Abs = r.arg[1] && readMem(tid, r.arg[1] + 8, &a1, 8) && a1 && readString(tid, a1, arg1, sizeof(arg1)) &&
+                       arg1[0] == '/';
+        std::string host;
+        if (!exe.empty() && !arg1Abs && cfg_.vfs.resolve(path, "/", true, host)) {
+            ExecInfo pi;
+            std::string exeHost;
+            if (cfg_.vfs.resolve(exe, "/", true, exeHost) && inspectExecutable(exeHost, pi) && !pi.interp.empty()) {
+                std::string interpHost;
+                if (cfg_.vfs.resolve(pi.interp, "/", true, interpHost) && interpHost == host)
+                    snprintf(path, sizeof(path), "%s", exe.c_str());
+            }
+        }
+    }
+    std::string progGuest = Vfs::join(path[0] == '/' ? "/" : guestCwdOf(tid), path);
+    std::vector<std::string> inject = cfg_.injectEnv;
+    std::string pre = preloadEntryFor(progGuest);
+    if (!pre.empty()) inject.push_back(pre);
+    {
+        std::lock_guard<std::mutex> g(credsMu_);
+        pendingExe_[tid] = progGuest;
+    }
 
     // Original argv (pointers stay valid in the tracee; we only read them).
     std::vector<uint64_t> argvPtrs;
@@ -424,14 +514,14 @@ bool Tracer::rewriteExec(pid_t tid, Regs& r, uint64_t& scratch) {
     // Environment: make sure the injected entries are present (replace same-named ones).
     bool envChanged = false;
     std::vector<uint64_t> envPtrs;
-    if (!cfg_.injectEnv.empty()) {
+    if (!inject.empty()) {
         for (int i = 0; i < 8192 && r.arg[2]; i++) {
             uint64_t p = 0;
             if (!readMem(tid, r.arg[2] + i * 8, &p, 8) || !p) break;
             char e[512];
             if (readString(tid, p, e, sizeof(e))) {
                 bool replaced = false, same = false;
-                for (const auto& inj : cfg_.injectEnv) {
+                for (const auto& inj : inject) {
                     size_t k = inj.find('=') + 1;
                     if (strncmp(e, inj.c_str(), k) == 0) {
                         replaced = true;
@@ -448,7 +538,7 @@ bool Tracer::rewriteExec(pid_t tid, Regs& r, uint64_t& scratch) {
     auto applyEnv = [&]() -> bool {
         if (!envChanged) return true;
         std::vector<uint64_t> np = envPtrs;
-        for (const auto& inj : cfg_.injectEnv) {
+        for (const auto& inj : inject) {
             uint64_t a = pushBytes(tid, scratch, inj.c_str(), inj.size() + 1);
             if (!a) return false;
             np.push_back(a);
@@ -568,7 +658,11 @@ void Tracer::onNewTask(pid_t parent, pid_t tid) {
     Creds inherited = credsOf(parent);
     std::lock_guard<std::mutex> g(credsMu_);
     tgid_[tid] = tgid;
-    if (tgid == tid) creds_[tid] = inherited;  // new process inherits its parent's identity
+    if (tgid == tid) {
+        creds_[tid] = inherited;  // new process inherits its parent's identity
+        auto e = exe_.find(tgidOf(parent));
+        if (e != exe_.end()) exe_[tid] = e->second;
+    }
 }
 
 // uid/gid syscalls with the kernel's permission rules, applied to virtual credentials.
@@ -660,6 +754,131 @@ void Tracer::handleIds(pid_t tid, Regs& r) {
     setReturn(tid, r, ret);
 }
 
+void Tracer::publishVfs() {
+    if (share_) share_->publish(cfg_.vfs.serialize());
+}
+
+// Reads a path argument and resolves it to an absolute guest path (and host path).
+bool Tracer::guestPathArg(pid_t tid, uint64_t addr, bool follow, std::string& guest, std::string* host) {
+    char path[PATH_MAX];
+    if (!addr || !readString(tid, addr, path, sizeof(path)) || !path[0]) return false;
+    std::string base = path[0] == '/' ? "/" : guestCwdOf(tid);
+    std::string h;
+    if (!cfg_.vfs.resolve(path, base, follow, h, &guest)) return false;
+    if (host) *host = h;
+    return true;
+}
+
+// A mount point must exist in its parent directory, or directory listings (ls /apex, package
+// scanners) would not show the mounted entry.
+void ensureMountPoint(const std::string& hostPath, bool dir) {
+    struct stat st;
+    if (lstat(hostPath.c_str(), &st) == 0) return;
+    if (dir) {
+        mkdir(hostPath.c_str(), 0755);
+    } else {
+        int fd = open(hostPath.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+        if (fd >= 0) close(fd);
+    }
+}
+
+long Tracer::doMount(pid_t tid, Regs& r) {
+    stats_.mounts++;
+    unsigned long flags = r.arg[3];
+    std::string target, targetHost;
+    if (!guestPathArg(tid, r.arg[1], true, target, &targetHost)) return -ENOENT;
+    char fstype[64] = {};
+    if (r.arg[2]) readString(tid, r.arg[2], fstype, sizeof(fstype));
+    std::string fs = fstype;
+
+    if (flags & MS_REMOUNT) return 0;
+    if (flags & (MS_SHARED | MS_PRIVATE | MS_SLAVE | MS_UNBINDABLE)) return 0;  // propagation only
+    if (flags & (MS_BIND | MS_MOVE)) {
+        std::string src, srcHost;
+        if (!guestPathArg(tid, r.arg[0], true, src, &srcHost)) return -ENOENT;
+        struct stat st;
+        if (stat(srcHost.c_str(), &st) != 0) return -ENOENT;
+        ensureMountPoint(targetHost, S_ISDIR(st.st_mode));
+        cfg_.vfs.bind(target, srcHost);
+        if (flags & MS_MOVE) cfg_.vfs.unbind(src);
+        logf(1, "[%d] mount %s %s -> %s", tid, (flags & MS_MOVE) ? "--move" : "--bind", src.c_str(), target.c_str());
+        publishVfs();
+        return 0;
+    }
+    std::string host;
+    if (fs == "proc") host = "/proc";
+    else if (fs == "sysfs") host = "/sys";
+    else if (fs == "devpts") host = "/dev/pts";
+    else if (fs == "selinuxfs") return 0;  // stays hidden: the guest sees SELinux as disabled
+    else if (fs == "tmpfs" || fs == "ramfs" || fs == "cgroup" || fs == "cgroup2" || fs == "bpf" ||
+             fs == "tracefs" || fs == "debugfs" || fs == "pstore" || fs == "configfs" || fs == "functionfs" ||
+             fs == "binder") {
+        // A fresh, empty, writable directory behind the target.
+        host = cfg_.stateDir + "/mnt/" + std::to_string(++tmpfsCount_);
+        std::string cur;
+        for (size_t i = 1; i <= host.size(); i++)
+            if (i == host.size() || host[i] == '/') mkdir(host.substr(0, i).c_str(), 0755);
+    } else {
+        logf(1, "[%d] mount of %s (%s) on %s ignored", tid, fstype, "block fs", target.c_str());
+        return 0;  // real filesystems: the engine already provides the content
+    }
+    ensureMountPoint(targetHost, true);
+    cfg_.vfs.bind(target, host);
+    logf(1, "[%d] mount -t %s %s", tid, fstype, target.c_str());
+    publishVfs();
+    return 0;
+}
+
+long Tracer::doUmount(pid_t tid, Regs& r) {
+    std::string target;
+    if (!guestPathArg(tid, r.arg[0], false, target)) return -ENOENT;
+    if (cfg_.vfs.unbind(target)) publishVfs();
+    return 0;
+}
+
+// Privileged operations a guest Android needs. Returns the syscall result; `handled` false means
+// "let the kernel run it" (only possible on the seccomp-stop path).
+long Tracer::emulate(pid_t tid, Regs& r, long nr, bool& handled) {
+    handled = true;
+    stats_.emulated++;
+    bool root = credsOf(tid).euid == 0;
+    if (nr == SYS_mount) return root ? doMount(tid, r) : -EPERM;
+    if (nr == SYS_umount2) return root ? doUmount(tid, r) : -EPERM;
+    if (nr == SYS_unshare || nr == SYS_setns) return 0;  // single shared namespace for now
+    if (nr == SYS_reboot) {
+        logf(1, "[%d] guest requested reboot/power-off", tid);
+        shutdown_ = true;
+        return 0;
+    }
+    if (nr == SYS_pivot_root || nr == SYS_chroot || nr == SYS_sethostname || nr == SYS_setdomainname ||
+        nr == SYS_acct || nr == SYS_swapon || nr == SYS_swapoff)
+        return root ? 0 : -EPERM;
+    if (nr == SYS_init_module || nr == SYS_finit_module || nr == SYS_delete_module) return -ENOSYS;
+    handled = false;
+    stats_.emulated--;
+    return 0;
+}
+
+// Host seccomp policy (Android's app filter) refused a syscall with SIGSYS. Emulate it if we can,
+// otherwise make it fail with EPERM instead of killing the guest process.
+bool Tracer::handleSigsys(pid_t tid) {
+    siginfo_t si{};
+    if (ptrace(PTRACE_GETSIGINFO, tid, nullptr, &si) != 0 || si.si_code != 1 /* SYS_SECCOMP */) return false;
+    long nr = si.si_syscall;
+    Regs r;
+    if (!getRegs(tid, r)) return false;
+    stats_.sigsys++;
+    bool handled = false;
+    long res = emulate(tid, r, nr, handled);
+    if (!handled) {
+        stats_.blocked++;
+        logf(1, "[%d] host blocked syscall %ld -> EPERM", tid, nr);
+        res = -EPERM;
+    }
+    setReturn(tid, r, res);
+    return true;
+}
+
 void Tracer::handleSeccomp(pid_t tid) {
     stats_.stops++;
     Regs r;
@@ -740,6 +959,15 @@ void Tracer::handleSeccomp(pid_t tid) {
             case Kind::Ids:
                 if (cfg_.fakeRoot) handleIds(tid, r);
                 break;
+            case Kind::Emulate: {
+                bool handled = false;
+                long res = emulate(tid, r, s->nr, handled);
+                if (handled) {
+                    setSyscall(tid, r, -1);
+                    setReturn(tid, r, res);
+                }
+                break;
+            }
         }
     }
     ptrace(wantExit ? PTRACE_SYSCALL : PTRACE_CONT, tid, nullptr, nullptr);
@@ -759,6 +987,17 @@ void Tracer::handleSyscallExit(pid_t tid) {
         return;
     }
     long ret = static_cast<long>(r.ret);
+    if (p.nr != SYS_getcwd && p.guestPath.size() > 10 && p.guestPath.compare(p.guestPath.size() - 4, 4, "/exe") == 0) {
+        // readlink("/proc/<pid>/exe"): report the guest program, not the loader running it.
+        std::string exe = guestExeOf(static_cast<pid_t>(atoi(p.guestPath.c_str() + 6)));
+        if (!exe.empty() && ret >= 0) {
+            size_t n = std::min<size_t>(exe.size(), p.bufSize);
+            writeMem(tid, p.buf, exe.c_str(), n);
+            setReturn(tid, r, static_cast<long>(n));
+            ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+            return;
+        }
+    }
     if (ret > 0 && p.buf) {
         std::vector<char> buf(static_cast<size_t>(ret) + 1, 0);
         if (readMem(tid, p.buf, buf.data(), static_cast<size_t>(ret))) {
@@ -782,6 +1021,11 @@ void Tracer::handleSyscallExit(pid_t tid) {
 
 int Tracer::run(const std::string& program, const std::vector<std::string>& argv,
                 const std::vector<std::string>& envp) {
+    if (!cfg_.vfsSharePath.empty()) {
+        share_.reset(new VfsShareWriter());
+        if (!share_->open(cfg_.vfsSharePath)) return -1;
+        publishVfs();
+    }
     std::string hostCwd;
     cfg_.vfs.resolve(cfg_.guestCwd, "/", true, hostCwd);
 
@@ -801,6 +1045,17 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
         ptrace(PTRACE_TRACEME, 0, nullptr, nullptr);
         raise(SIGSTOP);
         if (!installTraceFilter()) _exit(126);
+        if (!cfg_.simulateTrap.empty()) {
+            std::vector<sock_filter> f;
+            f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)));
+            for (long nr : cfg_.simulateTrap) {
+                f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, static_cast<uint32_t>(nr), 0, 1));
+                f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_TRAP));
+            }
+            f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
+            sock_fprog prog{static_cast<unsigned short>(f.size()), f.data()};
+            if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) != 0) _exit(126);
+        }
         // The guest path is translated by the tracer on this very execve.
         syscall(SYS_execve, program.c_str(), av.data(), ev.data());
         _exit(127);
@@ -834,6 +1089,10 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
     int rootStatus = -1;
 
     while (!alive.empty()) {
+        if (shutdown_) {  // guest power-off: end every guest process
+            shutdown_ = false;
+            for (pid_t t : alive) kill(t, SIGKILL);
+        }
         pid_t tid = waitpid(-1, &status, __WALL);
         if (tid < 0) {
             if (errno == EINTR) continue;
@@ -847,7 +1106,11 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
             started.erase(tid);
             {
                 std::lock_guard<std::mutex> g(credsMu_);
-                if (tgidOf(tid) == tid) creds_.erase(tid);
+                if (tgidOf(tid) == tid) {
+                    creds_.erase(tid);
+                    exe_.erase(tid);
+                }
+                pendingExe_.erase(tid);
                 tgid_.erase(tid);
             }
             if (tid == child) rootStatus = WIFEXITED(status) ? WEXITSTATUS(status) : 128 + WTERMSIG(status);
@@ -867,6 +1130,19 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
             handleSeccomp(tid);
         } else if (sig == (SIGTRAP | 0x80)) {
             handleSyscallExit(tid);
+        } else if (sig == SIGTRAP && event == PTRACE_EVENT_EXEC) {
+            // exec succeeded (tid is now the thread-group leader): commit the guest program.
+            {
+                std::lock_guard<std::mutex> g(credsMu_);
+                unsigned long oldTid = 0;
+                ptrace(PTRACE_GETEVENTMSG, tid, nullptr, &oldTid);
+                auto it = pendingExe_.find(static_cast<pid_t>(oldTid ? oldTid : tid));
+                if (it != pendingExe_.end()) {
+                    exe_[tid] = it->second;
+                    pendingExe_.erase(it);
+                }
+            }
+            ptrace(PTRACE_CONT, tid, nullptr, nullptr);
         } else if (sig == SIGTRAP && event != 0) {
             if (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_VFORK || event == PTRACE_EVENT_CLONE) {
                 unsigned long n = 0;
@@ -881,6 +1157,8 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
                 }
             }
             ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+        } else if (sig == SIGSYS && handleSigsys(tid)) {
+            ptrace(PTRACE_CONT, tid, nullptr, nullptr);  // emulated: suppress the signal
         } else if (sig == SIGTRAP) {
             ptrace(PTRACE_CONT, tid, nullptr, nullptr);  // plain exec trap
         } else {

@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 #include <cstdlib>
+#include <cstring>
 #include <string>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -134,4 +135,36 @@ TEST(vfs_serialize_roundtrip) {
     EXPECT_EQ(w.mounts().size(), 2u);
     EXPECT_EQ(w.mapLexical("/data/x"), "/d/x");
     EXPECT_TRUE(w.mounts()[0].readOnly);
+}
+
+TEST(vfs_reverse_prefers_canonical_guest_path) {
+    Vfs v;
+    v.bind("/", "/r");
+    v.bind("/r", "/r");  // identity alias of the same host directory
+    std::string g;
+    EXPECT_TRUE(v.reverse("/r/system/bin/sh", g));
+    EXPECT_EQ(g, "/system/bin/sh");
+}
+
+// Host /proc magic links (fd/N, exe, cwd) must be left to the kernel, never followed as guest
+// symlinks: bionic implements fchmodat(AT_SYMLINK_NOFOLLOW) via chmod("/proc/self/fd/N").
+TEST(vfs_does_not_follow_proc_magic_links) {
+    Vfs v;
+    v.bind("/", tmpdir());
+    v.bind("/proc", "/proc");
+    std::string host;
+    EXPECT_TRUE(v.resolve("/proc/self/exe", "/", true, host));
+    EXPECT_EQ(host, "/proc/self/exe");
+}
+
+#include "guest_log.h"
+TEST(guest_log_formats_liblog_packet) {
+    unsigned char pkt[64] = {};
+    pkt[0] = 0;               // main log
+    pkt[1] = 42; pkt[2] = 0;  // tid 42
+    size_t n = 11;
+    pkt[n++] = 6;             // ERROR
+    memcpy(pkt + n, "apexd\0boom\n", 11);
+    n += 11;
+    EXPECT_EQ(nest::formatLogdPacket(pkt, n), "E/apexd(42): boom\n");
 }

@@ -343,3 +343,45 @@ TEST(fastpath_preserves_errno) {
     auto r = run(fastCmd({"/bin/multi", "errno-rel", "errno-abs"}));
     EXPECT_EQ(r.out, "-1 No such file or directory\n-1 No such file or directory\n");
 }
+
+// ---- virtual mounts (guest init), with and without Android's SIGSYS policy
+
+static std::vector<std::string> mountCmd(bool androidPolicy, const std::string& uid, std::vector<std::string> extra) {
+    std::vector<std::string> a{NEST_RUN_PATH, "-b", "/=" + rootfs(), "-b", "/proc=/proc", "-b", "/dev=/dev",
+                               "-P", NEST_PRELOAD_PATH, "-s"};
+    if (androidPolicy) a.push_back("--simulate-app-seccomp");
+    if (!uid.empty()) { a.push_back("-u"); a.push_back(uid); }
+    a.push_back("--");
+    a.push_back("/bin/multi");
+    a.insert(a.end(), extra.begin(), extra.end());
+    return a;
+}
+
+static Result runInState(const std::vector<std::string>& args, const std::string& state) {
+    setenv("NEST_STATE_DIR", state.c_str(), 1);
+    Result r = run(args);
+    unsetenv("NEST_STATE_DIR");
+    return r;
+}
+
+TEST(mount_tmpfs_bind_umount_seen_by_fast_path) {
+    for (bool policy : {false, true}) {
+        std::string state = mktmp();
+        auto r = runInState(mountCmd(policy, "", {"mount-tmpfs", "/tmp", "write", "/tmp/f", "in-tmpfs", "cat", "/tmp/f",
+                                                  "bind", "/hello.txt", "/tmp/h", "cat", "/tmp/h",
+                                                  "umount", "/tmp/h", "cat", "/tmp/h"}),
+                            state);
+        // After umount the (empty) mount point file stays behind, exactly like on Linux.
+        EXPECT_EQ(r.out, "0\nin-tmpfs\n0\nhello from the guest root\n\n0\n\n");
+        // tmpfs content lives in the engine's state dir, not in the (shared, read-only) rootfs.
+        struct stat st;
+        EXPECT_TRUE(stat((state + "/mnt/1/f").c_str(), &st) == 0);
+        EXPECT_TRUE(stat((rootfs() + "/tmp/f").c_str(), &st) != 0);
+        if (policy) EXPECT_TRUE(r.err.find("sigsys=0 ") == std::string::npos);  // came in as SIGSYS
+    }
+}
+
+TEST(mount_requires_root_identity) {
+    auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
+    EXPECT_EQ(r.out, "-1 EPERM\n");
+}

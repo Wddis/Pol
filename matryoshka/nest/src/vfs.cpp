@@ -130,6 +130,9 @@ bool Vfs::resolve(const std::string& path, const std::string& guestCwd, bool fol
             continue;
         }
         if (!S_ISLNK(st.st_mode)) continue;
+        // Links inside the host's /proc (fd/N, exe, cwd, ns/...) are kernel magic: they point to
+        // host objects and only the kernel can follow them correctly.
+        if (h.compare(0, 6, "/proc/") == 0) continue;
         // Bind targets themselves are never treated as guest symlinks.
         const Mount* m = nullptr;
         mapLexical(g, &m);
@@ -185,7 +188,10 @@ bool Vfs::reverse(const std::string& hostPath, std::string& guestOut) const {
     const Mount* best = nullptr;
     for (const auto& m : mounts_) {
         if (m.host.empty() || !hasPrefix(hostPath, m.host)) continue;
-        if (!best || m.host.size() > best->host.size()) best = &m;
+        // Most specific host directory; on ties the shortest (canonical) guest path.
+        if (!best || m.host.size() > best->host.size() ||
+            (m.host.size() == best->host.size() && m.guest.size() < best->guest.size()))
+            best = &m;
     }
     if (!best) return false;
     std::string rest = best->host == "/" ? hostPath : hostPath.substr(best->host.size());

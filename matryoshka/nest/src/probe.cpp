@@ -179,14 +179,13 @@ std::string benchOnce(const std::string& dir, const std::string& preload, double
     TracerConfig cfg;
     cfg.vfs.bind("/", "/");
     cfg.vfs.bind("/mvm-probe", dir);
+    cfg.stateDir = dir;
     if (!preload.empty()) {
         std::string pdir = preload.substr(0, preload.rfind('/'));
         std::string vfsFile = dir + "/vfs.txt";
-        FILE* f = fopen(vfsFile.c_str(), "w");
-        if (!f) return err("vfs file");
-        fputs(cfg.vfs.serialize().c_str(), f);
-        fclose(f);
-        cfg.injectEnv = {"LD_PRELOAD=" + preload, "NEST_VFS_FILE=" + vfsFile};
+        cfg.vfsSharePath = vfsFile;
+        cfg.preloadHost = preload;
+        cfg.injectEnv = {"NEST_VFS_FILE=" + vfsFile};
     }
     cfg.childSetup = [] {
         int null = open("/dev/null", O_WRONLY);
@@ -286,7 +285,7 @@ std::string checkVbinder(const std::string& dir) {
     }
     if (result.empty()) {
         cli = spawn("client");
-        waitFor(cli, "dead-after");
+        waitFor(cli, "dead-after\n");
         clock_gettime(CLOCK_MONOTONIC, &b);
         const char* expected = "echo cba\npong:ping:uid10123\nfd-ok\nnested:cb-ok\ndead-reply\ndeath 0xdead\ndead-after\n";
         if (cli.buf == expected) {

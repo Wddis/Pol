@@ -10,6 +10,7 @@
 //   -w   guest working directory (default "/")
 //   -0   virtual identities (default) ; -n  real identity ; -u UID  start as this virtual uid
 //   -v   verbose (repeat for more)    ; -s  print statistics to stderr on exit
+//   --android DIR  guest-Android environment (private /dev, /proc overrides, APEXes); DIR = state
 //   -B   serve /dev/{,hw,vnd}binder for the guest from a userspace broker on this socket
 //   -P   fast-path preload library (host path); NEST_STATE_DIR = where to write the mount table
 //   -E   add/override an environment variable ; -c  start with a clean environment
@@ -21,11 +22,14 @@
 #include <ctime>
 #include <memory>
 #include <string>
+#include <sys/syscall.h>
 #include <unistd.h>
 #include <vector>
 
 #include <thread>
 
+#include "android_profile.h"
+#include "guest_log.h"
 #include "probe.h"
 #include "vbinder.h"
 #include "tracer.h"
@@ -44,7 +48,7 @@ int main(int argc, char** argv) {
     }
     nest::TracerConfig cfg;
     bool stats = false, clean = false;
-    std::string preload, binderSock;
+    std::string preload, binderSock, androidState;
     std::vector<std::string> extraEnv;
     int i = 1;
     for (; i < argc; i++) {
@@ -69,6 +73,11 @@ int main(int argc, char** argv) {
             binderSock = argv[++i];
         } else if (a == "-P" && i + 1 < argc) {
             preload = argv[++i];
+        } else if (a == "--android" && i + 1 < argc) {
+            androidState = argv[++i];
+        } else if (a == "--simulate-app-seccomp") {
+            // Tests: behave like Android's app seccomp policy (SIGSYS on mount & co.).
+            cfg.simulateTrap = {SYS_mount, SYS_umount2, SYS_pivot_root, SYS_chroot, SYS_reboot, SYS_swapon};
         } else if (a == "-n") {
             cfg.fakeRoot = false;
         } else if (a == "-v") {
@@ -96,21 +105,40 @@ int main(int argc, char** argv) {
         env.push_back(kv);
     }
 
+    if (!androidState.empty()) {
+        std::string root;
+        for (const auto& m : cfg.vfs.mounts())
+            if (m.guest == "/") root = m.host;
+        if (!nest::applyAndroidProfile(cfg, androidState, root)) {
+            perror("nest: android profile");
+            return 125;
+        }
+        setenv("NEST_STATE_DIR", androidState.c_str(), 1);
+    }
     if (!preload.empty()) {
         // Fast path: the preload library must be visible inside the guest at its host path, and
-        // the mount table is handed over through a small file next to it (or in TMPDIR).
-        std::string dir = preload.substr(0, preload.rfind('/'));
-        cfg.vfs.bind(dir, dir, true);
-        const char* tmp = getenv("NEST_STATE_DIR");
-        std::string vfsFile = std::string(tmp && *tmp ? tmp : "/tmp") + "/nest-vfs-" + std::to_string(getpid());
+        // reads the live mount table from a shared file (NEST_STATE_DIR or /tmp).
+        cfg.preloadHost = preload;
+        cfg.androidPreload = !androidState.empty();
+        if (!cfg.androidPreload) {
+            std::string dir = preload.substr(0, preload.rfind('/'));
+            cfg.vfs.bind(dir, dir, true);
+        }
+        const char* st = getenv("NEST_STATE_DIR");
+        std::string vfsFile = std::string(st && *st ? st : "/tmp") + "/nest-vfs-" + std::to_string(getpid());
         cfg.vfs.bind(vfsFile, vfsFile, true);
-        FILE* f = fopen(vfsFile.c_str(), "w");
-        if (!f) { perror("nest: vfs file"); return 125; }
-        fputs(cfg.vfs.serialize().c_str(), f);
-        fclose(f);
-        cfg.injectEnv = {"LD_PRELOAD=" + preload, "NEST_VFS_FILE=" + vfsFile};
+        cfg.vfsSharePath = vfsFile;
+        cfg.injectEnv = {"NEST_VFS_FILE=" + vfsFile};
+    }
+    {
+        const char* st = getenv("NEST_STATE_DIR");
+        if (st && *st) cfg.stateDir = st;
     }
     if (!binderSock.empty()) cfg.injectEnv.push_back("NEST_BINDER_SOCK=" + binderSock);
+    // Early guest logcat (until the guest's logd takes over /dev/socket/logdw).
+    nest::GuestLog guestLog;
+    if (!androidState.empty())
+        guestLog.start(androidState + "/dev/socket/logdw", androidState + "/logcat.txt");
     timespec t0{}, t1{};
     clock_gettime(CLOCK_MONOTONIC, &t0);
     nest::Tracer tracer(std::move(cfg));
@@ -131,10 +159,11 @@ int main(int argc, char** argv) {
         const auto& s = tracer.stats();
         double ms = (t1.tv_sec - t0.tv_sec) * 1e3 + (t1.tv_nsec - t0.tv_nsec) / 1e6;
         fprintf(stderr,
-                "nest: exit=%d time=%.1fms processes=%llu stops=%llu paths=%llu execs=%llu exec_rewrites=%llu faked=%llu denied=%llu env=%llu\n",
+                "nest: exit=%d time=%.1fms processes=%llu stops=%llu paths=%llu execs=%llu exec_rewrites=%llu faked=%llu denied=%llu env=%llu emulated=%llu sigsys=%llu mounts=%llu\n",
                 rc, ms, (unsigned long long)s.processes, (unsigned long long)s.stops,
                 (unsigned long long)s.pathRewrites, (unsigned long long)s.execs,
-                (unsigned long long)s.execRewrites, (unsigned long long)s.faked, (unsigned long long)s.denied, (unsigned long long)s.envInjections);
+                (unsigned long long)s.execRewrites, (unsigned long long)s.faked, (unsigned long long)s.denied, (unsigned long long)s.envInjections,
+                (unsigned long long)s.emulated, (unsigned long long)s.sigsys, (unsigned long long)s.mounts);
     }
     if (broker) {
         broker->stop();

@@ -75,7 +75,7 @@ TEST(vbinder_manager_service_client_scenario) {
     Child srv = spawn("server", sock);
     EXPECT_TRUE(waitFor(srv, "registered").find("registered added") != std::string::npos);
     Child cli = spawn("client", sock);
-    std::string out = waitFor(cli, "dead-after");
+    std::string out = waitFor(cli, "dead-after\n");
 
     EXPECT_EQ(out,
               "echo cba\n"

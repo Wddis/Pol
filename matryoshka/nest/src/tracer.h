@@ -11,11 +11,13 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
 
 #include "vfs.h"
+#include "vfs_share.h"
 
 namespace nest {
 
@@ -36,6 +38,21 @@ struct TracerConfig {
     std::vector<std::string> injectEnv;
     // Runs in the child right before the first execve (e.g. dup2 for stdio redirection).
     std::function<void()> childSetup;
+    // Where emulated mounts (tmpfs etc.) get their host directories.
+    std::string stateDir = "/tmp";
+    // Live mount table file for the fast path (see vfs_share.h); empty = none.
+    std::string vfsSharePath;
+    // Tests only: install an extra filter that SIGSYS-traps these syscalls, like Android's app
+    // seccomp policy does for mount & co.
+    std::vector<long> simulateTrap;
+    // If set, /proc/<pid>/attr/* (SELinux process attributes) map to files in this directory,
+    // so the guest's setcon()/getcon() work without touching the host's SELinux.
+    std::string procAttrDir;
+    // Fast-path library (host path). With androidPreload it is exposed inside the guest in the
+    // library directory the program's linker namespace may load from (/system/lib64,
+    // /vendor/lib64, /apex/<name>/lib64) and injected as LD_PRELOAD on every exec.
+    std::string preloadHost;
+    bool androidPreload = false;
 };
 
 struct TracerStats {
@@ -47,6 +64,10 @@ struct TracerStats {
     uint64_t denied = 0;         // privilege changes refused (EPERM), like the kernel would
     uint64_t processes = 0;
     uint64_t envInjections = 0;
+    uint64_t emulated = 0;       // privileged syscalls emulated (mount, pivot_root, ...)
+    uint64_t sigsys = 0;         // of those, delivered as SIGSYS by the host's seccomp policy
+    uint64_t blocked = 0;        // host-blocked syscalls we could only answer with an error
+    uint64_t mounts = 0;
 };
 
 class Tracer {
@@ -77,6 +98,12 @@ private:
     };
 
     void handleSeccomp(pid_t tid);
+    bool handleSigsys(pid_t tid);
+    long emulate(pid_t tid, struct Regs& r, long nr, bool& handled);
+    long doMount(pid_t tid, struct Regs& r);
+    long doUmount(pid_t tid, struct Regs& r);
+    bool guestPathArg(pid_t tid, uint64_t addr, bool follow, std::string& guest, std::string* host = nullptr);
+    void publishVfs();
     void handleIds(pid_t tid, struct Regs& r);
     void onNewTask(pid_t parent, pid_t tid);
     pid_t tgidOf(pid_t tid) const;
@@ -95,8 +122,18 @@ private:
     std::map<pid_t, Pending> pending_;
     std::map<pid_t, pid_t> tgid_;     // thread id -> process id
     std::map<pid_t, Creds> creds_;    // process id -> virtual credentials
-    mutable std::mutex credsMu_;      // creds_/tgid_ are also read by the binder broker thread
+    std::map<pid_t, std::string> exe_;      // process id -> guest program (it may run via the loader)
+    std::map<pid_t, std::string> pendingExe_;  // tid -> program of an in-flight execve
+    std::string preloadEntryFor(const std::string& guestProgram);
+    std::string guestExeOf(pid_t tid);
+    mutable std::mutex credsMu_;
+    std::unique_ptr<VfsShareWriter> share_;
+    int tmpfsCount_ = 0;
+    bool shutdown_ = false;      // creds_/tgid_ are also read by the binder broker thread
 };
+
+// Creates an empty directory (or file) at hostPath if nothing is there yet.
+void ensureMountPoint(const std::string& hostPath, bool dir);
 
 // The seccomp filter used by the tracer (exposed for the capability probe).
 bool installTraceFilter();

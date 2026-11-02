@@ -23,6 +23,9 @@
 #include "fastpath.h"
 #include "vbinder_client.h"
 #include "vfs.h"
+#include "vfs_share.h"
+
+#include <mutex>
 
 using nest::taggedSyscall;
 
@@ -43,34 +46,48 @@ long fastReadlink(const char* p, char* buf, unsigned long n) {
 
 const nest::HostFs kFastFs{fastLstat, fastReadlink};
 
-// Loads the mount table handed over by the supervisor (NEST_VFS_FILE).
-__attribute__((constructor)) void init() {
-    const char* file = getenv("NEST_VFS_FILE");
-    if (!file || !*file) return;
-    long fd = taggedSyscall(SYS_openat, AT_FDCWD, reinterpret_cast<long>(file), O_RDONLY | O_CLOEXEC);
-    if (fd < 0) return;
+nest::VfsShareReader g_share;
+std::mutex g_reloadMu;
+
+// Rebuilds the in-process mount table from the live shared table (the guest mounts things at any
+// time). Old tables are intentionally leaked: other threads may still be using them.
+void reload() {
+    std::lock_guard<std::mutex> g(g_reloadMu);
+    if (!g_share.changed()) return;
     std::string text;
-    char buf[4096];
-    for (;;) {
-        long n = syscall(SYS_read, static_cast<int>(fd), buf, sizeof(buf));
-        if (n <= 0) break;
-        text.append(buf, static_cast<size_t>(n));
-    }
-    syscall(SYS_close, static_cast<int>(fd));
+    if (!g_share.read(text)) return;
     auto* v = new nest::Vfs();
     if (!v->deserialize(text) || v->mounts().empty()) {
         delete v;
         return;
     }
     v->setHostFs(&kFastFs);
-    g_vfs = v;
+    __atomic_store_n(&g_vfs, v, __ATOMIC_RELEASE);
+}
+
+// Attaches to the live mount table published by the supervisor (NEST_VFS_FILE).
+__attribute__((constructor)) void init() {
+    const char* file = getenv("NEST_VFS_FILE");
+    if (!file || !*file) return;
+    long fd = taggedSyscall(SYS_openat, AT_FDCWD, reinterpret_cast<long>(file), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return;
+    bool ok = g_share.attach(static_cast<int>(fd));
+    syscall(SYS_close, static_cast<int>(fd));
+    if (ok) reload();
+}
+
+nest::Vfs* currentVfs() {
+    if (g_share.changed()) reload();
+    return __atomic_load_n(&g_vfs, __ATOMIC_ACQUIRE);
 }
 
 // Absolute paths outside /proc are translated here; everything else goes to the tracer.
 bool translate(const char* path, bool followLast, std::string& out) {
-    if (!g_vfs || !path || path[0] != '/') return false;
+    if (!path || path[0] != '/') return false;
+    nest::Vfs* vfs = currentVfs();
+    if (!vfs) return false;
     if (strncmp(path, "/proc/", 6) == 0 || strcmp(path, "/proc") == 0) return false;
-    if (!g_vfs->resolve(path, "/", followLast, out)) return false;
+    if (!vfs->resolve(path, "/", followLast, out)) return false;
     if (path[strlen(path) - 1] == '/' && out.back() != '/') out += '/';
     return true;
 }

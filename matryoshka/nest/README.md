@@ -14,6 +14,7 @@ KVM. Это движок для телефонов вроде Redmi Note 8. По
 | ids | `src/tracer.cpp` (`handleIds`) | Виртуальные UID/GID у каждого процесса по правилам ядра Linux (`setuid`, `setresuid`, сохранённый UID), наследуются при `fork` и `exec`. Root есть только у тех, кому его дал гость (init) или Magisk |
 | fast path | `src/preload.cpp`, `src/fastpath.h` | `libnest_preload.so` подгружается в каждый гостевой процесс (трассировщик подставляет `LD_PRELOAD` при каждом `execve`), сам переводит абсолютные пути и вызывает ядро с меткой в 6-м регистре; seccomp пропускает такие вызовы без остановки. Экспортирует только обёртки libc |
 | vbinder | `src/vbinder.*`, `src/vbinder_client.*`, `src/vbinder_proto.h` | Binder-драйвер в userspace для трёх контекстов (binder / hwbinder / vndbinder). Брокер работает потоком внутри `nest-run` (`-B сокет`), клиент — в `libnest_preload.so` и прозрачно подменяет `/dev/*binder` для неизменённого `libbinder`. Реализованы узлы и handles, стеки транзакций у каждого потока (вложенные вызовы), oneway, `BR_ACQUIRE`/`BR_RELEASE`, уведомления о смерти, передача fd (`FD`, `FDA`), scatter-gather буферы (`PTR`, hwbinder), пул потоков. Данные транзакций копируются один раз (`process_vm_readv` в общий буфер получателя). Отправителю сообщается виртуальный UID из трассировщика |
+| android | `src/android_profile.*`, `src/guest_log.*`, `src/vfs_share.*` | Окружение для Android-гостя без root: свой `/dev` с разрешёнными приложению устройствами, `/dev/kmsg` в файл (журнал загрузки), подмена `/proc/version`, `/proc/filesystems`, `/proc/cmdline` (без selinuxfs — libselinux гостя видит SELinux выключенным), SELinux-атрибуты процессов (`/proc/*/attr/*`), APEX-модули; ранний logcat гостя из `/dev/socket/logdw`; живая таблица монтирования для быстрого пути. Эмуляция `mount`/`umount2`/`pivot_root`/`reboot` и др., включая случай SIGSYS от seccomp-политики Android |
 | probe | `src/probe.*` | Реальная проверка механизмов на телефоне (`libnest_run.so --probe DIR`) |
 | nest-run | `src/nest_run.cpp` | Супервизор: `nest-run -b /=rootfs -b /data=… -- /system/bin/sh` |
 
@@ -27,7 +28,7 @@ KVM. Это движок для телефонов вроде Redmi Note 8. По
 cmake -S nest -B build-nest && cmake --build build-nest -j && ./build-nest/nest_tests
 ```
 
-33 теста. Тесты трассировщика собирают мини-rootfs из настоящих бинарников Linux вместе с их
+38 тестов. Тесты трассировщика собирают мини-rootfs из настоящих бинарников Linux вместе с их
 библиотеками и загрузчиком. Это та же ситуация, что с гостевым Android, которому нужен свой
 `linker64`. Проверяются: чужой корень, запуск через гостевой загрузчик, shebang, абсолютные
 гостевые симлинки, потомки, `getcwd`, `/proc/self/*`, поддельный root, ошибки `ENOENT`, а также

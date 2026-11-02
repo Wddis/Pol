@@ -1,0 +1,33 @@
+name: Nest guest image (Android 11)
+
+# Builds the Android 11 root filesystem for the Nest engine from the Waydroid project's public
+# LineageOS 18.1 arm64 images and publishes it as a GitHub release the app downloads.
+on:
+  workflow_dispatch:
+  push:
+    paths: ["matryoshka/guest/tools/make-nest-rootfs.sh", ".github/workflows/nest-guest-image.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc || true
+      - name: Build rootfs
+        run: |
+          sudo apt-get install -y e2fsprogs
+          IMAGE_ID=nest-a11-lineage18.1 matryoshka/guest/tools/make-nest-rootfs.sh out
+          ls -la out
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          TAG=nest-guest-a11
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "Nest guest: Android 11 (LineageOS 18.1)" \
+            --notes "Android 11 root filesystem for the Matryoshka Nest engine. Built from the Waydroid project's public LineageOS 18.1 arm64 images (Apache-2.0 and others). Not affiliated with LineageOS." \
+            --target "$GITHUB_SHA" --prerelease
+          gh release upload "$TAG" out/*.tar.gz out/manifest.json --clobber

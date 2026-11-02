@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <sys/mount.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -18,7 +19,27 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
         const char* c = argv[i];
-        if (!strcmp(c, "errno-rel")) {
+        if (!strcmp(c, "mount-tmpfs")) {
+            printRes(mount("tmpfs", argv[++i], "tmpfs", 0, nullptr));
+        } else if (!strcmp(c, "bind")) {
+            const char* src = argv[++i];
+            printRes(mount(src, argv[++i], nullptr, MS_BIND, nullptr));
+        } else if (!strcmp(c, "umount")) {
+            printRes(umount2(argv[++i], 0));
+        } else if (!strcmp(c, "write")) {
+            const char* p = argv[++i];
+            FILE* f = fopen(p, "w");
+            if (!f) { printf("write-failed %s\n", strerror(errno)); ++i; continue; }
+            fputs(argv[++i], f);
+            fclose(f);
+        } else if (!strcmp(c, "cat")) {
+            FILE* f = fopen(argv[++i], "r");
+            if (!f) { printf("cat-failed %s\n", strerror(errno)); continue; }
+            char buf[256] = {};
+            size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+            fclose(f);
+            printf("%.*s\n", static_cast<int>(n), buf);
+        } else if (!strcmp(c, "errno-rel")) {
             // relative path -> passthrough (traced) branch of the preload wrappers
             struct stat st;
             int r = stat("definitely-missing-file", &st);
