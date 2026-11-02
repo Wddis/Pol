@@ -1,11 +1,12 @@
+import os
 import requests
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, MessageHandler, CommandHandler,
                            CallbackQueryHandler, filters, ContextTypes)
 
-NVIDIA_API_KEY = "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"
-TELEGRAM_TOKEN = "8751101888:AAG4JOjtY4TfatM2QvSTOOz7j_LWMT4AUm4"
+NVIDIA_API_KEY = os.environ["NVIDIA_API_KEY"]
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 
 chat_histories = {}
 
