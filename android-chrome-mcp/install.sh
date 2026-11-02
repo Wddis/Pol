@@ -20,7 +20,7 @@ echo "▶ 1/3 Обновляю Termux и ставлю нужные пакеты 
 export DEBIAN_FRONTEND=noninteractive
 pkg update -y -o Dpkg::Options::=--force-confnew >/dev/null 2>&1 || true
 pkg upgrade -y -o Dpkg::Options::=--force-confnew >/dev/null 2>&1 || true
-pkg install -y nodejs android-tools cloudflared curl >/dev/null 2>&1 || pkg install -y nodejs android-tools cloudflared curl
+pkg install -y nodejs android-tools cloudflared openssh curl >/dev/null 2>&1 || pkg install -y nodejs android-tools cloudflared openssh curl
 [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 22 ] || { echo "Нужен Node.js 22+. Выполните: pkg upgrade и повторите."; exit 1; }
 
 echo "▶ 2/3 Скачиваю программу..."
