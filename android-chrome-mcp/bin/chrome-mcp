@@ -1,0 +1,221 @@
+#!/data/data/com.termux/files/usr/bin/env bash
+# chrome-mcp: launcher for the Android Chrome MCP server (Termux).
+#   chrome-mcp setup     first-time pairing (once)
+#   chrome-mcp start     start server + tunnel, print the connector URL
+#   chrome-mcp stop      stop everything
+#   chrome-mcp status    show what is running
+#   chrome-mcp url       print the connector URL again
+#   chrome-mcp logs      show logs
+#   chrome-mcp new-secret   rotate the secret (old connector URL stops working)
+#   chrome-mcp user-tabs on|off   allow/deny access to tabs you opened yourself
+set -u
+
+APP_DIR="$(cd "$(dirname "$(readlink -f "$0")")/.." && pwd)"
+STATE="${ACM_STATE_DIR:-$HOME/.android-chrome-mcp}"
+CONF="$STATE/config.env"
+LOG="$STATE/server.log"
+TLOG="$STATE/tunnel.log"
+SERIAL="127.0.0.1:5555"
+mkdir -p "$STATE"
+chmod 700 "$STATE"
+
+c_g=$'\e[32m'; c_y=$'\e[33m'; c_r=$'\e[31m'; c_b=$'\e[1m'; c_0=$'\e[0m'
+say()  { printf '%s\n' "$*"; }
+ok()   { printf '%s✔%s %s\n' "$c_g" "$c_0" "$*"; }
+warn() { printf '%s!%s %s\n' "$c_y" "$c_0" "$*"; }
+die()  { printf '%s✘ %s%s\n' "$c_r" "$*" "$c_0"; exit 1; }
+
+# ---------- config ----------
+[ -f "$CONF" ] || {
+  secret="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+  cat >"$CONF" <<EOF
+# Android Chrome MCP settings
+ACM_SECRET=$secret
+ACM_PORT=8765
+ACM_CDP_PORT=9222
+ACM_ALL_TABS=0
+ACM_CHROME_PACKAGE=com.android.chrome
+# Optional permanent URL with your own Cloudflare tunnel (see README):
+ACM_CF_TOKEN=
+ACM_PUBLIC_URL=
+EOF
+  chmod 600 "$CONF"
+}
+# shellcheck disable=SC1090
+. "$CONF"
+export ACM_SECRET ACM_PORT ACM_CDP_PORT ACM_ALL_TABS ACM_CHROME_PACKAGE ACM_STATE_DIR="$STATE" ACM_ADB_SERIAL="$SERIAL" ACM_MODE=android
+
+set_conf() { # key value
+  if grep -q "^$1=" "$CONF"; then sed -i "s|^$1=.*|$1=$2|" "$CONF"; else echo "$1=$2" >>"$CONF"; fi
+}
+alive() { [ -f "$STATE/$1.pid" ] && kill -0 "$(cat "$STATE/$1.pid")" 2>/dev/null; }
+
+# ---------- adb (phone connects to itself) ----------
+adb_ok() { adb -s "$SERIAL" get-state 2>/dev/null | grep -q device; }
+
+find_tls_port() { # wireless-debugging connect port via mDNS
+  adb mdns services 2>/dev/null | awk '/_adb-tls-connect/ {print $NF}' | head -n1 | sed 's/.*://'
+}
+
+adb_connect() {
+  adb start-server >/dev/null 2>&1
+  adb_ok && return 0
+  adb connect "$SERIAL" >/dev/null 2>&1; sleep 1
+  adb_ok && return 0
+  say "Подключаюсь через «Отладку по Wi-Fi»..."
+  local port; port="$(find_tls_port)"
+  if [ -z "$port" ]; then
+    say "Не удалось найти порт автоматически."
+    say "Откройте: Настройки → Для разработчиков → Отладка по Wi-Fi."
+    say "Там указано «IP-адрес и порт», например 192.168.1.5:${c_b}41234${c_0}."
+    read -r -p "Введите только порт: " port
+  fi
+  [ -n "$port" ] || die "Порт не указан."
+  adb connect "127.0.0.1:$port" | grep -q "connected" || die "adb не подключился. Включите «Отладку по Wi-Fi» (нужен Wi-Fi) и повторите. Если не помогает — chrome-mcp setup."
+  sleep 1
+  # Switch adbd to classic TCP mode: keeps working without Wi-Fi until reboot.
+  adb -s "127.0.0.1:$port" tcpip 5555 >/dev/null 2>&1
+  sleep 3
+  adb disconnect "127.0.0.1:$port" >/dev/null 2>&1
+  for _ in 1 2 3 4 5; do
+    adb connect "$SERIAL" >/dev/null 2>&1; sleep 1
+    adb_ok && return 0
+  done
+  die "Не удалось подключить adb к 127.0.0.1:5555."
+}
+
+check_chrome() {
+  adb -s "$SERIAL" forward "tcp:$ACM_CDP_PORT" localabstract:chrome_devtools_remote >/dev/null 2>&1
+  curl -fsS -m 3 "http://127.0.0.1:$ACM_CDP_PORT/json/version" 2>/dev/null | grep -o '"Browser": *"[^"]*"' | cut -d'"' -f4
+}
+
+# ---------- commands ----------
+cmd_setup() {
+  command -v adb >/dev/null || die "Нет adb: запустите install.sh ещё раз."
+  say "${c_b}Шаг 1. Сопряжение телефона с самим собой (делается один раз)${c_0}"
+  say "1) Настройки → О телефоне → 7 раз нажмите «Версия MIUI/HyperOS» (включает режим разработчика)."
+  say "2) Настройки → Доп. настройки → Для разработчиков: включите «Отладка по USB» и «Отладка по Wi-Fi»."
+  say "3) Откройте «Отладка по Wi-Fi» → «Подключение с помощью кода»."
+  say "   Совет: откройте Termux и Настройки в режиме разделённого экрана, иначе код исчезнет."
+  read -r -p "Порт из окна с кодом (число после двоеточия): " pport
+  read -r -p "6-значный код: " pcode
+  adb start-server >/dev/null 2>&1
+  adb pair "127.0.0.1:$pport" "$pcode" || die "Сопряжение не удалось. Откройте окно с кодом заново и повторите chrome-mcp setup."
+  ok "Сопряжено."
+  adb_connect && ok "adb подключён."
+  local b; b="$(check_chrome)"
+  if [ -n "$b" ]; then ok "Chrome доступен: $b"; else warn "Chrome пока не отвечает: откройте Chrome один раз, затем chrome-mcp start."; fi
+  say ""; say "Готово. Теперь: ${c_b}chrome-mcp start${c_0}"
+}
+
+start_tunnel() {
+  : >"$TLOG"
+  if [ -n "${ACM_CF_TOKEN:-}" ]; then
+    nohup cloudflared tunnel --no-autoupdate run --token "$ACM_CF_TOKEN" >"$TLOG" 2>&1 &
+    echo $! >"$STATE/tunnel.pid"
+    echo "${ACM_PUBLIC_URL%/}" >"$STATE/base_url"
+    return 0
+  fi
+  nohup cloudflared tunnel --no-autoupdate --url "http://127.0.0.1:$ACM_PORT" >"$TLOG" 2>&1 &
+  echo $! >"$STATE/tunnel.pid"
+  local url=""
+  for _ in $(seq 1 60); do
+    url="$(grep -o 'https://[a-z0-9-]*\.trycloudflare\.com' "$TLOG" | head -n1)"
+    [ -n "$url" ] && break
+    alive tunnel || break
+    sleep 1
+  done
+  [ -n "$url" ] || { tail -n 20 "$TLOG"; die "Туннель не запустился (лог выше). Проверьте интернет/VPN и повторите."; }
+  echo "$url" >"$STATE/base_url"
+}
+
+wait_tunnel() { # the URL is issued before the edge connection exists: wait for it
+  for _ in $(seq 1 45); do
+    grep -q 'Registered tunnel connection' "$TLOG" 2>/dev/null && break
+    alive tunnel || break
+    sleep 1
+  done
+  if ! grep -q 'Registered tunnel connection' "$TLOG" 2>/dev/null; then
+    tail -n 8 "$TLOG"
+    cmd_stop >/dev/null
+    die "Туннель не смог соединиться с Cloudflare (лог выше). Попробуйте выключить/включить VPN или сменить сеть и повторите chrome-mcp start."
+  fi
+  local base; base="$(cat "$STATE/base_url")"
+  for _ in $(seq 1 20); do
+    curl -fsS -m 5 "$base/health" >/dev/null 2>&1 && { ok "Публичный адрес отвечает."; return 0; }
+    sleep 2
+  done
+  warn "Публичный адрес пока не отвечает (DNS ещё обновляется). Обычно это проходит за минуту."
+}
+
+print_url() {
+  [ -f "$STATE/base_url" ] || die "Сервер не запущен: chrome-mcp start"
+  local u; u="$(cat "$STATE/base_url")/mcp/$ACM_SECRET"
+  say ""
+  say "${c_b}Адрес коннектора (вставьте в claude.ai → Настройки → Коннекторы → Добавить свой):${c_0}"
+  say "${c_g}$u${c_0}"
+  if command -v termux-clipboard-set >/dev/null 2>&1 && timeout 3 termux-clipboard-set "$u" 2>/dev/null; then
+    ok "Скопировано в буфер обмена."
+  fi
+  say "Никому не показывайте этот адрес: он даёт доступ к вашему Chrome."
+}
+
+cmd_start() {
+  command -v node >/dev/null || die "Нет Node.js: запустите install.sh ещё раз."
+  command -v termux-wake-lock >/dev/null && termux-wake-lock
+  adb_connect
+  local b; b="$(check_chrome)"
+  if [ -n "$b" ]; then ok "Chrome: $b"; else warn "Chrome не ответил — сервер запустит его сам при первой команде (на секунду появится Chrome)."; fi
+
+  if alive server; then ok "Сервер уже работает."; else
+    nohup node "$APP_DIR/src/server.js" >>"$LOG" 2>&1 &
+    echo $! >"$STATE/server.pid"
+    for _ in $(seq 1 30); do curl -fsS -m 1 "http://127.0.0.1:$ACM_PORT/health" >/dev/null 2>&1 && break; sleep 0.5; done
+    curl -fsS -m 1 "http://127.0.0.1:$ACM_PORT/health" >/dev/null 2>&1 || { tail -n 20 "$LOG"; die "Сервер не запустился."; }
+    ok "MCP-сервер запущен."
+  fi
+  if alive tunnel; then ok "Туннель уже работает."; else start_tunnel; wait_tunnel; ok "Туннель запущен."; fi
+  print_url
+  say ""
+  say "Можно закрыть Termux (не смахивайте его из недавних). Остановить: chrome-mcp stop"
+}
+
+cmd_stop() {
+  for p in tunnel server; do
+    if alive "$p"; then kill "$(cat "$STATE/$p.pid")" 2>/dev/null; ok "Остановлен: $p"; fi
+    rm -f "$STATE/$p.pid"
+  done
+  rm -f "$STATE/base_url"
+  adb -s "$SERIAL" forward --remove "tcp:$ACM_CDP_PORT" >/dev/null 2>&1
+  command -v termux-wake-unlock >/dev/null && termux-wake-unlock
+  ok "Всё остановлено. Доступ к Chrome закрыт."
+}
+
+cmd_status() {
+  if alive server; then ok "Сервер работает"; else warn "Сервер остановлен"; fi
+  if alive tunnel; then ok "Туннель работает: $(cat "$STATE/base_url" 2>/dev/null)"; else warn "Туннель остановлен"; fi
+  if adb_ok; then ok "adb подключён ($SERIAL)"; else warn "adb не подключён (chrome-mcp start подключит)"; fi
+  local b; b="$(adb_ok && check_chrome)"
+  if [ -n "$b" ]; then ok "Chrome: $b"; else warn "Chrome недоступен"; fi
+  if [ "$ACM_ALL_TABS" = 1 ]; then say "Доступ к вашим вкладкам: разрешён"; else say "Доступ к вашим вкладкам: запрещён (только вкладки агента)"; fi
+}
+
+case "${1:-help}" in
+  setup) cmd_setup ;;
+  start) cmd_start ;;
+  stop) cmd_stop ;;
+  restart) cmd_stop; cmd_start ;;
+  status) cmd_status ;;
+  url) print_url ;;
+  logs) tail -n 60 "$LOG"; say "--- tunnel ---"; tail -n 15 "$TLOG" 2>/dev/null ;;
+  new-secret)
+    set_conf ACM_SECRET "$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+    ok "Секрет обновлён. Выполните chrome-mcp restart и замените адрес коннектора в Claude." ;;
+  user-tabs)
+    case "${2:-}" in
+      on) set_conf ACM_ALL_TABS 1; ok "Доступ к вашим вкладкам разрешён. chrome-mcp restart" ;;
+      off) set_conf ACM_ALL_TABS 0; ok "Доступ к вашим вкладкам запрещён. chrome-mcp restart" ;;
+      *) die "Использование: chrome-mcp user-tabs on|off" ;;
+    esac ;;
+  *) sed -n '2,10p' "$0" | sed 's/^# \{0,1\}//' ;;
+esac
