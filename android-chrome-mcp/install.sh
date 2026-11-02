@@ -1,12 +1,15 @@
 #!/data/data/com.termux/files/usr/bin/env bash
 # Установка в Termux одной командой:
-#   curl -fsSL https://cdn.jsdelivr.net/gh/wddis/pol@1/android-chrome-mcp/install.sh | bash
+#   см. README.md (ссылка на install.sh через jsDelivr)
 set -e
-VER="${ACM_VERSION:-1}"                 # последняя версия 1.x (теги v1.*)
 BRANCH="${ACM_BRANCH:-ccr-53c32ce8-hewh3l}"
+PIN="${ACM_PIN:-}"                       # коммит по умолчанию, если GitHub API недоступен
 P="android-chrome-mcp"
-MIRRORS="https://cdn.jsdelivr.net/gh/wddis/pol@$VER/$P
-https://fastly.jsdelivr.net/gh/wddis/pol@$VER/$P
+# Последний коммит ветки (ссылки на коммит в jsDelivr не устаревают в кэше).
+SHA="$(curl -fsSL -m 15 "https://api.github.com/repos/wddis/pol/commits/$BRANCH" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4)"
+REF="${SHA:-${PIN:-$BRANCH}}"
+MIRRORS="https://cdn.jsdelivr.net/gh/wddis/pol@$REF/$P
+https://fastly.jsdelivr.net/gh/wddis/pol@$REF/$P
 https://raw.githubusercontent.com/wddis/pol/$BRANCH/$P
 https://github.com/wddis/pol/raw/$BRANCH/$P"
 APP="$HOME/.android-chrome-mcp/app"
