@@ -18505,8 +18505,10 @@ var expected = Buffer.from(`/mcp/${cfg.secret}`), pathOk = (p) => {
   let b = Buffer.from(p);
   return b.length === expected.length && timingSafeEqual(b, expected);
 }, httpServer = http.createServer(async (req, res) => {
-  let url = new URL(req.url, "http://localhost");
-  if (url.pathname === "/health") {
+  let url = new URL(req.url, "http://localhost"), shown = url.pathname.startsWith("/mcp/") ? pathOk(url.pathname.replace(/\/$/, "")) ? "/mcp/<secret>" : "/mcp/<WRONG secret>" : url.pathname.slice(0, 80), t0 = Date.now();
+  if (res.on("finish", () => {
+    url.pathname !== "/health" && log(`${req.method} ${shown} -> ${res.statusCode} (${Date.now() - t0} ms)`);
+  }), url.pathname === "/health") {
     res.writeHead(200, { "content-type": "text/plain" }).end("ok");
     return;
   }

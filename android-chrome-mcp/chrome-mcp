@@ -384,6 +384,7 @@ cmd_status() {
   alive tunnel && ok "Туннель ($(cat "$STATE/tunnel_pref" 2>/dev/null)): $(cat "$STATE/base_url" 2>/dev/null)" || warn "Туннель остановлен"
   if alive tunnel && [ -f "$STATE/base_url" ]; then
     public_ok "$(cat "$STATE/base_url")" && ok "Адрес отвечает из интернета" || warn "Адрес не отвечает из интернета — нажмите 1"
+    self_test
   fi
   if adb_ok; then ok "Связь с телефоном есть — Wi-Fi не нужен"
   else warn "Связи с телефоном нет — нажмите «Запустить» (может понадобиться Wi-Fi на минуту)"; fi
@@ -391,6 +392,22 @@ cmd_status() {
   local v; v="$(adb_ok && chrome_version)"
   [ -n "$v" ] && ok "Chrome: $v" || warn "Chrome недоступен"
   [ "$ACM_ALL_TABS" = 1 ] && say "Ваши вкладки: Claude ${B}видит${N}" || say "Ваши вкладки: Claude ${B}не видит${N} (только свои)"
+}
+
+# Подключиться к публичному адресу так же, как это делает Claude.
+self_test() {
+  local u r code
+  u="$(cat "$STATE/base_url")/mcp/$ACM_SECRET"
+  r="$(curl -sS -m 20 -o "$STATE/selftest.out" -w '%{http_code}' -X POST "$u" \
+      -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+      -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"selftest","version":"1"}}}' 2>&1)"
+  if [ "$r" = 200 ] && grep -q '"android-chrome"' "$STATE/selftest.out"; then
+    code="$(curl -sS -m 20 -X POST "$u" -H 'content-type: application/json' -H 'accept: application/json, text/event-stream' \
+      -d '{"jsonrpc":"2.0","id":2,"method":"tools/list"}' 2>/dev/null | grep -o '"name":"[a-z_]*"' | wc -l)"
+    ok "Проверка как Claude: подключение OK, инструментов: $code"
+  else
+    err "Проверка как Claude не прошла: HTTP $r — $(head -c 160 "$STATE/selftest.out" 2>/dev/null | tr '\n' ' ')"
+  fi
 }
 
 cmd_user_tabs() {
@@ -441,7 +458,9 @@ menu() {
       1) cmd_start ;; 2) cmd_stop ;; 3) show_url ;; 4) cmd_status ;;
       5) [ "$ACM_ALL_TABS" = 1 ] && cmd_user_tabs off || cmd_user_tabs on ;;
       6) cmd_new_secret ;; 7) rm -f "$STATE/paired"; cmd_setup ;;
-      8) tail -n 40 "$LOG" 2>/dev/null; say "--- туннель ---"; tail -n 10 "$TLOG" 2>/dev/null ;;
+      8) say "--- запросы к серверу (последние) ---"; grep -E ' (GET|POST|DELETE|HEAD|OPTIONS|PUT) ' "$LOG" 2>/dev/null | tail -n 25
+         say "--- сервер ---"; grep -vE ' (GET|POST|DELETE|HEAD|OPTIONS|PUT) ' "$LOG" 2>/dev/null | tail -n 8
+         say "--- туннель ---"; tail -n 6 "$TLOG" 2>/dev/null ;;
       9) cmd_update; exit 0 ;; 0|q|"") exit 0 ;;
     esac
   done

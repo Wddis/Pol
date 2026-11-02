@@ -223,6 +223,14 @@ const pathOk = (p) => {
 
 const httpServer = http.createServer(async (req, res) => {
   const url = new URL(req.url, 'http://localhost');
+  // Access log for diagnostics; the secret never appears in it.
+  const shown = url.pathname.startsWith('/mcp/')
+    ? (pathOk(url.pathname.replace(/\/$/, '')) ? '/mcp/<secret>' : '/mcp/<WRONG secret>')
+    : url.pathname.slice(0, 80);
+  const t0 = Date.now();
+  res.on('finish', () => {
+    if (url.pathname !== '/health') log(`${req.method} ${shown} -> ${res.statusCode} (${Date.now() - t0} ms)`);
+  });
   if (url.pathname === '/health') {
     res.writeHead(200, { 'content-type': 'text/plain' }).end('ok');
     return;
