@@ -301,6 +301,21 @@ TEST(caps_root_exec_regains_full_set_from_bounding) {
     EXPECT_EQ(r.out, "0\n0\nffffff7f ffffff7f 0 amb00\n");
 }
 
+TEST(ids_and_caps_work_under_android_app_seccomp_policy) {
+    // On a phone the app policy refuses set*id/setgroups/capset/fchown with SIGSYS: the tracer must
+    // answer them from the virtual credentials all the same (init switching to service users).
+    std::vector<std::string> a{NEST_RUN_PATH, "-b", "/=/", "--simulate-app-seccomp", "-s", "--", NEST_IDPROG_PATH,
+                               "keepcaps", "1", "setresuid", "1000", "1000", "1000", "caps", "capset", "1c0", "1c0", "c0",
+                               "uid", "setuid", "0", "open-fchown", "/etc/hostname"};
+    auto r = run(a);
+    // CAP_SETUID was kept (0x1c0), so setuid(0) is allowed exactly as by the kernel; CAP_CHOWN was not.
+    EXPECT_EQ(r.out, "0\n0\n0 ffffffff 0 amb00\n0\n1000 1000 1000\n0\nOperation not permitted\n");
+    EXPECT_TRUE(r.err.find("sigsys=0 ") == std::string::npos);
+    auto root = run({NEST_RUN_PATH, "-b", "/=/", "--simulate-app-seccomp", "--", NEST_IDPROG_PATH, "setgid", "1000",
+                     "setuid", "1000", "uid", "gid"});
+    EXPECT_EQ(root.out, "0\n0\n1000 1000 1000\n1000 1000 1000\n");
+}
+
 // Regression for the Redmi Note 8 probe: multi-call binaries (toybox) dispatch on argv[0], which must
 // survive symlink resolution and the switch to the guest's loader.
 TEST(exec_keeps_argv0_through_guest_loader) {
@@ -384,6 +399,13 @@ TEST(preload_exports_only_wrappers) {
 }
 
 // errno must survive both preload branches (fast-path translation and the traced fallback).
+TEST(fastpath_tag_does_not_leak_into_later_syscalls) {
+    // Guest app uid: fchown must be refused by the tracer, never run by the (root) host kernel.
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "-u", "10050", "-P", NEST_PRELOAD_PATH, "--", NEST_IDPROG_PATH,
+                  "open-fchown", "/etc/hostname", "open-fchown", "/etc/hostname"});
+    EXPECT_EQ(r.out, "Operation not permitted\nOperation not permitted\n");
+}
+
 TEST(fastpath_preserves_errno) {
     auto r = run(fastCmd({"/bin/multi", "errno-rel", "errno-abs"}));
     EXPECT_EQ(r.out, "-1 No such file or directory\n-1 No such file or directory\n");
@@ -486,6 +508,13 @@ TEST(android_kmsg_keeps_every_writer_line) {
 TEST(bpf_prctl_carrier) {
     auto r = runInState({NEST_RUN_PATH, "-b", "/=/", "--", NEST_IDPROG_PATH, "bpf-carrier"}, mktmp());
     EXPECT_EQ(r.out, "carrier fd 0 0 42\n");
+}
+
+TEST(android_oom_score_adj_is_virtual_per_process) {
+    std::string state = mktmp();
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "--android", state, "--", NEST_IDPROG_PATH, "cat", "/proc/self/oom_score_adj",
+                  "write", "/proc/self/oom_score_adj", "-1000", "cat", "/proc/self/oom_score_adj"});
+    EXPECT_EQ(r.out, "0\n\n-1000\n");
 }
 
 TEST(mount_requires_root_identity) {

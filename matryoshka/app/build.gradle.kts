@@ -16,8 +16,8 @@ android {
         // and the Nest engine runs the guest system's own binaries from there (like Termux).
         // Consequence: the APK is distributed outside Google Play.
         targetSdk = 28
-        versionCode = 5
-        versionName = "0.4.0-nest"
+        versionCode = 6
+        versionName = "0.4.1-nest"
 
         // Phones only: the Nest engine and the guest image are arm64.
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -35,12 +35,22 @@ android {
         )
     }
 
+    signingConfigs {
+        // Shared tester key (app/signing/README.md): every build installs over the previous one.
+        getByName("debug") {
+            storeFile = file("signing/tester.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
-            // CI signs with the debug key unless a release keystore is configured.
+            // Signed with the shared tester key (see signingConfigs) unless a release key is configured.
             signingConfig = signingConfigs.getByName("debug")
         }
     }

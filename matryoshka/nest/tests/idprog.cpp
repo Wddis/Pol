@@ -28,7 +28,14 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
         const char* c = argv[i];
-        if (!strcmp(c, "bpf-carrier")) {
+        if (!strcmp(c, "open-fchown")) {
+            // open() goes through the preload's tagged fast path; the libc fchown() right after
+            // it must still be seen by the tracer (regression: the tag stayed in the 6th register)
+            int fd = open(argv[++i], O_RDONLY | O_CLOEXEC);
+            int rc = fchown(fd, 1234, 1234);
+            printf("%s\n", rc == 0 ? "0" : strerror(errno));
+            close(fd);
+        } else if (!strcmp(c, "bpf-carrier")) {
             // bpf() through the engine's mount carrier (used when bpf() itself is ENOSYS)
             auto carry = [](int cmd, void* attr) {
                 return syscall(SYS_mount, nullptr, "/", "nest-bpf",

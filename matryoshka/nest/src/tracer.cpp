@@ -401,7 +401,11 @@ bool installTraceFilter() {
     auto hi = [](uint64_t v) { return static_cast<uint32_t>(v >> 32); };
     // Block for one ABI: fast-path tag -> allow (except execve), listed syscalls -> trace.
     auto block = [&](const std::vector<Spec>& sp, long execveNr, bool compat) {
+        // A = args[5].lo ^ nr (the tag is bound to the syscall number, see fastpath.h)
+        f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, nr)));
+        f.push_back(BPF_STMT(BPF_MISC | BPF_TAX, 0));
         f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[5])));
+        f.push_back(BPF_STMT(BPF_ALU | BPF_XOR | BPF_X, 0));
         if (compat) {
             // 32-bit registers: only the low word of the tag fits.
             f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, lo(kFastPathTag), 0, 3));
@@ -548,6 +552,28 @@ bool Tracer::rewritePath(pid_t tid, Regs& r, int dirfdArg, int pathArg, bool fol
             (full.size() == 7 || full[7] == '/'))
             full = "/proc/" + std::to_string(initTgid_) + full.substr(7);
         if (!cfg_.procAttrDir.empty()) {
+            // /proc/<pid>/oom_score_adj (and oom_adj): lowering it needs CAP_SYS_RESOURCE on the
+            // host, while init, lmkd and ActivityManager set it for every guest process. Each
+            // process gets a virtual value; the host keeps the app's own.
+            for (const char* leaf : {"/oom_score_adj", "/oom_adj"}) {
+                size_t ll = strlen(leaf);
+                if (full.size() <= 6 + ll || full.compare(full.size() - ll, ll, leaf) != 0) continue;
+                std::string pid = full.substr(6, full.size() - 6 - ll);
+                if (pid.empty() || pid.find_first_not_of("0123456789") != std::string::npos) continue;
+                std::string dir = cfg_.stateDir + "/oom";
+                mkdir(dir.c_str(), 0755);
+                std::string f = dir + "/" + pid + (leaf + 4);  // "<pid>_score_adj" / "<pid>_adj"
+                if (access(f.c_str(), F_OK) != 0) {
+                    int fd = open(f.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, 0644);
+                    if (fd >= 0) {
+                        ssize_t w = write(fd, "0\n", 2);
+                        (void)w;
+                        close(fd);
+                    }
+                }
+                full = f;
+                break;
+            }
             // /proc/<pid>[/task/<tid>]/attr/<name>  ->  <procAttrDir>/<name>
             size_t a = full.find("/attr/");
             if (a != std::string::npos && full.find('/', a + 6) == std::string::npos) {
@@ -1351,7 +1377,7 @@ bool Tracer::openBpfObject(pid_t tid, Regs& r, uint64_t& scratch, int id, bool r
     r.arg[2] = O_RDWR | O_CLOEXEC;  // bpf fds are always close-on-exec
     r.arg[3] = 0;
     r.arg[4] = 0;
-    r.arg[5] = r.compat ? (kFastPathTag & 0xffffffffu) : kFastPathTag;  // already a host path
+    r.arg[5] = r.compat ? (fastPathTag(openNr) & 0xffffffffu) : fastPathTag(openNr);  // already a host path
     if (restart) return restartAs(tid, r, openNr);
     return setArgs(tid, r) && setSyscall(tid, r, openNr);
 }
@@ -1667,6 +1693,20 @@ bool Tracer::handleSigsys(pid_t tid) {
         nr = cs ? cs->logical : -1;
     }
     stats_.sigsys++;
+    // Android's app policy also refuses the identity calls (set*id, setgroups, capset): the
+    // guest's init and zygote still need them, answered from the virtual credentials.
+    if (const Spec* sp = cfg_.fakeRoot ? findSpec(si.si_syscall, r.compat) : nullptr) {
+        switch (sp->kind) {
+            case Kind::Ids: handleIds(tid, r, sp->logical); return true;
+            case Kind::Caps: handleCaps(tid, r, sp->logical); return true;
+            case Kind::FakeZero:
+            case Kind::FakeChown:
+                stats_.faked++;
+                setReturn(tid, r, credsOf(tid).hasCap(kCapChown) ? 0 : -EPERM);
+                return true;
+            default: break;
+        }
+    }
     if (nr == SYS_bpf && cfg_.fakeRoot) {  // blocked by the app policy: emulate it the same way
         int obj = 0;
         long res = handleBpf(tid, r, obj);

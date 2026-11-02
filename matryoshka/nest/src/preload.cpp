@@ -2,7 +2,7 @@
 //
 // Loaded into every guest process (LD_PRELOAD, injected by the tracer on each execve). It wraps
 // the libc file functions, translates *absolute* guest paths itself with the same vfs code as the
-// tracer, and issues the syscall tagged with kFastPathTag so seccomp lets it through without a
+// tracer, and issues the syscall tagged with fastPathTag(nr) so seccomp lets it through without a
 // ptrace stop (~1 us instead of hundreds of us on a phone).
 //
 // Anything it does not handle — relative paths, /proc magic links, execve, static binaries — still
