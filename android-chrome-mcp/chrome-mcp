@@ -230,7 +230,7 @@ cmd_new_secret() {
 }
 
 cmd_update() {
-  curl -fsSL "${ACM_INSTALL_URL:-https://cdn.jsdelivr.net/gh/wddis/pol@ccr-53c32ce8-hewh3l/android-chrome-mcp/install.sh}" | bash
+  curl -fsSL "${ACM_INSTALL_URL:-https://cdn.jsdelivr.net/gh/wddis/pol@1/android-chrome-mcp/install.sh}" | bash
 }
 
 menu() {

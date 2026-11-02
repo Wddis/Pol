@@ -1,12 +1,14 @@
 #!/data/data/com.termux/files/usr/bin/env bash
-# Установка в Termux одной командой (см. README).
+# Установка в Termux одной командой:
+#   curl -fsSL https://cdn.jsdelivr.net/gh/wddis/pol@1/android-chrome-mcp/install.sh | bash
 set -e
-REF="${ACM_REF:-ccr-53c32ce8-hewh3l}"
+VER="${ACM_VERSION:-1}"                 # последняя версия 1.x (теги v1.*)
+BRANCH="${ACM_BRANCH:-ccr-53c32ce8-hewh3l}"
 P="android-chrome-mcp"
-MIRRORS="https://cdn.jsdelivr.net/gh/wddis/pol@$REF/$P
-https://fastly.jsdelivr.net/gh/wddis/pol@$REF/$P
-https://raw.githubusercontent.com/wddis/pol/$REF/$P
-https://github.com/wddis/pol/raw/$REF/$P"
+MIRRORS="https://cdn.jsdelivr.net/gh/wddis/pol@$VER/$P
+https://fastly.jsdelivr.net/gh/wddis/pol@$VER/$P
+https://raw.githubusercontent.com/wddis/pol/$BRANCH/$P
+https://github.com/wddis/pol/raw/$BRANCH/$P"
 APP="$HOME/.android-chrome-mcp/app"
 
 [ -d "${PREFIX:-/nonexistent}" ] || { echo "Запустите это в приложении Termux."; exit 1; }
