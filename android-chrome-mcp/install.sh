@@ -3,7 +3,7 @@
 #   см. README.md (ссылка на install.sh через jsDelivr)
 set -e
 BRANCH="${ACM_BRANCH:-ccr-53c32ce8-hewh3l}"
-PIN="${ACM_PIN:-}"                       # коммит по умолчанию, если GitHub API недоступен
+PIN="${ACM_PIN:-0566033b2be1af36959c6ecb58920f98e45eaf72}"                       # коммит по умолчанию, если GitHub API недоступен
 P="android-chrome-mcp"
 # Последний коммит ветки (ссылки на коммит в jsDelivr не устаревают в кэше).
 SHA="$(curl -fsSL -m 15 "https://api.github.com/repos/wddis/pol/commits/$BRANCH" 2>/dev/null | grep -m1 '"sha"' | cut -d'"' -f4)"
