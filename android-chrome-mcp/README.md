@@ -9,7 +9,7 @@ Claude выполняет задачи в Chrome **в фоне**, а вы пол
 2. Откройте Termux, вставьте строку и нажмите Enter:
 
 ```
-pkg upgrade -y; curl -fsSL https://cdn.jsdelivr.net/gh/wddis/pol@1/android-chrome-mcp/install.sh | bash
+pkg upgrade -y; curl -fsSL https://cdn.jsdelivr.net/gh/wddis/pol@260c78c61afc01449aba6915442745609b2596b0/android-chrome-mcp/install.sh | bash
 ```
 
 3. Дальше мастер **сам откроет нужные экраны настроек** и подскажет, что нажать. Нужен Wi-Fi, около 3 минут.
