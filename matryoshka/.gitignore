@@ -6,3 +6,4 @@ local.properties
 .kotlin/
 guest/out/
 guest/device/mvm/prebuilt/
+.cxx/
