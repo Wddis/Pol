@@ -18496,6 +18496,11 @@ function buildServer() {
     return ok((s ?? "undefined").slice(0, 3e4));
   })), server;
 }
+function setHeader(req, name, value) {
+  let raw = req.rawHeaders;
+  for (let i = raw.length - 2; i >= 0; i -= 2) raw[i].toLowerCase() === name && raw.splice(i, 2);
+  raw.push(name, value), req.headers[name] = value;
+}
 var expected = Buffer.from(`/mcp/${cfg.secret}`), pathOk = (p) => {
   let b = Buffer.from(p);
   return b.length === expected.length && timingSafeEqual(b, expected);
@@ -18517,6 +18522,8 @@ var expected = Buffer.from(`/mcp/${cfg.secret}`), pathOk = (p) => {
     res.writeHead(405, { allow: "POST" }).end();
     return;
   }
+  let ua = req.headers["user-agent"] || "-";
+  log(`POST accept="${req.headers.accept || ""}" type="${req.headers["content-type"] || ""}" ua="${ua.slice(0, 60)}"`), setHeader(req, "accept", "application/json, text/event-stream"), /application\/json/i.test(req.headers["content-type"] || "") || setHeader(req, "content-type", "application/json");
   try {
     let server = buildServer(), transport = new StreamableHTTPServerTransport({ sessionIdGenerator: void 0, enableJsonResponse: !0 });
     res.on("close", () => {

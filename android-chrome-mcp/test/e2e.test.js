@@ -129,6 +129,22 @@ async function main() {
     assert.equal(r2.status, 404);
   });
 
+  await test('lenient Accept / Content-Type (no 406 / 415)', async () => {
+    const init = { jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'x', version: '1' } } };
+    for (const headers of [
+      { accept: '*/*', 'content-type': 'application/json' },
+      { accept: 'application/json', 'content-type': 'application/json' },
+      { 'content-type': 'application/json' },
+      { accept: 'application/json, text/event-stream', 'content-type': 'text/plain' },
+    ]) {
+      const r = await fetch(`http://127.0.0.1:8801/mcp/${SECRET}`, { method: 'POST', headers, body: JSON.stringify(init) });
+      const body = await r.text();
+      assert.equal(r.status, 200, JSON.stringify(headers) + ' -> ' + r.status + ' ' + body);
+      const j = JSON.parse(body);
+      assert.equal(j.result.serverInfo.name, 'android-chrome');
+    }
+  });
+
   const c = await connect(8801, SECRET);
 
   await test('tools are listed', async () => {

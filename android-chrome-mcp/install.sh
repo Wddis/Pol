@@ -40,6 +40,10 @@ grep -q "android-chrome MCP" "$APP/server.mjs" || { echo "Файл повреж�
 chmod +x "$APP/chrome-mcp" "$APP/server.mjs"
 ln -sf "$APP/chrome-mcp" "$PREFIX/bin/chrome-mcp"
 
+# Перезапустить работающий сервер на новой версии (туннель и адрес не трогаем).
+PIDF="$HOME/.android-chrome-mcp/server.pid"
+if [ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2>/dev/null; then rm -f "$PIDF"; echo "  (сервер будет перезапущен на новой версии)"; fi
+
 echo "▶ 3/3 Готово! Запускаю мастер настройки..."
 echo
 exec chrome-mcp </dev/tty

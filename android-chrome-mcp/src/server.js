@@ -208,6 +208,13 @@ function buildServer() {
   return server;
 }
 
+function setHeader(req, name, value) {
+  const raw = req.rawHeaders;
+  for (let i = raw.length - 2; i >= 0; i -= 2) if (raw[i].toLowerCase() === name) raw.splice(i, 2);
+  raw.push(name, value);
+  req.headers[name] = value;
+}
+
 const expected = Buffer.from(`/mcp/${cfg.secret}`);
 const pathOk = (p) => {
   const b = Buffer.from(p);
@@ -233,6 +240,12 @@ const httpServer = http.createServer(async (req, res) => {
     res.writeHead(405, { allow: 'POST' }).end();
     return;
   }
+  // Be lenient with clients/proxies that send "Accept: */*" or only one of
+  // the two types: the SDK would answer 406. We always reply with JSON.
+  const ua = req.headers['user-agent'] || '-';
+  log(`POST accept="${req.headers.accept || ''}" type="${req.headers['content-type'] || ''}" ua="${ua.slice(0, 60)}"`);
+  setHeader(req, 'accept', 'application/json, text/event-stream');
+  if (!/application\/json/i.test(req.headers['content-type'] || '')) setHeader(req, 'content-type', 'application/json');
   try {
     const server = buildServer();
     const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
