@@ -265,14 +265,26 @@ tunnel_ssh() { # user@host regex
     -o ExitOnForwardFailure=yes -o ConnectTimeout=15 -R "80:127.0.0.1:$ACM_PORT" "$1" </dev/null >"$TLOG" 2>&1 &
   echo $! >"$STATE/tunnel.pid"
   local url; url="$(wait_url "$2" 40)" || return 1
+  url="$(printf '%s' "$url" | grep -oE 'https://[^ ]+$')"
   echo "$url" >"$STATE/base_url"
+  public_ok "$url" || return 1
+}
+
+# Отвечает ли по адресу именно наш сервер (а не чужая страница)?
+public_ok() { # base_url
+  local n
+  for n in 1 2 3 4 5 6 7 8; do
+    [ "$(curl -fsS -m 8 "$1/health" 2>/dev/null)" = ok ] && return 0
+    sleep 2
+  done
+  return 1
 }
 
 try_tunnel() { # name
   case "$1" in
     cloudflare) say "  Пробую туннель Cloudflare..."; tunnel_cloudflare ;;
-    lhr) say "  Пробую туннель localhost.run..."; tunnel_ssh nokey@localhost.run 'https://[a-z0-9-]+\.(lhr\.life|localhost\.run)' ;;
-    serveo) say "  Пробую туннель serveo..."; tunnel_ssh serveo.net 'https://[a-z0-9-]+\.serveo[a-z]*\.(net|com)' ;;
+    lhr) say "  Пробую туннель localhost.run..."; tunnel_ssh nokey@localhost.run 'https://[a-z0-9]{6,}\.lhr\.life' ;;
+    serveo) say "  Пробую туннель serveo..."; tunnel_ssh serveo.net 'Forwarding HTTP traffic from https://[a-z0-9-]+\.serveo[a-z]*\.(net|com)'  ;;
   esac
   local rc=$?
   if [ $rc -ne 0 ]; then
@@ -307,9 +319,8 @@ start_tunnel() {
       return 1
     fi
   fi
-  local base n; base="$(cat "$STATE/base_url")"
-  for n in $(seq 1 20); do curl -fsS -m 5 "$base/health" >/dev/null 2>&1 && return 0; sleep 2; done
-  warn "Адрес заработает через минуту (обновляется DNS)."
+  local base; base="$(cat "$STATE/base_url")"
+  public_ok "$base" || warn "Адрес пока не отвечает (обновляется DNS). Проверьте через минуту: пункт 4."
 }
 
 show_url() {
@@ -348,6 +359,10 @@ cmd_start() {
     curl -fsS -m 1 "http://127.0.0.1:$ACM_PORT/health" >/dev/null 2>&1 || { tail -n 10 "$LOG"; err "Сервер не запустился."; return 1; }
   fi
   ok "Сервер работает."
+  if alive tunnel && [ -f "$STATE/base_url" ] && ! public_ok "$(cat "$STATE/base_url")"; then
+    warn "Туннель работает, но адрес не отвечает — перезапускаю туннель."
+    kill "$(cat "$STATE/tunnel.pid")" 2>/dev/null; rm -f "$STATE/tunnel.pid" "$STATE/base_url"
+  fi
   alive tunnel || start_tunnel || return 1
   ok "Туннель работает."
   show_url
@@ -367,6 +382,9 @@ cmd_stop() {
 cmd_status() {
   alive server && ok "Сервер работает" || warn "Сервер остановлен"
   alive tunnel && ok "Туннель ($(cat "$STATE/tunnel_pref" 2>/dev/null)): $(cat "$STATE/base_url" 2>/dev/null)" || warn "Туннель остановлен"
+  if alive tunnel && [ -f "$STATE/base_url" ]; then
+    public_ok "$(cat "$STATE/base_url")" && ok "Адрес отвечает из интернета" || warn "Адрес не отвечает из интернета — нажмите 1"
+  fi
   if adb_ok; then ok "Связь с телефоном есть — Wi-Fi не нужен"
   else warn "Связи с телефоном нет — нажмите «Запустить» (может понадобиться Wi-Fi на минуту)"; fi
   say "«Отладка по USB»: держите ${B}включённой${N}, пока пользуетесь Claude"
