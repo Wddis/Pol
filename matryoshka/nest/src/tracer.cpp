@@ -29,6 +29,7 @@
 #include "syscalls_compat.h"
 #include "fastpath.h"
 #include "vfs_share.h"
+#include "bpf_emu.h"
 
 #ifndef PTRACE_EVENT_SECCOMP
 #define PTRACE_EVENT_SECCOMP 7
@@ -67,6 +68,7 @@ enum class Kind {
     Pid,        // getpid & co. and signal targets, for the virtual pid 1
     SockName,   // getsockname/getpeername/accept: AF_UNIX host paths back to guest paths
     Rlimit,     // setrlimit/prlimit64 raising limits: allowed for a privileged guest, clamped to the host's
+    Bpf,        // bpf(): maps and programs emulated in userspace (bpf_emu.h)
 };
 
 constexpr int NONE = -1;
@@ -155,6 +157,7 @@ std::vector<Spec> buildSpecs() {
     s.push_back({SYS_connect, Kind::Sock});
     s.push_back({SYS_bind, Kind::Sock});
     for (long nr : {SYS_getsockname, SYS_getpeername, SYS_accept, SYS_accept4}) s.push_back({nr, Kind::SockName});
+    s.push_back({SYS_bpf, Kind::Bpf});
     s.push_back({SYS_setrlimit, Kind::Rlimit});
     s.push_back({SYS_prlimit64, Kind::Rlimit});
     s.back().nonZeroArg = 2;
@@ -295,6 +298,7 @@ std::vector<Spec> buildCompatSpecs() {
     add(C::getpeername, SYS_getpeername, Kind::SockName);
     add(C::accept, SYS_accept, Kind::SockName);
     add(C::accept4, SYS_accept4, Kind::SockName);
+    add(C::bpf, SYS_bpf, Kind::Bpf);
     add(C::setrlimit, SYS_setrlimit, Kind::Rlimit);
     add(C::prlimit64, SYS_prlimit64, Kind::Rlimit);
     s.back().nonZeroArg = 2;
@@ -1322,6 +1326,187 @@ bool Tracer::clampRlimit(pid_t tid, Regs& r, long nr, uint64_t& scratch) {
     return true;
 }
 
+// ---- eBPF (bpf_emu.h)
+
+int Tracer::bpfObjectOfFd(pid_t tid, int fd) {
+    char link[64], target[PATH_MAX];
+    snprintf(link, sizeof(link), "/proc/%d/fd/%d", tid, fd);
+    ssize_t n = readlink(link, target, sizeof(target) - 1);
+    if (n <= 0) return -1;
+    target[n] = 0;
+    std::string prefix = bpfDir_ + "/obj-";
+    if (bpfDir_.empty() || strncmp(target, prefix.c_str(), prefix.size()) != 0) return -1;
+    return atoi(target + prefix.size());
+}
+
+// The guest gets a real fd for a new or retrieved object: the bpf() call is turned into an
+// openat() of the object's backing file (re-issued after a SIGSYS when `restart`).
+bool Tracer::openBpfObject(pid_t tid, Regs& r, uint64_t& scratch, int id, bool restart) {
+    std::string path = bpfDir_ + "/obj-" + std::to_string(id);
+    uint64_t p = pushBytes(tid, scratch, path.c_str(), path.size() + 1);
+    if (!p) return false;
+    long openNr = r.compat ? C::openat : SYS_openat;
+    r.arg[0] = r.compat ? static_cast<uint32_t>(AT_FDCWD) : static_cast<uint64_t>(static_cast<int64_t>(AT_FDCWD));
+    r.arg[1] = p;
+    r.arg[2] = O_RDWR | O_CLOEXEC;  // bpf fds are always close-on-exec
+    r.arg[3] = 0;
+    r.arg[4] = 0;
+    r.arg[5] = r.compat ? (kFastPathTag & 0xffffffffu) : kFastPathTag;  // already a host path
+    if (restart) return restartAs(tid, r, openNr);
+    return setArgs(tid, r) && setSyscall(tid, r, openNr);
+}
+
+// Returns the bpf() result; sets openObject when the call must hand the guest an fd instead.
+long Tracer::handleBpf(pid_t tid, Regs& r, int& openObject) {
+    openObject = 0;
+    stats_.emulated++;
+    if (!bpf_) {
+        bpfDir_ = cfg_.stateDir + "/bpf";
+        mkdir(bpfDir_.c_str(), 0700);
+        bpf_.reset(new BpfStore(static_cast<int>(sysconf(_SC_NPROCESSORS_CONF))));
+    }
+    const uint32_t cmd = static_cast<uint32_t>(r.arg[0]);
+    const uint64_t attrAddr = r.arg[1];
+    uint8_t a[128] = {};
+    size_t size = std::min<uint64_t>(static_cast<uint32_t>(r.arg[2]), sizeof(a));
+    if (!attrAddr || (size && !readMem(tid, attrAddr, a, size))) return -EFAULT;
+    auto u32 = [&](size_t off) { uint32_t v; memcpy(&v, a + off, 4); return v; };
+    auto u64 = [&](size_t off) { uint64_t v; memcpy(&v, a + off, 8); return v; };
+    auto newObject = [&](BpfObject o) -> long {
+        int id = bpf_->create(std::move(o));
+        if (id < 0) return id;
+        std::string f = bpfDir_ + "/obj-" + std::to_string(id);
+        int fd = open(f.c_str(), O_WRONLY | O_CREAT | O_CLOEXEC, 0600);
+        if (fd < 0) return -ENOMEM;
+        close(fd);
+        openObject = id;
+        return 0;
+    };
+    auto readBuf = [&](uint64_t addr, size_t n, std::vector<uint8_t>& out) {
+        out.assign(n, 0);
+        return n == 0 || readMem(tid, addr, out.data(), n);
+    };
+    auto objOf = [&](uint32_t fd) { return bpfObjectOfFd(tid, static_cast<int>(fd)); };
+    auto pinPath = [&](uint64_t addr, std::string& host) {
+        std::string guest;
+        return guestPathArg(tid, addr, true, guest, &host);
+    };
+
+    switch (cmd) {
+        case bpfc::MAP_CREATE: {
+            BpfObject o;
+            o.isMap = true;
+            o.type = u32(0);
+            o.keySize = u32(4);
+            o.valueSize = u32(8);
+            o.maxEntries = u32(12);
+            o.flags = u32(16);
+            o.name.assign(reinterpret_cast<const char*>(a + 28), strnlen(reinterpret_cast<const char*>(a + 28), 16));
+            return newObject(std::move(o));
+        }
+        case bpfc::PROG_LOAD: {
+            BpfObject o;
+            o.isMap = false;
+            o.type = u32(0);
+            o.name.assign(reinterpret_cast<const char*>(a + 48), strnlen(reinterpret_cast<const char*>(a + 48), 16));
+            return newObject(std::move(o));
+        }
+        case bpfc::MAP_LOOKUP_ELEM:
+        case bpfc::MAP_UPDATE_ELEM:
+        case bpfc::MAP_DELETE_ELEM:
+        case bpfc::MAP_GET_NEXT_KEY: {
+            int id = objOf(u32(0));
+            if (id < 0 || !bpf_->exists(id)) return -EBADF;
+            size_t ks = bpf_->keySize(id), vs = bpf_->userValueSize(id);
+            std::vector<uint8_t> key, val;
+            bool haveKey = u64(8) != 0;
+            if (haveKey && !readBuf(u64(8), ks, key)) return -EFAULT;
+            if (cmd == bpfc::MAP_LOOKUP_ELEM) {
+                if (!haveKey) return -EFAULT;
+                int rc = bpf_->lookup(id, key, val);
+                if (rc) return rc;
+                return writeMem(tid, u64(16), val.data(), val.size()) ? 0 : -EFAULT;
+            }
+            if (cmd == bpfc::MAP_UPDATE_ELEM) {
+                if (!haveKey || !readBuf(u64(16), vs, val)) return -EFAULT;
+                return bpf_->update(id, key, val, u64(24));
+            }
+            if (cmd == bpfc::MAP_DELETE_ELEM) return haveKey ? bpf_->remove(id, key) : -EFAULT;
+            std::vector<uint8_t> next;
+            int rc = bpf_->nextKey(id, haveKey ? &key : nullptr, next);
+            if (rc) return rc;
+            return writeMem(tid, u64(16), next.data(), next.size()) ? 0 : -EFAULT;
+        }
+        case bpfc::OBJ_PIN: {
+            int id = objOf(u32(8));
+            if (id < 0) return -EBADF;
+            std::string host;
+            if (!pinPath(u64(0), host)) return -ENOENT;
+            struct stat st;
+            if (lstat(host.c_str(), &st) == 0) return -EEXIST;
+            int fd = open(host.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
+            if (fd < 0) return -errno;
+            std::string tag = "nest-bpf " + std::to_string(id) + "\n";
+            ssize_t w = write(fd, tag.data(), tag.size());
+            close(fd);
+            return w == static_cast<ssize_t>(tag.size()) ? 0 : -EIO;
+        }
+        case bpfc::OBJ_GET: {
+            std::string host;
+            if (!pinPath(u64(0), host)) return -ENOENT;
+            FILE* f = fopen(host.c_str(), "re");
+            if (!f) return -errno;
+            int id = -1;
+            if (fscanf(f, "nest-bpf %d", &id) != 1) id = -1;
+            fclose(f);
+            if (id < 0 || !bpf_->exists(id)) return -EINVAL;  // not a pinned object
+            openObject = id;
+            return 0;
+        }
+        case bpfc::OBJ_GET_INFO_BY_FD: {
+            int id = objOf(u32(0));
+            if (id < 0) return -EBADF;
+            BpfObject o = bpf_->info(id);
+            uint8_t info[256] = {};
+            size_t n;
+            auto put32 = [&](size_t off, uint32_t v) { memcpy(info + off, &v, 4); };
+            put32(0, o.type);
+            put32(4, static_cast<uint32_t>(id));
+            if (o.isMap) {  // struct bpf_map_info
+                put32(8, o.keySize);
+                put32(12, o.valueSize);
+                put32(16, o.maxEntries);
+                put32(20, o.flags);
+                memcpy(info + 24, o.name.data(), std::min<size_t>(o.name.size(), 15));
+                n = 88;
+            } else {  // struct bpf_prog_info: type, id, tag[8], ...
+                n = 208;
+            }
+            uint32_t len = std::min<uint32_t>(u32(4), static_cast<uint32_t>(n));
+            if (len && !writeMem(tid, u64(8), info, len)) return -EFAULT;
+            return writeMem(tid, attrAddr + 4, &len, 4) ? 0 : -EFAULT;
+        }
+        case bpfc::PROG_QUERY: {  // nothing attached as far as the kernel is concerned
+            uint32_t zero = 0;
+            if (size >= 28 && !writeMem(tid, attrAddr + 24, &zero, 4)) return -EFAULT;
+            if (size >= 16) writeMem(tid, attrAddr + 12, &zero, 4);
+            return 0;
+        }
+        case bpfc::RAW_TRACEPOINT_OPEN: {
+            int id = objOf(u32(8));
+            if (id < 0) return -EBADF;
+            openObject = id;
+            return 0;
+        }
+        case bpfc::PROG_ATTACH:
+        case bpfc::PROG_DETACH:
+        case bpfc::MAP_FREEZE:
+            return 0;
+        default:
+            return -EINVAL;
+    }
+}
+
 void Tracer::publishVfs() {
     if (share_) share_->publish(cfg_.vfs.serialize());
 }
@@ -1482,6 +1667,14 @@ bool Tracer::handleSigsys(pid_t tid) {
         nr = cs ? cs->logical : -1;
     }
     stats_.sigsys++;
+    if (nr == SYS_bpf && cfg_.fakeRoot) {  // blocked by the app policy: emulate it the same way
+        int obj = 0;
+        long res = handleBpf(tid, r, obj);
+        uint64_t scratch = (r.sp - 1024) & ~static_cast<uint64_t>(15);
+        if (obj > 0 && openBpfObject(tid, r, scratch, obj, true)) return true;
+        setReturn(tid, r, obj > 0 ? -ENOMEM : res);
+        return true;
+    }
     bool handled = false;
     long res = emulate(tid, r, nr, handled);
     if (!handled) {
@@ -1530,6 +1723,11 @@ void Tracer::handleSeccomp(pid_t tid) {
                     r.arg[s->flagArg + 1] = 0644;
                     changed = true;
                 }
+                if (isOpen && s->flagArg >= 0 && !lastHost_.empty() && (r.arg[s->flagArg] & O_ACCMODE) != O_RDONLY &&
+                    cfg_.vfs.isAppendHost(lastHost_)) {
+                    r.arg[s->flagArg] = (r.arg[s->flagArg] | O_APPEND) & ~static_cast<uint64_t>(O_TRUNC);  // record device (/dev/kmsg)
+                    changed = true;
+                }
                 if (s->path2 >= 0) changed |= rewritePath(tid, r, s->dirfd2, s->path2, false, scratch);
                 if (changed) setArgs(tid, r);
                 break;
@@ -1565,6 +1763,15 @@ void Tracer::handleSeccomp(pid_t tid) {
             case Kind::Sock:
                 if (rewriteSockaddr(tid, r, scratch, s->logical == SYS_connect)) setArgs(tid, r);
                 break;
+            case Kind::Bpf: {
+                if (!cfg_.fakeRoot) break;
+                int obj = 0;
+                long res = handleBpf(tid, r, obj);
+                if (obj > 0 && openBpfObject(tid, r, scratch, obj, false)) break;  // becomes openat
+                setSyscall(tid, r, -1);
+                setReturn(tid, r, obj > 0 ? -ENOMEM : res);
+                break;
+            }
             case Kind::Rlimit:
                 if (cfg_.fakeRoot && clampRlimit(tid, r, s->logical, scratch)) setArgs(tid, r);
                 break;
@@ -1609,6 +1816,23 @@ void Tracer::handleSeccomp(pid_t tid) {
                 break;
             }
             case Kind::Emulate: {
+                if (s->logical == SYS_mount && cfg_.fakeRoot && r.arg[2]) {
+                    char fstype[16] = {};
+                    if (readString(tid, r.arg[2], fstype, sizeof(fstype)) && strcmp(fstype, kNestBpfFsType) == 0) {
+                        // bpf() carrier (fastpath.h): bpf(cmd, attr, size)
+                        int shift = r.compat ? 16 : kNestBpfSizeShift;
+                        uint64_t flags = r.arg[3];
+                        r.arg[0] = flags & 0xffff;
+                        r.arg[1] = r.arg[4];
+                        r.arg[2] = flags >> shift;
+                        int obj = 0;
+                        long res = handleBpf(tid, r, obj);
+                        if (obj > 0 && openBpfObject(tid, r, scratch, obj, false)) break;
+                        setSyscall(tid, r, -1);
+                        setReturn(tid, r, obj > 0 ? -ENOMEM : res);
+                        break;
+                    }
+                }
                 bool handled = false;
                 long res = emulate(tid, r, s->logical, handled);
                 if (handled) {

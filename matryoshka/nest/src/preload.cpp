@@ -117,9 +117,13 @@ long pathCall(long nr, long dirfd, const char* path, long a2, long a3, long a4, 
     }
     std::string host;
     if (translate(path, follow, host)) {
-        if (nr == SYS_openat && (a2 & O_ACCMODE) != O_RDONLY && !(a2 & O_CREAT) && currentVfs()->isCgroupHost(host)) {
-            a2 |= O_CREAT;  // cgroup control file of a new group
-            a3 = 0644;
+        if (nr == SYS_openat && (a2 & O_ACCMODE) != O_RDONLY) {
+            nest::Vfs* v = currentVfs();
+            if (!(a2 & O_CREAT) && v->isCgroupHost(host)) {
+                a2 |= O_CREAT;  // cgroup control file of a new group
+                a3 = 0644;
+            }
+            if (v->isAppendHost(host)) a2 = (a2 | O_APPEND) & ~O_TRUNC;  // record device (/dev/kmsg)
         }
         return ret(taggedSyscall(nr, dirfd, reinterpret_cast<long>(host.c_str()), a2, a3, a4));
     }
@@ -133,6 +137,23 @@ int openFlagsFollow(int flags) { return !(flags & O_NOFOLLOW); }
 extern "C" {
 
 #define NEST_EXPORT __attribute__((visibility("default")))
+
+#if defined(NEST_HAVE_RAW_SYSCALL)
+// libc's syscall(): unchanged, except that a bpf() the kernel (or a CPU emulator) does not know
+// is handed to the engine through its mount carrier (fastpath.h).
+NEST_EXPORT long syscall(long nr, ...) {
+    va_list ap;
+    va_start(ap, nr);
+    long a[6];
+    for (long& x : a) x = va_arg(ap, long);
+    va_end(ap);
+    long r = nest::rawSyscall(nr, a[0], a[1], a[2], a[3], a[4], a[5]);
+    if (nr == SYS_bpf && r == -ENOSYS && static_cast<unsigned long>(a[2]) < 0x10000)
+        r = nest::rawSyscall(SYS_mount, 0, reinterpret_cast<long>("/"), reinterpret_cast<long>(nest::kNestBpfFsType),
+                             (a[0] & 0xffff) | (a[2] << nest::kNestBpfSizeShift), a[1], 0);
+    return ret(r);
+}
+#endif
 
 NEST_EXPORT int openat(int dirfd, const char* path, int flags, ...) {
     mode_t mode = 0;

@@ -28,7 +28,93 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
         const char* c = argv[i];
-        if (!strcmp(c, "rlimit-raise")) {
+        if (!strcmp(c, "bpf-carrier")) {
+            // bpf() through the engine's mount carrier (used when bpf() itself is ENOSYS)
+            auto carry = [](int cmd, void* attr) {
+                return syscall(SYS_mount, nullptr, "/", "nest-bpf",
+                               static_cast<unsigned long>(cmd) | (128ul << (sizeof(long) == 8 ? 32 : 16)), attr);
+            };
+            uint32_t at[32] = {1, 4, 4, 1};
+            long m = carry(0, at);
+            uint32_t k = 1, v = 42, got = 0;
+            uint8_t e[128] = {};
+            uint32_t fd = static_cast<uint32_t>(m);
+            uint64_t kp = reinterpret_cast<uintptr_t>(&k), vp = reinterpret_cast<uintptr_t>(&v);
+            memcpy(e, &fd, 4); memcpy(e + 8, &kp, 8); memcpy(e + 16, &vp, 8);
+            long u = carry(2, e);
+            vp = reinterpret_cast<uintptr_t>(&got);
+            memcpy(e + 16, &vp, 8);
+            long l = carry(1, e);
+            printf("carrier %s %ld %ld %u\n", m >= 0 ? "fd" : strerror(errno), u, l, got);
+        } else if (!strcmp(c, "bpf-demo")) {
+            // What bpfloader + netd do: create, pin, retrieve, read and write maps; load a program.
+            const char* pin = argv[++i];
+            auto bpf = [](int cmd, void* attr) { return static_cast<int>(syscall(SYS_bpf, cmd, attr, 128)); };
+            union { uint8_t raw[128]; uint32_t w[32]; } at{};
+            at.w[0] = 1; at.w[1] = 4; at.w[2] = 8; at.w[3] = 2;  // hash, key 4, value 8, 2 entries
+            int m = bpf(0, &at);
+            uint32_t k = 7;
+            uint64_t v = 0x1122334455667788ull, got = 0;
+            auto elem = [&](int cmd, int fd, void* key, void* val, uint64_t flags) {
+                uint8_t e[128] = {};
+                uint32_t f32 = static_cast<uint32_t>(fd);
+                uint64_t kp = reinterpret_cast<uintptr_t>(key), vp = reinterpret_cast<uintptr_t>(val);
+                memcpy(e, &f32, 4); memcpy(e + 8, &kp, 8); memcpy(e + 16, &vp, 8); memcpy(e + 24, &flags, 8);
+                int rc = bpf(cmd, e);
+                return rc == 0 ? 0 : -errno;
+            };
+            printf("create %s\n", m >= 0 ? "fd" : strerror(errno));
+            int u1 = elem(2, m, &k, &v, 0);
+            int u2 = elem(2, m, &k, &v, 1);
+            printf("update %d noexist %d\n", u1, u2);
+            uint8_t pa[128] = {};
+            uint64_t pp = reinterpret_cast<uintptr_t>(pin);
+            uint32_t mfd = static_cast<uint32_t>(m);
+            memcpy(pa, &pp, 8); memcpy(pa + 8, &mfd, 4);
+            int p1 = bpf(6, pa) == 0 ? 0 : -errno;
+            int p2 = bpf(6, pa) == 0 ? 0 : -errno;
+            printf("pin %d again %d\n", p1, p2);
+            memset(pa + 8, 0, 8);
+            int m2 = bpf(7, pa);
+            printf("get %s\n", m2 >= 0 && m2 != m ? "fd" : strerror(errno));
+            int lr = elem(1, m2, &k, &got, 0);
+            printf("lookup %d %llx\n", lr, static_cast<unsigned long long>(got));
+            uint32_t k2 = 9, k3 = 11, nk = 0;
+            elem(2, m2, &k2, &v, 0);
+            printf("full %d\n", elem(2, m2, &k3, &v, 0));
+            int n1 = elem(4, m2, nullptr, &nk, 0);
+            uint32_t first = nk;
+            int n2 = elem(4, m2, &first, &nk, 0);
+            uint32_t second = nk;
+            int n3 = elem(4, m2, &second, &nk, 0);
+            printf("iter %d:%u %d:%u %d\n", n1, first, n2, second, n3);
+            int d1 = elem(3, m2, &k, nullptr, 0);
+            int d2 = elem(1, m2, &k, &got, 0);
+            printf("delete %d missing %d\n", d1, d2);
+            uint8_t ar[128] = {};
+            uint32_t aw[4] = {2, 4, 4, 4};  // array, key 4, value 4, 4 entries
+            memcpy(ar, aw, sizeof(aw));
+            int a = bpf(0, ar);
+            uint32_t idx = 3, av = 99;
+            int a1 = elem(1, a, &idx, &av, 0);
+            uint32_t av1 = av;
+            idx = 4;
+            int a2 = elem(1, a, &idx, &av, 0);
+            printf("array lookup %d %u oob %d\n", a1, av1, a2);
+            uint8_t pl[128] = {};
+            pl[0] = 9;  // cgroup skb
+            int prog = bpf(5, pl);
+            printf("prog %s\n", prog >= 0 ? "fd" : strerror(errno));
+            uint8_t info[88] = {};
+            uint8_t ia[128] = {};
+            uint32_t ilen = sizeof(info);
+            uint64_t ip = reinterpret_cast<uintptr_t>(info);
+            memcpy(ia, &mfd, 4); memcpy(ia + 4, &ilen, 4); memcpy(ia + 8, &ip, 8);
+            int ir = bpf(15, ia);
+            uint32_t itype, ikey, ival, imax;
+            memcpy(&itype, info, 4); memcpy(&ikey, info + 8, 4); memcpy(&ival, info + 12, 4); memcpy(&imax, info + 16, 4);
+            printf("info %d type%u key%u val%u max%u\n", ir, itype, ikey, ival, imax);
+        } else if (!strcmp(c, "rlimit-raise")) {
             // ask for far more open files than any kernel allows (init's `rlimit` / `setrlimit`)
             rlimit want{1ull << 40, 1ull << 40};
             printRes(setrlimit(RLIMIT_NOFILE, &want));

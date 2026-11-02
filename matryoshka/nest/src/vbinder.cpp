@@ -139,6 +139,10 @@ struct Broker::Impl {
     Node* mgr[3] = {nullptr, nullptr, nullptr};
     mutable std::mutex statsMu;
     BrokerStats st;
+    // Thread whose BC_TRANSACTION/BC_REPLY is being translated. Refcount work for its own nodes goes
+    // to its own todo (as in the kernel), so BR_INCREFS/BR_ACQUIRE are handled while its parcel
+    // still holds the object, never by another thread after the object is gone.
+    Thread* curSender = nullptr;
     FILE* trace = nullptr;  // NEST_BINDER_LOG: one line per transaction (debugging the guest boot)
 
     // Interface name at the start of a parcel (AIDL: UTF-16 token after the header words;
@@ -294,13 +298,23 @@ struct Broker::Impl {
         bool wantStrong = n->remoteStrong + n->tmpStrong > 0;
         bool wantWeak = wantStrong || n->remoteWeak + n->tmpWeak > 0;
         // Same ordering as the kernel: INCREFS before ACQUIRE, RELEASE before DECREFS.
+        if (trace && (wantWeak != n->hasWeak || wantStrong != n->hasStrong)) {
+            fprintf(trace, "%d node %llx/%llx weak %d->%d strong %d->%d\n", n->owner->pid,
+                    static_cast<unsigned long long>(n->ptr), static_cast<unsigned long long>(n->cookie), n->hasWeak,
+                    wantWeak, n->hasStrong, wantStrong);
+            fflush(trace);
+        }
+        auto queueInc = [&](Work w) {
+            if (curSender && curSender->proc == n->owner) curSender->todo.push_back(w);
+            else queueProc(n->owner, w);
+        };
         if (wantWeak && !n->hasWeak) {
             n->hasWeak = true;
-            queueProc(n->owner, {Work::NODE_INC, nullptr, 0, n->ptr, n->cookie});
+            queueInc({Work::NODE_INC, nullptr, 0, n->ptr, n->cookie});
         }
         if (wantStrong && !n->hasStrong) {
             n->hasStrong = true;
-            queueProc(n->owner, {Work::NODE_ACQ, nullptr, 0, n->ptr, n->cookie});
+            queueInc({Work::NODE_ACQ, nullptr, 0, n->ptr, n->cookie});
         }
         if (!wantStrong && n->hasStrong) {
             n->hasStrong = false;
@@ -312,9 +326,20 @@ struct Broker::Impl {
         }
     }
 
+    // The owner's object at `ptr`. Like the kernel, an object whose node is no longer referenced
+    // anywhere counts as gone: a new object at the same address (cookie differs) gets a fresh
+    // node identity. A different cookie for a node still in use is an error (nullptr).
     Node* getNode(Proc* p, uint64_t ptr, uint64_t cookie) {
         auto it = p->nodes.find(ptr);
-        if (it != p->nodes.end()) return it->second;
+        if (it != p->nodes.end()) {
+            Node* n = it->second;
+            if (n->cookie == cookie || n->contextManager) return n;
+            bool idle = n->refs.empty() && n->tmpStrong == 0 && n->tmpWeak == 0 && !n->hasStrong && !n->hasWeak;
+            if (!idle) return nullptr;
+            n->cookie = cookie;
+            n->remoteStrong = n->remoteWeak = 0;
+            return n;
+        }
         auto* n = new Node{p, ptr, cookie};
         p->nodes[ptr] = n;
         return n;
@@ -429,6 +454,10 @@ struct Broker::Impl {
                     auto* fp = reinterpret_cast<flat_binder_object*>(hdr);
                     bool strong = hdr->type == BINDER_TYPE_BINDER;
                     Node* n = getNode(from, fp->binder, fp->cookie);
+                    if (!n) {
+                        why("binder object cookie mismatch");
+                        return fail(BR_FAILED_REPLY);
+                    }
                     Ref* r = getRef(to, n);
                     refUpdate(r, strong ? 1 : 0, strong ? 0 : 1);
                     b->holds.push_back({r, nullptr, strong});
@@ -556,13 +585,15 @@ struct Broker::Impl {
             Proc* targetProc = in->fromProc;
             Txn* senderParent = in->fromParent;
             delete in;
-            t->todo.push_back({Work::COMPLETE});
             if (trace) {
                 fprintf(trace, "%d reply -> %d size=%llu\n", p->pid, targetProc ? targetProc->pid : -1,
                         static_cast<unsigned long long>(tr.data_size));
                 fflush(trace);
             }
-            if (!target || targetProc->dead) return;  // nobody waits for it anymore
+            if (!target || targetProc->dead) {  // nobody waits for it anymore
+                t->todo.push_back({Work::COMPLETE});
+                return;
+            }
             auto* r = new Txn();
             r->isReply = true;
             r->fromProc = p;
@@ -571,7 +602,10 @@ struct Broker::Impl {
             r->flags = tr.flags;
             r->senderPid = p->pid;
             r->senderEuid = euid(p);
+            curSender = t;
             uint32_t res = buildBuffer(p, targetProc, tr, sgSize, fds, fdCursor, r);
+            curSender = nullptr;
+            t->todo.push_back({Work::COMPLETE});  // after refcount work for objects in the reply
             target->stack = senderParent;  // the sender's call is complete
             if (res != BR_OK) {
                 delete r;
@@ -628,7 +662,9 @@ struct Broker::Impl {
         x->flags = tr.flags;
         x->senderPid = p->pid;
         x->senderEuid = euid(p);
+        curSender = t;
         uint32_t res = buildBuffer(p, targetProc, tr, sgSize, fds, fdCursor, x);
+        curSender = nullptr;
         if (res != BR_OK) {
             delete x;
             sendError(t, res);

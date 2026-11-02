@@ -224,3 +224,27 @@ TEST(vfs_mount_over_parent_hides_submounts_but_not_sticky) {
     EXPECT_EQ(v.mapLexical("/apex/lib.so"), "/state/preload/x");
     EXPECT_EQ(v.mapLexical("/apexes/y"), "/other/y");
 }
+
+#include "bpf_emu.h"
+TEST(bpf_store_map_semantics) {
+    nest::BpfStore st(4);
+    nest::BpfObject h;
+    h.type = nest::bpfc::HASH; h.keySize = 4; h.valueSize = 4; h.maxEntries = 1;
+    int id = st.create(h);
+    std::vector<uint8_t> k1{1, 0, 0, 0}, k2{2, 0, 0, 0}, v{5, 0, 0, 0}, out;
+    EXPECT_EQ(st.update(id, k1, v, nest::bpfc::EXIST), -ENOENT);
+    EXPECT_EQ(st.update(id, k1, v, nest::bpfc::ANY), 0);
+    EXPECT_EQ(st.update(id, k2, v, nest::bpfc::ANY), -E2BIG);
+    EXPECT_EQ(st.update(id, k1, std::vector<uint8_t>{1, 2}, 0), -EINVAL);
+    nest::BpfObject pc;
+    pc.type = nest::bpfc::PERCPU_ARRAY; pc.keySize = 4; pc.valueSize = 4; pc.maxEntries = 2;
+    int p = st.create(pc);
+    EXPECT_EQ(st.userValueSize(p), 32u);  // 8-byte slot per CPU
+    EXPECT_EQ(st.lookup(p, k1, out), 0);
+    EXPECT_EQ(out.size(), 32u);
+    EXPECT_EQ(st.remove(p, k1), -EINVAL);
+    EXPECT_EQ(st.lookup(p, k2, out), -ENOENT);  // index 2 >= max_entries
+    nest::BpfObject bad;
+    bad.type = nest::bpfc::ARRAY; bad.keySize = 8; bad.valueSize = 4; bad.maxEntries = 1;
+    EXPECT_EQ(st.create(bad), -EINVAL);
+}

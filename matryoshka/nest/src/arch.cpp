@@ -54,6 +54,20 @@ bool setSyscall(pid_t tid, Regs& r, long nr) {
     return ptrace(PTRACE_SETREGS, tid, nullptr, r.raw) == 0;
 }
 
+bool restartAs(pid_t tid, Regs& r, long nr) {
+    auto* u = U(r);
+    if (r.compat) {
+        u->rbx = r.arg[0]; u->rcx = r.arg[1]; u->rdx = r.arg[2];
+        u->rsi = r.arg[3]; u->rdi = r.arg[4]; u->rbp = r.arg[5];
+    } else {
+        u->rdi = r.arg[0]; u->rsi = r.arg[1]; u->rdx = r.arg[2];
+        u->r10 = r.arg[3]; u->r8 = r.arg[4]; u->r9 = r.arg[5];
+    }
+    u->rax = static_cast<uint64_t>(nr);
+    u->rip -= 2;  // syscall / int $0x80
+    return ptrace(PTRACE_SETREGS, tid, nullptr, r.raw) == 0;
+}
+
 bool setReturn(pid_t tid, Regs& r, long value) {
     U(r)->rax = r.compat ? static_cast<uint64_t>(static_cast<uint32_t>(value)) : static_cast<uint64_t>(value);
     r.ret = static_cast<uint64_t>(value);
@@ -118,6 +132,21 @@ bool setSyscall(pid_t tid, Regs& r, long nr) {
     iovec sio{&n, sizeof(n)};
     r.nr = static_cast<uint64_t>(nr);
     return ptrace(PTRACE_SETREGSET, tid, reinterpret_cast<void*>(NT_ARM_SYSTEM_CALL), &sio) == 0;
+}
+
+bool restartAs(pid_t tid, Regs& r, long nr) {
+    if (r.compat) {
+        uint32_t* g = A32(r);
+        for (int i = 0; i < 6; i++) g[i] = static_cast<uint32_t>(r.arg[i]);
+        g[7] = static_cast<uint32_t>(nr);
+        g[15] -= (g[16] & 0x20) ? 2 : 4;  // Thumb or ARM svc
+        return putRegs(tid, r);
+    }
+    auto* a = A(r);
+    for (int i = 0; i < 6; i++) a->regs[i] = r.arg[i];
+    a->regs[8] = static_cast<uint64_t>(nr);
+    a->pc -= 4;
+    return putRegs(tid, r);
 }
 
 bool setReturn(pid_t tid, Regs& r, long value) {

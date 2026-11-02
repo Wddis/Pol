@@ -73,6 +73,7 @@ bool applyAndroidProfile(TracerConfig& cfg, const std::string& state, const std:
     cfg.vfs.bind("/dev/pts", "/dev/pts", false, true);
     ensureMountPoint(state + "/dev/kmsg", false);
     cfg.vfs.bind("/dev/kmsg", state + "/kmsg", false, true);
+    cfg.vfs.setAppend("/dev/kmsg");
 
     cfg.vfs.bind("/proc", "/proc");
     for (const char* f : {"version", "filesystems", "cmdline"})

@@ -102,6 +102,7 @@ constexpr long accept = 285;
 constexpr long accept4 = 366;
 constexpr long setrlimit = 75;
 constexpr long prlimit64 = 369;
+constexpr long bpf = 386;
 }  // namespace arm
 
 namespace i386 {
@@ -202,5 +203,6 @@ constexpr long accept = -1;
 constexpr long accept4 = 364;
 constexpr long setrlimit = 75;
 constexpr long prlimit64 = 340;
+constexpr long bpf = 357;
 }  // namespace i386
 }  // namespace nest::sys32

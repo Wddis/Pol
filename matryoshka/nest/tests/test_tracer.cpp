@@ -1,3 +1,5 @@
+#include <fstream>
+#include <sstream>
 // End-to-end tests of the tracer through the nest-run supervisor, using real host binaries.
 // The "rootfs" tests build a tiny guest root (binaries + their shared libraries + the dynamic
 // loader) — the same situation as an Android guest, whose binaries need the guest's own linker.
@@ -447,6 +449,43 @@ TEST(unix_socket_names_are_guest_paths) {
     auto r = run({NEST_RUN_PATH, "-b", "/=/", "-b", "/dev/socket=" + host, "--", NEST_IDPROG_PATH, "sockname",
                   "/dev/socket/lmkd"});
     EXPECT_EQ(r.out, "/dev/socket/lmkd 1 /dev/socket/lmkd\n");
+}
+
+// ---- eBPF maps for bpfloader / netd (bpf_emu.h)
+TEST(bpf_maps_pin_and_retrieve_like_the_kernel) {
+    const char* expect =
+        "create fd\nupdate 0 noexist -17\npin 0 again -17\nget fd\nlookup 0 1122334455667788\nfull -7\n"
+        "iter 0:7 0:9 -2\ndelete 0 missing -2\narray lookup 0 0 oob -2\nprog fd\ninfo 0 type1 key4 val8 max2\n";
+    for (bool appPolicy : {false, true}) {  // seccomp stop, or SIGSYS from Android's app filter
+        std::string state = mktmp(), fs = mktmp();
+        std::vector<std::string> a{NEST_RUN_PATH, "-b", "/=/", "-b", "/sys/fs/bpf=" + fs, "-s"};
+        if (appPolicy) a.push_back("--simulate-app-seccomp");
+        for (auto x : {"--", NEST_IDPROG_PATH, "bpf-demo", "/sys/fs/bpf/map_netd_test"}) a.push_back(x);
+        auto r = runInState(a, state);
+        EXPECT_EQ(r.out, expect);
+        if (appPolicy) EXPECT_TRUE(r.err.find("sigsys=0 ") == std::string::npos);
+    }
+}
+
+TEST(android_kmsg_keeps_every_writer_line) {
+    // init, ueventd and logd each open /dev/kmsg for writing; none may overwrite the others.
+    for (bool fast : {false, true}) {
+        std::string state = mktmp();
+        std::vector<std::string> a{NEST_RUN_PATH, "-b", "/=/", "--android", state};
+        if (fast) { a.push_back("-P"); a.push_back(NEST_PRELOAD_PATH); }
+        for (auto x : {"--", NEST_IDPROG_PATH, "write", "/dev/kmsg", "<6>one\n", "write", "/dev/kmsg", "<6>two\n"})
+            a.push_back(x);
+        run(a);
+        std::ifstream f(state + "/kmsg");
+        std::stringstream ss;
+        ss << f.rdbuf();
+        EXPECT_EQ(ss.str(), "<6>one\n<6>two\n");
+    }
+}
+
+TEST(bpf_prctl_carrier) {
+    auto r = runInState({NEST_RUN_PATH, "-b", "/=/", "--", NEST_IDPROG_PATH, "bpf-carrier"}, mktmp());
+    EXPECT_EQ(r.out, "carrier fd 0 0 42\n");
 }
 
 TEST(mount_requires_root_identity) {

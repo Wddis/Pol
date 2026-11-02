@@ -73,7 +73,7 @@ static void managerServiceClientScenario(const std::string& managerRole) {
     Child mgr = spawn(managerRole, sock);
     EXPECT_TRUE(waitFor(mgr, "ready").find("ready") != std::string::npos);
     Child srv = spawn("server", sock);
-    EXPECT_TRUE(waitFor(srv, "registered").find("registered added") != std::string::npos);
+    EXPECT_TRUE(waitFor(srv, "registered").find("registered added acq1") != std::string::npos);
     Child cli = spawn("client", sock);
     std::string out = waitFor(cli, "dead-after\n");
 

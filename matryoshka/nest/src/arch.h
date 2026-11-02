@@ -28,6 +28,10 @@ bool getRegs(pid_t tid, Regs& r);
 bool setArgs(pid_t tid, Regs& r);
 // Changes the syscall number; -1 skips the syscall (then setReturn decides its result).
 bool setSyscall(pid_t tid, Regs& r, long nr);
+// At a SIGSYS stop (the syscall was refused by a seccomp filter): make the thread re-issue a
+// different syscall `nr` with arg[] when it resumes, by rewinding the pc onto the syscall
+// instruction.
+bool restartAs(pid_t tid, Regs& r, long nr);
 // Sets the return value (at syscall exit, or together with a skipped syscall).
 bool setReturn(pid_t tid, Regs& r, long value);
 

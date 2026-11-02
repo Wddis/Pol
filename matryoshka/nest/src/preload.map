@@ -7,6 +7,6 @@
     access; faccessat; readlink; readlinkat;
     mkdir; mkdirat; unlink; unlinkat; rmdir;
     chmod; fchmodat; rename; renameat;
-    ioctl; mmap; mmap64; close;
+    ioctl; mmap; mmap64; close; syscall;
   local: *;
 };

@@ -112,6 +112,9 @@ Reply readPayload(const binder_transaction_data& tr, uint32_t cmd) {
     return rep;
 }
 
+bool g_acquired = false;        // BR_ACQUIRE seen for our node
+bool g_acqBeforeReply = false;  // ... before the reply to the call that handed it out
+
 using Handler = std::function<Parcel(const binder_transaction_data&, const Reply&)>;
 Handler g_handler;  // serves incoming calls, also while waiting for a reply (nested calls)
 
@@ -140,6 +143,7 @@ bool dispatch(const std::vector<uint8_t>& r, Reply* reply, uint64_t* deadCookie)
                 binder_ptr_cookie pc;
                 memcpy(&pc, r.data() + p, sizeof(pc));
                 p += sizeof(pc);
+                if (cmd == BR_ACQUIRE && pc.ptr == 0x1000) g_acquired = true;
                 if (cmd == BR_INCREFS || cmd == BR_ACQUIRE) {
                     Out o;
                     o.u32(cmd == BR_INCREFS ? BC_INCREFS_DONE : BC_ACQUIRE_DONE);
@@ -174,6 +178,7 @@ bool dispatch(const std::vector<uint8_t>& r, Reply* reply, uint64_t* deadCookie)
                 }
                 break;
             case BR_REPLY: {
+                g_acqBeforeReply = g_acquired;
                 binder_transaction_data tr;
                 memcpy(&tr, r.data() + p, sizeof(tr));
                 p += sizeof(tr);
@@ -374,7 +379,9 @@ int main(int argc, char** argv) {
             return Parcel::bytes("?");
         };
         Reply r = call(0, 1, Parcel::object(nodeObj(0x1000, 0x2000)));
-        printf("registered %s\n", r.data.c_str());
+        // Like the kernel: refcount work for objects in our own transaction reaches us before
+        // its reply, while our parcel still holds them.
+        printf("registered %s acq%d\n", r.data.c_str(), g_acqBeforeReply ? 1 : 0);
         serveForever();
         return 0;
     }

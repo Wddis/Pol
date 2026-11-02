@@ -84,6 +84,18 @@ void Vfs::setCgroup(const std::string& guest) {
         if (m.guest == g) m.cgroup = true;
 }
 
+void Vfs::setAppend(const std::string& guest) {
+    std::string g = normalize(guest);
+    for (auto& m : mounts_)
+        if (m.guest == g) m.append = true;
+}
+
+bool Vfs::isAppendHost(const std::string& hostPath) const {
+    for (const auto& m : mounts_)
+        if (m.append && !m.host.empty() && hostPath == m.host) return true;
+    return false;
+}
+
 bool Vfs::isCgroupHost(const std::string& hostPath) const {
     for (const auto& m : mounts_)
         if (m.cgroup && !m.host.empty() && hasPrefix(hostPath, m.host)) return true;
@@ -186,7 +198,7 @@ bool Vfs::resolve(const std::string& path, const std::string& guestCwd, bool fol
 std::string Vfs::serialize() const {
     std::string out;
     for (const auto& m : mounts_)
-        out += m.guest + "\t" + m.host + "\t" + (m.readOnly ? "ro" : "rw") + (m.cgroup ? ",cg" : "") + "\n";
+        out += m.guest + "\t" + m.host + "\t" + (m.readOnly ? "ro" : "rw") + (m.cgroup ? ",cg" : "") + (m.append ? ",ap" : "") + "\n";
     return out;
 }
 
@@ -205,6 +217,7 @@ bool Vfs::deserialize(const std::string& text) {
         bool ro = t2 != std::string::npos && line.compare(t2 + 1, 2, "ro") == 0;
         bind(guest, host, ro);
         if (t2 != std::string::npos && line.find(",cg", t2) != std::string::npos) setCgroup(guest);
+        if (t2 != std::string::npos && line.find(",ap", t2) != std::string::npos) setAppend(guest);
     }
     return true;
 }

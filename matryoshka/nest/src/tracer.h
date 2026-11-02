@@ -18,6 +18,7 @@
 
 #include "vfs.h"
 #include "vfs_share.h"
+#include "bpf_emu.h"
 
 namespace nest {
 
@@ -128,6 +129,9 @@ private:
     void handleSyscallExit(pid_t tid);
     void fixSockName(pid_t tid, uint64_t addr, uint64_t lenAddr);
     bool clampRlimit(pid_t tid, struct Regs& r, long nr, uint64_t& scratch);
+    long handleBpf(pid_t tid, struct Regs& r, int& openObject);
+    bool openBpfObject(pid_t tid, struct Regs& r, uint64_t& scratch, int id, bool restart);
+    int bpfObjectOfFd(pid_t tid, int fd);
     bool rewritePath(pid_t tid, struct Regs& r, int dirfdArg, int pathArg, bool followLast,
                      uint64_t& scratch, std::string* guestOut = nullptr);
     bool rewriteExec(pid_t tid, struct Regs& r, uint64_t& scratch);
@@ -148,7 +152,9 @@ private:
     std::string guestExeOf(pid_t tid);
     mutable std::mutex credsMu_;
     pid_t initTgid_ = -1;
-    std::string lastHost_;  // host path of the latest rewritePath  // host pid of the root guest process (virtual pid 1)
+    std::string lastHost_;  // host path of the latest rewritePath
+    std::unique_ptr<BpfStore> bpf_;  // guest eBPF maps and programs (created on first use)
+    std::string bpfDir_;  // host pid of the root guest process (virtual pid 1)
     std::unique_ptr<VfsShareWriter> share_;
     int tmpfsCount_ = 0;
     bool shutdown_ = false;      // creds_/tgid_ are also read by the binder broker thread

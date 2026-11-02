@@ -80,9 +80,9 @@ int main(int argc, char** argv) {
             androidState = argv[++i];
         } else if (a == "--simulate-app-seccomp") {
             // Tests: behave like Android's app seccomp policy (SIGSYS on mount & co.).
-            cfg.simulateTrap = {SYS_mount, SYS_umount2, SYS_pivot_root, SYS_chroot, SYS_reboot, SYS_swapon};
+            cfg.simulateTrap = {SYS_mount, SYS_umount2, SYS_pivot_root, SYS_chroot, SYS_reboot, SYS_swapon, SYS_bpf};
 #if defined(__x86_64__)
-            cfg.simulateTrap32 = {21, 52, 217, 61, 88, 87};  // i386: mount umount2 pivot_root chroot reboot swapon
+            cfg.simulateTrap32 = {21, 52, 217, 61, 88, 87, 357};  // i386: mount umount2 pivot_root chroot reboot swapon bpf
 #endif
         } else if (a == "--pid1") {
             cfg.virtualInitPid = true;

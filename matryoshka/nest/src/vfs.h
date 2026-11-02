@@ -34,6 +34,8 @@ struct Mount {
     // Virtual cgroup filesystem: control files (tasks, cgroup.procs, ...) of new groups appear on
     // first write, like the kernel creates them with the directory.
     bool cgroup = false;
+    // Stands in for a record device (/dev/kmsg): every write-open appends.
+    bool append = false;
 };
 
 class Vfs {
@@ -44,6 +46,8 @@ public:
     // bindings, except sticky ones. Returns how many were hidden.
     size_t hideUnder(const std::string& guest);
     void setCgroup(const std::string& guest);
+    void setAppend(const std::string& guest);
+    bool isAppendHost(const std::string& hostPath) const;
     // True if the host path lies in a virtual cgroup filesystem.
     bool isCgroupHost(const std::string& hostPath) const;
     // Removes a binding (used for virtual umount).
