@@ -41,6 +41,12 @@ Cloudflare-туннель ──► MCP-сервер в Termux ──► adb (т
 
 ---
 
+## Туннели и сторож
+
+Порядок подключения: постоянный адрес serveo (`https://<ACM_SUBDOMAIN>.serveo.net`, привязан к SSH-ключу `~/.ssh/id_ed25519`; при первом запуске нужно один раз войти на console.serveo.net), затем последний сработавший, затем Cloudflare quick tunnel → localhost.run → serveo со случайным адресом.
+
+Сторож (`chrome-mcp watchdog`, запускается сам) каждые 20 секунд проверяет локальный сервер, связь adb и то, что по публичному адресу отвечает именно этот сервер. При сбое он перезапускает упавшее. Если адрес изменился, пишет об этом в `~/.android-chrome-mcp/watchdog.log` и присылает уведомление, когда установлен Termux:API.
+
 ## Что умеет Claude
 
 `navigate`, `snapshot` (чтение страницы с пронумерованными кнопками и полями), `click`, `type` (с отправкой формы), `select_option`, `press_key`, `scroll`, `wait_for`, `screenshot`, `evaluate` (JavaScript на странице), `tab_open`, `tab_select`, `tab_close`, `tabs_list`, `history` (назад, вперёд, обновить), `browser_status`.

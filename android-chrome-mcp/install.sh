@@ -41,8 +41,10 @@ chmod +x "$APP/chrome-mcp" "$APP/server.mjs"
 ln -sf "$APP/chrome-mcp" "$PREFIX/bin/chrome-mcp"
 
 # Перезапустить работающий сервер на новой версии (туннель и адрес не трогаем).
-PIDF="$HOME/.android-chrome-mcp/server.pid"
-if [ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2>/dev/null; then rm -f "$PIDF"; echo "  (сервер будет перезапущен на новой версии)"; fi
+for n in watchdog server; do
+  PIDF="$HOME/.android-chrome-mcp/$n.pid"
+  if [ -f "$PIDF" ] && kill "$(cat "$PIDF")" 2>/dev/null; then rm -f "$PIDF"; [ "$n" = server ] && echo "  (сервер будет перезапущен на новой версии)"; fi
+done
 
 echo "▶ 3/3 Готово! Запускаю мастер настройки..."
 echo

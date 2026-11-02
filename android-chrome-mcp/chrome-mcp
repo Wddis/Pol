@@ -39,6 +39,8 @@ ACM_PUBLIC_URL=
 EOF
   chmod 600 "$CONF"
 }
+grep -q '^ACM_SUBDOMAIN=' "$CONF" || echo "ACM_SUBDOMAIN=chrome-$(head -c 5 /dev/urandom | od -An -tx1 | tr -d ' \n')" >>"$CONF"
+grep -q '^ACM_STABLE=' "$CONF" || echo "ACM_STABLE=1" >>"$CONF"
 # shellcheck disable=SC1090
 . "$CONF"
 export ACM_SECRET ACM_PORT ACM_CDP_PORT ACM_ALL_TABS ACM_CHROME_PACKAGE \
@@ -232,9 +234,12 @@ cmd_setup() {
   cmd_start
 }
 
-# ---------- запуск ----------
 # ---------- туннели (Claude → телефон) ----------
-# Порядок: последний сработавший → Cloudflare → localhost.run → serveo.
+# 1) постоянный адрес serveo (если включён), 2) последний сработавший,
+# 3) Cloudflare → localhost.run → serveo (случайные адреса).
+QUIET=0
+tsay() { [ "$QUIET" = 1 ] && echo "$(date '+%F %T') $*" || say "$*"; }
+
 wait_url() { # regex seconds
   local url="" n
   for n in $(seq 1 "$2"); do
@@ -246,6 +251,21 @@ wait_url() { # regex seconds
   return 1
 }
 
+# Отвечает ли по адресу именно наш сервер (а не чужая страница)?
+public_ok() { # base_url [попыток]
+  local n
+  for n in $(seq 1 "${2:-8}"); do
+    [ "$(curl -fsS -m 8 "$1/health" 2>/dev/null)" = ok ] && return 0
+    [ "$n" -lt "${2:-8}" ] && sleep 2
+  done
+  return 1
+}
+
+ssh_opts=(-n -T -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=15 -o ServerAliveCountMax=3
+          -o ExitOnForwardFailure=yes -o ConnectTimeout=15)
+
+need_ssh() { command -v ssh >/dev/null || pkg install -y openssh >/dev/null 2>&1; }
+
 tunnel_cloudflare() {
   command -v cloudflared >/dev/null || return 1
   : >"$TLOG"
@@ -256,35 +276,71 @@ tunnel_cloudflare() {
   for n in $(seq 1 30); do grep -q 'Registered tunnel connection' "$TLOG" && break; alive tunnel || return 1; sleep 1; done
   grep -q 'Registered tunnel connection' "$TLOG" || return 1
   echo "$url" >"$STATE/base_url"
+  public_ok "$url"
 }
 
-tunnel_ssh() { # user@host regex
-  command -v ssh >/dev/null || pkg install -y openssh >/dev/null 2>&1 || return 1
+tunnel_ssh() { # user@host regex [remote-spec]
+  need_ssh || return 1
   : >"$TLOG"
-  nohup ssh -n -T -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=20 -o ServerAliveCountMax=3 \
-    -o ExitOnForwardFailure=yes -o ConnectTimeout=15 -R "80:127.0.0.1:$ACM_PORT" "$1" </dev/null >"$TLOG" 2>&1 &
+  nohup ssh "${ssh_opts[@]}" -R "${3:-80}:127.0.0.1:$ACM_PORT" "$1" </dev/null >"$TLOG" 2>&1 &
   echo $! >"$STATE/tunnel.pid"
   local url; url="$(wait_url "$2" 40)" || return 1
   url="$(printf '%s' "$url" | grep -oE 'https://[^ ]+$')"
   echo "$url" >"$STATE/base_url"
-  public_ok "$url" || return 1
+  public_ok "$url"
 }
 
-# Отвечает ли по адресу именно наш сервер (а не чужая страница)?
-public_ok() { # base_url
-  local n
-  for n in 1 2 3 4 5 6 7 8; do
-    [ "$(curl -fsS -m 8 "$1/health" 2>/dev/null)" = ok ] && return 0
-    sleep 2
+# Постоянный адрес: https://<ACM_SUBDOMAIN>.serveo.net, привязан к SSH-ключу телефона.
+tunnel_serveo_stable() {
+  need_ssh || return 1
+  [ -f "$HOME/.ssh/id_ed25519" ] || { mkdir -p "$HOME/.ssh"; ssh-keygen -q -t ed25519 -N "" -f "$HOME/.ssh/id_ed25519" </dev/null >/dev/null 2>&1; }
+  local attempt
+  for attempt in 1 2 3; do
+    : >"$TLOG"
+    nohup ssh "${ssh_opts[@]}" -R "$ACM_SUBDOMAIN:80:127.0.0.1:$ACM_PORT" serveo.net </dev/null >"$TLOG" 2>&1 &
+    echo $! >"$STATE/tunnel.pid"
+    local n url="" links=""
+    for n in $(seq 1 30); do
+      url="$(grep -oE "https://$ACM_SUBDOMAIN\.serveo[a-z]*\.(net|com)" "$TLOG" | head -n1)"
+      links="$(grep -oE 'https://console\.serveo\.net/[^ ]+' "$TLOG")"
+      [ -n "$url" ] || [ -n "$links" ] && break
+      alive tunnel || break
+      sleep 1
+    done
+    if [ -n "$url" ]; then
+      echo "$url" >"$STATE/base_url"
+      public_ok "$url" && return 0
+      return 1
+    fi
+    [ -n "$links" ] || return 1
+    # Ключ ещё не зарегистрирован в serveo.
+    kill "$(cat "$STATE/tunnel.pid")" 2>/dev/null; rm -f "$STATE/tunnel.pid"
+    [ "$QUIET" = 1 ] && return 1
+    local gh go
+    gh="$(printf '%s\n' "$links" | grep -i github | head -n1)"; go="$(printf '%s\n' "$links" | grep -i google | head -n1)"
+    [ -n "$gh$go" ] || gh="$(printf '%s\n' "$links" | head -n1)"
+    say ""
+    say "${B}Постоянный адрес: один раз подтвердите телефон в serveo${N}"
+    say "  Откроется сайт serveo — войдите через ${B}GitHub${N} или ${B}Google${N}. Больше делать ничего не нужно."
+    say "  1) GitHub   2) Google   n) пропустить (будет временный адрес)"
+    local c; read -r -p "  Выберите [Enter = 1]: " c
+    case "$c" in
+      n|N) set_conf ACM_STABLE 0; ACM_STABLE=0; return 1 ;;
+      2) open_screen android.intent.action.VIEW "${go:-$gh}" ;;
+      *) open_screen android.intent.action.VIEW "${gh:-$go}" ;;
+    esac
+    say "  Если сайт не открылся, откройте ссылку вручную:"; say "  ${gh:-$go}"
+    pause
   done
   return 1
 }
 
 try_tunnel() { # name
   case "$1" in
-    cloudflare) say "  Пробую туннель Cloudflare..."; tunnel_cloudflare ;;
-    lhr) say "  Пробую туннель localhost.run..."; tunnel_ssh nokey@localhost.run 'https://[a-z0-9]{6,}\.lhr\.life' ;;
-    serveo) say "  Пробую туннель serveo..."; tunnel_ssh serveo.net 'Forwarding HTTP traffic from https://[a-z0-9-]+\.serveo[a-z]*\.(net|com)'  ;;
+    stable) tsay "  Пробую постоянный адрес (serveo)..."; tunnel_serveo_stable ;;
+    cloudflare) tsay "  Пробую туннель Cloudflare..."; tunnel_cloudflare ;;
+    lhr) tsay "  Пробую туннель localhost.run..."; tunnel_ssh nokey@localhost.run 'https://[a-z0-9]{6,}\.lhr\.life' ;;
+    serveo) tsay "  Пробую туннель serveo..."; tunnel_ssh serveo.net 'Forwarding HTTP traffic from https://[a-z0-9-]+\.serveo[a-z]*\.(net|com)' ;;
   esac
   local rc=$?
   if [ $rc -ne 0 ]; then
@@ -295,8 +351,18 @@ try_tunnel() { # name
   return $rc
 }
 
+# Один запуск туннеля за раз (меню и сторож не мешают друг другу).
+tunnel_lock() {
+  local l="$STATE/tunnel.lock"
+  if mkdir "$l" 2>/dev/null; then return 0; fi
+  # Старый замок (больше 5 минут) — снимаем.
+  [ -n "$(find "$l" -maxdepth 0 -mmin +5 2>/dev/null)" ] && rmdir "$l" 2>/dev/null && mkdir "$l" 2>/dev/null
+}
+tunnel_unlock() { rmdir "$STATE/tunnel.lock" 2>/dev/null; }
+
 start_tunnel() {
-  say "  Подключаю к интернету (туннель), это до 1–2 минут..."
+  tunnel_lock || { tsay "  Туннель уже перезапускается, подождите..."; sleep 20; alive tunnel; return; }
+  tsay "  Подключаю к интернету (туннель), это до 1–2 минут..."
   if [ -n "${ACM_CF_TOKEN:-}" ]; then
     : >"$TLOG"
     nohup cloudflared tunnel --no-autoupdate --protocol http2 run --token "$ACM_CF_TOKEN" </dev/null >"$TLOG" 2>&1 &
@@ -305,22 +371,64 @@ start_tunnel() {
     local pref order t tried=""
     pref="$(cat "$STATE/tunnel_pref" 2>/dev/null)"
     order="$pref cloudflare lhr serveo"
+    [ "${ACM_STABLE:-1}" = 1 ] && order="stable $order"
     for t in $order; do
       case " $tried " in *" $t "*) continue ;; esac
       tried="$tried $t"
       if try_tunnel "$t"; then echo "$t" >"$STATE/tunnel_pref"; break; fi
-      warn "Не получилось, пробую следующий."
+      tsay "! Не получилось, пробую следующий."
     done
-    if ! alive tunnel; then
-      cmd_stop >/dev/null
-      err "Ни один туннель не подключился — интернет-соединение их блокирует."
-      say "  Что помогает: в приложении VPN включите его ${B}для Termux${N} (или «для всех приложений»),"
-      say "  либо подключитесь к Wi-Fi, затем нажмите 1. Логи: пункт 8."
-      return 1
-    fi
   fi
-  local base; base="$(cat "$STATE/base_url")"
-  public_ok "$base" || warn "Адрес пока не отвечает (обновляется DNS). Проверьте через минуту: пункт 4."
+  tunnel_unlock
+  alive tunnel && [ -f "$STATE/base_url" ]
+}
+
+notify() { # текст
+  echo "$(date '+%F %T') $*"
+  command -v termux-notification >/dev/null 2>&1 && \
+    timeout 10 termux-notification --id acm --title "Chrome для Claude" --content "$*" </dev/null >/dev/null 2>&1
+}
+
+# ---------- сторож: сам поднимает упавшее ----------
+start_watchdog() {
+  alive watchdog && return 0
+  nohup bash "$APP_DIR/chrome-mcp" watchdog </dev/null >>"$STATE/watchdog.log" 2>&1 &
+  echo $! >"$STATE/watchdog.pid"
+}
+
+cmd_watchdog() {
+  QUIET=1
+  local fails=0 last
+  echo "$(date '+%F %T') сторож запущен"
+  while true; do
+    sleep "${ACM_WATCH_INTERVAL:-20}"
+    if ! curl -fsS -m 3 "http://127.0.0.1:$ACM_PORT/health" >/dev/null 2>&1; then
+      alive server && kill "$(cat "$STATE/server.pid")" 2>/dev/null
+      nohup node "$APP_DIR/server.mjs" </dev/null >>"$LOG" 2>&1 &
+      echo $! >"$STATE/server.pid"
+      echo "$(date '+%F %T') сервер перезапущен"
+    fi
+    adb_ok || { adb connect "$SERIAL" >/dev/null 2>&1; adb_ok && echo "$(date '+%F %T') adb переподключён"; }
+    if alive tunnel && [ -f "$STATE/base_url" ] && public_ok "$(cat "$STATE/base_url")" 2; then
+      fails=0; continue
+    fi
+    fails=$((fails+1))
+    [ "$fails" -lt 2 ] && continue
+    last="$(cat "$STATE/base_url" 2>/dev/null)"
+    echo "$(date '+%F %T') туннель недоступен — перезапускаю"
+    alive tunnel && kill "$(cat "$STATE/tunnel.pid")" 2>/dev/null
+    rm -f "$STATE/tunnel.pid" "$STATE/base_url"
+    if start_tunnel; then
+      fails=0
+      if [ "$(cat "$STATE/base_url")" != "$last" ]; then
+        notify "Связь восстановлена, но адрес изменился — замените его в коннекторе: chrome-mcp → 3"
+      else
+        echo "$(date '+%F %T') связь восстановлена, адрес прежний"
+      fi
+    else
+      echo "$(date '+%F %T') туннель пока не поднимается, попробую снова"
+    fi
+  done
 }
 
 show_url() {
@@ -363,8 +471,15 @@ cmd_start() {
     warn "Туннель работает, но адрес не отвечает — перезапускаю туннель."
     kill "$(cat "$STATE/tunnel.pid")" 2>/dev/null; rm -f "$STATE/tunnel.pid" "$STATE/base_url"
   fi
-  alive tunnel || start_tunnel || return 1
+  if ! alive tunnel && ! start_tunnel; then
+    cmd_stop >/dev/null
+    err "Ни один туннель не подключился — интернет-соединение их блокирует."
+    say "  Что помогает: в приложении VPN включите его ${B}для Termux${N} (или «для всех приложений»),"
+    say "  либо подключитесь к Wi-Fi, затем нажмите 1. Логи: пункт 8."
+    return 1
+  fi
   ok "Туннель работает."
+  start_watchdog && ok "Сторож включён: при обрыве связи всё поднимется само."
   show_url
   say ""
   ok "${B}Готово! Пишите задачи Claude. Termux можно свернуть (не смахивайте его).${N}"
@@ -372,7 +487,8 @@ cmd_start() {
 }
 
 cmd_stop() {
-  for p in tunnel server; do alive "$p" && kill "$(cat "$STATE/$p.pid")" 2>/dev/null; rm -f "$STATE/$p.pid"; done
+  for p in watchdog tunnel server; do alive "$p" && kill "$(cat "$STATE/$p.pid")" 2>/dev/null; rm -f "$STATE/$p.pid"; done
+  tunnel_unlock
   rm -f "$STATE/base_url"
   adb -s "$SERIAL" forward --remove "tcp:$ACM_CDP_PORT" >/dev/null 2>&1
   command -v termux-wake-unlock >/dev/null && termux-wake-unlock
@@ -382,6 +498,12 @@ cmd_stop() {
 cmd_status() {
   alive server && ok "Сервер работает" || warn "Сервер остановлен"
   alive tunnel && ok "Туннель ($(cat "$STATE/tunnel_pref" 2>/dev/null)): $(cat "$STATE/base_url" 2>/dev/null)" || warn "Туннель остановлен"
+  alive watchdog && ok "Сторож работает (сам восстанавливает связь)" || warn "Сторож не запущен (нажмите 1)"
+  case "$(cat "$STATE/base_url" 2>/dev/null)" in
+    https://"$ACM_SUBDOMAIN".*) ok "Адрес постоянный — коннектор менять не нужно" ;;
+    "") ;;
+    *) [ "${ACM_STABLE:-1}" = 1 ] && warn "Адрес временный (serveo недоступен) — может смениться при обрыве" || say "Адрес временный (постоянный выключен: пункт a)" ;;
+  esac
   if alive tunnel && [ -f "$STATE/base_url" ]; then
     public_ok "$(cat "$STATE/base_url")" && ok "Адрес отвечает из интернета" || warn "Адрес не отвечает из интернета — нажмите 1"
     self_test
@@ -456,6 +578,7 @@ menu() {
     else say "  5) Мои вкладки: Claude не видит → показать"; fi
     say "  6) Сменить секретный адрес"
     say "  7) Настройка заново     8) Логи"
+    if [ "${ACM_STABLE:-1}" = 1 ]; then say "  a) Постоянный адрес: вкл → выключить"; else say "  a) Постоянный адрес: выкл → включить"; fi
     say "  9) Обновить программу   0) Выход"
     if ! read -r -p "Выберите: " c; then
       # Ввод потерян — переподключаемся к клавиатуре, иначе выходим.
@@ -469,6 +592,10 @@ menu() {
       8) say "--- запросы к серверу (последние) ---"; grep -E ' (GET|POST|DELETE|HEAD|OPTIONS|PUT) ' "$LOG" 2>/dev/null | tail -n 25
          say "--- сервер ---"; grep -vE ' (GET|POST|DELETE|HEAD|OPTIONS|PUT) ' "$LOG" 2>/dev/null | tail -n 8
          say "--- туннель ---"; tail -n 6 "$TLOG" 2>/dev/null ;;
+      a|A) if [ "${ACM_STABLE:-1}" = 1 ]; then set_conf ACM_STABLE 0; ACM_STABLE=0; ok "Постоянный адрес выключен."
+           else set_conf ACM_STABLE 1; ACM_STABLE=1; ok "Постоянный адрес включён."; fi
+           alive tunnel && { kill "$(cat "$STATE/tunnel.pid")" 2>/dev/null; rm -f "$STATE/tunnel.pid" "$STATE/base_url"; }
+           cmd_start ;;
       9) cmd_update; exit 0 ;; 0|q|"") exit 0 ;;
     esac
   done
@@ -479,6 +606,7 @@ case "${1:-}" in
   setup) cmd_setup ;; start) cmd_start ;; stop) cmd_stop ;;
   restart) cmd_stop; cmd_start ;; status) cmd_status ;; url) show_url ;;
   logs) tail -n 60 "$LOG"; tail -n 15 "$TLOG" 2>/dev/null ;;
+  watchdog) cmd_watchdog ;;
   new-secret) cmd_new_secret ;; user-tabs) cmd_user_tabs "${2:-}" ;; update) cmd_update ;;
   *) sed -n '2,5p' "$0" | sed 's/^# \{0,1\}//' ;;
 esac
