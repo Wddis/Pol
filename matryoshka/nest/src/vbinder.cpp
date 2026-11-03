@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <csignal>
 #include <cstdio>
@@ -39,7 +40,7 @@ struct Ref;
 struct Txn;
 
 struct Work {
-    enum Type { TXN, COMPLETE, ERROR, NODE_INC, NODE_ACQ, NODE_REL, NODE_DEC, DEAD_BINDER, CLEAR_DEATH_DONE } type;
+    enum Type { TXN, COMPLETE, ERROR, NODE_INC, NODE_ACQ, NODE_REL, NODE_DEC, DEAD_BINDER, CLEAR_DEATH_DONE, CANCELLED } type;
     Txn* txn = nullptr;
     uint32_t err = 0;
     uint64_t ptr = 0, cookie = 0;
@@ -93,6 +94,8 @@ struct Txn {
     uint64_t dataSize = 0, offsetsSize = 0;
     std::vector<int> fds;          // to install in the receiver
     std::vector<uint64_t> fixups;  // where (region offset) the receiver stores each fd number
+    std::chrono::steady_clock::time_point queued = std::chrono::steady_clock::now();
+    bool reported = false;  // stall already logged
 };
 
 struct Thread {
@@ -102,6 +105,7 @@ struct Thread {
     std::deque<Work> todo;
     Txn* stack = nullptr;
     bool waiting = false;
+    bool outstanding = false;  // a request of this thread has not been answered yet
     uint64_t readCap = 0, writeConsumed = 0;
     bool looper = false;
 };
@@ -253,6 +257,17 @@ struct Broker::Impl {
 
     void sendResp(Thread* t, int ret, const std::vector<uint8_t>& read, const std::vector<int>& fds = {},
                   const std::vector<uint64_t>& fixups = {}) {
+        // Exactly one answer per request: an answer without a request would be read by the
+        // client's NEXT request as its own (memory corruption in the guest).
+        if (!t->outstanding) {
+            static int said = 0;
+            if (said++ < 20)
+                fprintf(stderr, "nest: binder: pid %d tid %d: dropped an answer nobody asked for (%zu bytes)\n",
+                        t->proc->pid, t->tid, read.size());
+            for (int f : fds) close(f);
+            return;
+        }
+        t->outstanding = false;
         IoctlResp r{};
         r.ret = ret;
         r.nfixups = static_cast<uint32_t>(fixups.size());
@@ -321,14 +336,33 @@ struct Broker::Impl {
             n->hasStrong = true;
             queueInc({Work::NODE_ACQ, nullptr, 0, n->ptr, n->cookie});
         }
+        // A release while the matching increment is still queued (not read by the owner yet)
+        // cancels it instead: the increment may sit in a thread's queue and the release in the
+        // process queue, and the owner must never see BR_DECREFS/BR_RELEASE first.
         if (!wantStrong && n->hasStrong) {
             n->hasStrong = false;
-            queueProc(n->owner, {Work::NODE_REL, nullptr, 0, n->ptr, n->cookie});
+            if (!cancelQueued(n, Work::NODE_ACQ)) queueProc(n->owner, {Work::NODE_REL, nullptr, 0, n->ptr, n->cookie});
         }
         if (!wantWeak && n->hasWeak) {
             n->hasWeak = false;
-            queueProc(n->owner, {Work::NODE_DEC, nullptr, 0, n->ptr, n->cookie});
+            if (!cancelQueued(n, Work::NODE_INC)) queueProc(n->owner, {Work::NODE_DEC, nullptr, 0, n->ptr, n->cookie});
         }
+    }
+
+    bool cancelQueued(Node* n, Work::Type type) {
+        // Marked, not erased: callers may be iterating these queues.
+        auto drop = [&](std::deque<Work>& q) {
+            for (auto& w : q)
+                if (w.type == type && w.ptr == n->ptr && w.cookie == n->cookie) {
+                    w.type = Work::CANCELLED;
+                    return true;
+                }
+            return false;
+        };
+        if (drop(n->owner->todo)) return true;
+        for (auto& [tid, t] : n->owner->threads)
+            if (drop(t->todo)) return true;
+        return false;
     }
 
     // The owner's object at `ptr`. Like the kernel, an object whose node is no longer referenced
@@ -799,6 +833,10 @@ struct Broker::Impl {
 
     // Builds the read buffer for a waiting thread and answers its pending ioctl.
     void deliver(Thread* t) {
+        if (!t->outstanding) {  // nobody is waiting on this connection: leave the work queued
+            t->waiting = false;
+            return;
+        }
         Proc* p = t->proc;
         std::vector<uint8_t> out;
         std::vector<int> fds;
@@ -813,6 +851,10 @@ struct Broker::Impl {
             else if (canTakeProcWork(t) && !p->todo.empty() && !tookProcWork) q = &p->todo;
             if (!q) break;
             Work w = q->front();
+            if (w.type == Work::CANCELLED) {
+                q->pop_front();
+                continue;
+            }
             size_t need = 4 + (w.type == Work::TXN ? sizeof(binder_transaction_data) : 16);
             if (out.size() + need > t->readCap) break;
             q->pop_front();
@@ -906,6 +948,15 @@ struct Broker::Impl {
             x = next;
         }
         t->stack = nullptr;
+        // Reference-count work queued on this thread still belongs to the process: losing an
+        // increment would make the owner see a release it never got the increment for.
+        std::vector<Work> keep;
+        for (auto& w : t->todo)
+            if (w.type == Work::NODE_INC || w.type == Work::NODE_ACQ || w.type == Work::NODE_REL ||
+                w.type == Work::NODE_DEC)
+                keep.push_back(w);
+        if (!p->dead)
+            for (auto it = keep.rbegin(); it != keep.rend(); ++it) p->todo.push_front(*it);
         for (auto& w : t->todo) {
             if (w.type != Work::TXN || !w.txn) continue;
             Txn* x = w.txn;
@@ -925,6 +976,9 @@ struct Broker::Impl {
     void destroyProc(Proc* p) {
         if (p->dead) return;
         p->dead = true;
+        if (getenv("NEST_BINDER_DEBUG"))
+            fprintf(stderr, "nest: binder: pid %d ctx %d: instance %llx destroyed\n", p->pid, static_cast<int>(p->ctx),
+                    static_cast<unsigned long long>(p->inst));
         for (int i = 0; i < 3; i++)
             if (mgr[i] && mgr[i]->owner == p) mgr[i] = nullptr;
         while (!p->threads.empty()) destroyThread(p->threads.begin()->second);
@@ -979,6 +1033,8 @@ struct Broker::Impl {
     void onHello(int fd, const Hello& h) {
         pendingHello.erase(fd);
         if (h.magic != kMagic || h.version != kVersion || static_cast<uint32_t>(h.ctx) > 2) {
+            fprintf(stderr, "nest: binder: rejected hello (magic %x version %u ctx %d pid %d)\n", h.magic, h.version,
+                    static_cast<int>(h.ctx), h.pid);
             epoll_ctl(epfd, EPOLL_CTL_DEL, fd, nullptr);
             close(fd);
             return;
@@ -992,6 +1048,9 @@ struct Broker::Impl {
                 fprintf(stderr, "nest: binder: pid %d: instance reused, old one dropped\n", h.pid);
                 destroyProc(it->second);
             }
+            if (getenv("NEST_BINDER_DEBUG"))
+                fprintf(stderr, "nest: binder: pid %d ctx %d: process hello (inst %llx)\n", h.pid,
+                        static_cast<int>(h.ctx), static_cast<unsigned long long>(h.inst));
             auto* p = new Proc();
             p->pid = h.pid;
             p->ctx = h.ctx;
@@ -1026,6 +1085,9 @@ struct Broker::Impl {
                     list.clear();
                 }
                 list.push_back({fd, h});
+                if (getenv("NEST_BINDER_DEBUG"))
+                    fprintf(stderr, "nest: binder: pid %d tid %d ctx %d: thread before its process (inst %llx)\n", h.pid,
+                            h.tid, static_cast<int>(h.ctx), static_cast<unsigned long long>(h.inst));
                 return;
             }
             attachThread(it->second, fd, h);
@@ -1044,6 +1106,10 @@ struct Broker::Impl {
         if (n < sizeof(MmapReq)) return;
         MmapReq req;
         memcpy(&req, buf, sizeof(req));
+        if (getenv("NEST_BINDER_DEBUG"))
+            fprintf(stderr, "nest: binder: pid %d ctx %d inst %llx: proc message op %u on fd %d\n", p->pid,
+                    static_cast<int>(p->ctx), static_cast<unsigned long long>(p->inst), static_cast<unsigned>(req.op),
+                    p->conn);
         int32_t ok = -EINVAL;
         if (req.op == Op::Mmap && fds.size() == 1 && !p->base && req.size > 0 && req.size <= (64u << 20)) {
             void* m = mmap(nullptr, req.size, PROT_READ | PROT_WRITE, MAP_SHARED, fds[0], 0);
@@ -1058,6 +1124,13 @@ struct Broker::Impl {
         for (int f : fds) close(f);
         fds.clear();
         send(p->conn, &ok, sizeof(ok), MSG_NOSIGNAL);
+        // The client skips poll-wake bytes that arrive ahead of this answer: whatever wake was
+        // outstanding is gone, so send a fresh one if work is waiting (or the fd never polls
+        // readable again and the process stops serving calls).
+        p->wakeSent = false;
+        bool work = !p->todo.empty();
+        for (auto& [tid, t] : p->threads) work |= !t->todo.empty();
+        if (work) pollWake(p);
     }
 
     void onThreadMsg(Thread* t, const uint8_t* buf, size_t n, std::vector<int>& fds) {
@@ -1069,6 +1142,13 @@ struct Broker::Impl {
         t->writeConsumed = 0;
         // A new request means the client stopped waiting for the previous read (it gave up on
         // it): never answer that one later, the answer would be taken for this request's.
+        if (t->outstanding) {
+            static int said = 0;
+            if (said++ < 20)
+                fprintf(stderr, "nest: binder: pid %d tid %d: new request before the previous one was answered\n",
+                        p->pid, t->tid);
+        }
+        t->outstanding = true;
         if (t->waiting) {
             t->waiting = false;
             std::lock_guard<std::mutex> g(statsMu);
@@ -1122,6 +1202,17 @@ struct Broker::Impl {
                     return;
                 }
                 bool hasWork = !t->todo.empty() || (canTakeProcWork(t) && !p->todo.empty());
+                if (!hasWork && p->wakeSent && p->todo.empty()) {
+                    // The poll wake is stale (the work went to a read in the meantime): a thread
+                    // that polled the fd must not block here, it would sit in this read while
+                    // calls to its other binder fds pile up. The kernel's poll is never stale;
+                    // answer "nothing" now and take the wake back (kRespDrainWake).
+                    uint32_t noop = BR_NOOP;
+                    std::vector<uint8_t> out(4);
+                    memcpy(out.data(), &noop, 4);
+                    sendResp(t, 0, out);
+                    return;
+                }
                 t->waiting = true;
                 if (hasWork) deliver(t);
                 return;  // otherwise the answer comes when work arrives
@@ -1131,6 +1222,52 @@ struct Broker::Impl {
                 // debug queries, freeze, ... are not supported.
                 sendResp(t, -EINVAL, {});
                 return;
+        }
+    }
+
+    // Diagnostics: a two-way call unanswered for 20 s (system_server's watchdog kills at 60 s).
+    // Tells who waits for whom and what the target's threads are doing.
+    std::chrono::steady_clock::time_point lastStallCheck{};
+    void checkStalls() {
+        auto now = std::chrono::steady_clock::now();
+        if (now - lastStallCheck < std::chrono::seconds(5)) return;
+        lastStallCheck = now;
+        for (auto& [inst, p] : procs) {
+            for (auto& [tid, t] : p->threads) {
+                Txn* x = t->stack;
+                if (!x || x->from != t || x->reported) continue;
+                long secs = std::chrono::duration_cast<std::chrono::seconds>(now - x->queued).count();
+                if (secs < 20) continue;
+                x->reported = true;
+                Proc* q = x->toProc;
+                std::string what;
+                if (q) {
+                    char head[96];
+                    snprintf(head, sizeof(head), " proc_todo=%zu threads:", q->todo.size());
+                    what = head;
+                    // every binder instance of that process (/dev/binder, hwbinder, vndbinder)
+                    for (auto& [qi, qp] : procs) {
+                        if (qp->pid != q->pid) continue;
+                        char h[64];
+                        snprintf(h, sizeof(h), " | ctx%d%s wake=%d todo=%zu:", static_cast<int>(qp->ctx),
+                                 qp == q ? "*" : "", qp->wakeSent ? 1 : 0, qp->todo.size());
+                        what += h;
+                        for (auto& [qt, th] : qp->threads) {
+                            char b[96];
+                            snprintf(b, sizeof(b), " %d[%s%s%s stack=%d todo=%zu]", qt, th->waiting ? "waiting" : "busy",
+                                     th->outstanding ? ",req" : "", th->looper ? ",looper" : "", th->stack ? 1 : 0,
+                                     th->todo.size());
+                            what += b;
+                        }
+                    }
+                }
+                int servedBy = -1;
+                if (q && x->toThread)
+                    for (auto& [qt, th] : q->threads)
+                        if (th == x->toThread) servedBy = qt;  // only a live thread is dereferenced
+                fprintf(stderr, "nest: binder: pid %d tid %d waits %lds for pid %d (code %u, served by tid %d)%s\n",
+                        p->pid, tid, secs, q ? q->pid : -1, x->code, servedBy, what.c_str());
+            }
         }
     }
 
@@ -1170,6 +1307,10 @@ struct Broker::Impl {
         if (pendingHello.count(fd)) {
             Hello h{};
             if (static_cast<size_t>(n) >= sizeof(h)) memcpy(&h, buf.data(), sizeof(h));
+            if (getenv("NEST_BINDER_DEBUG"))
+                fprintf(stderr, "nest: binder: fd %d hello kind %d pid %d tid %d ctx %d inst %llx (%zd bytes)\n", fd,
+                        static_cast<int>(h.kind), h.pid, h.tid, static_cast<int>(h.ctx),
+                        static_cast<unsigned long long>(h.inst), n);
             for (int f : fds) close(f);
             onHello(fd, h);
             return;
@@ -1225,11 +1366,12 @@ void Broker::serve() {
     d_->running = true;
     epoll_event evs[64];
     while (d_->running) {
-        int n = epoll_wait(d_->epfd, evs, 64, -1);
+        int n = epoll_wait(d_->epfd, evs, 64, 5000);
         if (n < 0) {
             if (errno == EINTR) continue;
             break;
         }
+        d_->checkStalls();
         for (int i = 0; i < n; i++) {
             int fd = evs[i].data.fd;
             if (fd == d_->wakeFd) {

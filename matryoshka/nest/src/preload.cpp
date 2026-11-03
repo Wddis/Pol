@@ -230,13 +230,27 @@ constexpr int kAfNetlink = 16;
 struct NlFd {
     int peer = -1;
     int proto = 0;
+    unsigned long ino = 0;  // the guest end's socket inode: detects an fd number closed behind our back
 };
 NlFd g_nl[kNlMaxFd];
 int g_nlCount = 0;
 
+unsigned long fdInode(int fd) { return nest::fdInodeFast(fd); }
+
+// The guest may close a netlink fd without our close() (bionic's fdsan closes internally, and
+// android::base::unique_fd uses it): the number then belongs to something else, often a
+// socket of ours. A stale entry would swallow that socket's traffic.
 inline NlFd* nlOf(int fd) {
     if (__atomic_load_n(&g_nlCount, __ATOMIC_RELAXED) == 0 || fd < 0 || fd >= kNlMaxFd) return nullptr;
-    return g_nl[fd].peer >= 0 ? &g_nl[fd] : nullptr;
+    NlFd* n = &g_nl[fd];
+    if (n->peer < 0) return nullptr;
+    if (fdInode(fd) != n->ino) {
+        syscall(SYS_close, n->peer);
+        n->peer = -1;
+        __atomic_sub_fetch(&g_nlCount, 1, __ATOMIC_RELAXED);
+        return nullptr;
+    }
+    return n;
 }
 
 ssize_t nlSend(NlFd* n, const void* buf, size_t len) {
@@ -611,6 +625,7 @@ NEST_EXPORT int socket(int domain, int type, int protocol) {
         sv[1] = static_cast<int>(hi);
     }
     g_nl[sv[0]].proto = protocol;
+    g_nl[sv[0]].ino = fdInode(sv[0]);
     g_nl[sv[0]].peer = sv[1];
     __atomic_add_fetch(&g_nlCount, 1, __ATOMIC_RELAXED);
     return sv[0];

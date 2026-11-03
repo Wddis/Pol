@@ -34,6 +34,7 @@ struct BinderFd {
     uint64_t inst = 0;  // this open's identity at the broker
     void* map = nullptr;
     size_t mapSize = 0;
+    unsigned long ino = 0;  // the process connection's inode (an fd closed behind our back)
 };
 std::atomic<uint32_t> g_openSeq{0};
 
@@ -80,7 +81,7 @@ bool sendHello(int s, ConnKind kind, Ctx ctx, uint64_t inst) {
     h.inst = inst;
     h.pid = myPid();
     h.tid = myTid();
-    return send(s, &h, sizeof(h), MSG_NOSIGNAL) == sizeof(h);
+    return syscall(SYS_sendto, s, &h, sizeof(h), MSG_NOSIGNAL, nullptr, 0) == static_cast<long>(sizeof(h));
 }
 
 bool sendFds(int s, const void* buf, size_t len, const std::vector<int>& fds) {
@@ -100,7 +101,7 @@ bool sendFds(int s, const void* buf, size_t len, const std::vector<int>& fds) {
         memcpy(CMSG_DATA(c), fds.data(), sizeof(int) * fds.size());
     }
     ssize_t n;
-    do n = sendmsg(s, &msg, MSG_NOSIGNAL);
+    do n = syscall(SYS_sendmsg, s, &msg, MSG_NOSIGNAL);
     while (n < 0 && errno == EINTR);
     return n == static_cast<ssize_t>(len);
 }
@@ -114,7 +115,7 @@ ssize_t recvFds(int s, void* buf, size_t len, std::vector<int>& fds) {
     msg.msg_control = ctrl;
     msg.msg_controllen = sizeof(ctrl);
     ssize_t n;
-    do n = recvmsg(s, &msg, MSG_CMSG_CLOEXEC);
+    do n = syscall(SYS_recvmsg, s, &msg, MSG_CMSG_CLOEXEC);
     while (n < 0 && errno == EINTR);  // a blocked binder read survives signals, like the driver
     if (n <= 0) return n;
     for (cmsghdr* c = CMSG_FIRSTHDR(&msg); c; c = CMSG_NXTHDR(&msg, c)) {
@@ -176,7 +177,17 @@ int threadSock(BinderFd* b) {
 
 BinderFd* lookup(int fd) {
     if (fd < 0 || fd >= kMaxTrackedFd || g_count.load(std::memory_order_relaxed) == 0) return nullptr;
-    return g_fds[fd];
+    BinderFd* b = g_fds[fd];
+    if (b && fdInodeFast(fd) != b->ino) {
+        // Closed without our close() (bionic fdsan): the number is something else now.
+        std::lock_guard<std::mutex> g(g_mu);
+        if (g_fds[fd] == b) {
+            g_fds[fd] = nullptr;
+            g_count--;
+        }
+        return nullptr;  // the BinderFd is leaked on purpose: another thread may still use it
+    }
+    return b;
 }
 
 // fds referenced by the transactions in a write buffer, in the order the broker consumes them.
@@ -267,7 +278,7 @@ sent:
     memcpy(&resp, in.data(), sizeof(resp));
     if (resp.flags & kRespDrainWake) {  // no work left: the fd must stop polling readable
         uint8_t w[8];
-        recv(b->procSock, w, sizeof(w), MSG_DONTWAIT);
+        syscall(SYS_recvfrom, b->procSock, w, sizeof(w), MSG_DONTWAIT, nullptr, nullptr);
     }
     readOut.assign(in.begin() + sizeof(resp), in.begin() + sizeof(resp) + resp.readBytes);
     // Store the numbers of the fds we just received where the transaction expects them.
@@ -319,6 +330,7 @@ int clientOpen(const char* path, int flags) {
     b->procSock = s;
     b->ctx = ctx;
     b->pid = myPid();
+    b->ino = fdInodeFast(s);
     std::lock_guard<std::mutex> g(g_mu);
     g_fds[s] = b;
     g_count++;
@@ -357,7 +369,7 @@ void* clientMmap(void* addr, size_t len, int prot, int flags, int fd, off_t off)
     int32_t ack = -1;
     bool ok = sendFds(b->procSock, &req, sizeof(req), {mfd});
     ssize_t got = 0;
-    while (ok && (got = recv(b->procSock, &ack, sizeof(ack), 0)) == 1) {
+    while (ok && (got = syscall(SYS_recvfrom, b->procSock, &ack, sizeof(ack), 0, nullptr, nullptr)) == 1) {
         // a poll wake ahead of the ack (work queued before the mapping existed): skip it
     }
     ok = ok && got == sizeof(ack) && ack == 0;

@@ -12,6 +12,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <sys/stat.h>
+
 #include <cstdint>
 #include <sys/syscall.h>
 
@@ -85,6 +87,18 @@ inline long taggedSyscall(long nr, long a0 = 0, long a1 = 0, long a2 = 0, long a
 #else
 #error unsupported architecture
 #endif
+}
+
+// Inode of an open fd, via the fast path (no tracer stop). 0 if the fd is closed.
+inline unsigned long fdInodeFast(int fd) {
+#if defined(__LP64__)
+    struct stat st;
+    if (taggedSyscall(SYS_fstat, fd, reinterpret_cast<long>(&st)) != 0) return 0;
+#else
+    struct stat64 st;
+    if (taggedSyscall(SYS_fstat64, fd, reinterpret_cast<long>(&st)) != 0) return 0;
+#endif
+    return static_cast<unsigned long>(st.st_ino);
 }
 
 // Plain six-argument syscall (no tag), for the preload's syscall() wrapper.

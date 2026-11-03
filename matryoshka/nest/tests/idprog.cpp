@@ -349,6 +349,18 @@ int main(int argc, char** argv) {
             if (!f) { printf("write-failed %s\n", strerror(errno)); ++i; continue; }
             fputs(argv[++i], f);
             fclose(f);
+        } else if (!strcmp(c, "nl-stale")) {  // netlink fd closed behind the preload, number reused
+            int nl = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, 0);
+            syscall(SYS_close, nl);  // like bionic's fdsan: not through close()
+            int sv[2];
+            socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sv);
+            int a = sv[0] == nl ? sv[0] : sv[1] == nl ? sv[1] : -1;
+            int b = a == sv[0] ? sv[1] : sv[0];
+            if (a < 0) { printf("number not reused\n"); continue; }
+            ssize_t w = send(a, "hello", 5, 0);
+            char buf[16] = {};
+            ssize_t r = recv(b, buf, sizeof(buf), MSG_DONTWAIT);
+            printf("%zd %zd %s\n", w, r, buf);
         } else if (!strcmp(c, "status-ids")) {  // Uid:/Gid: of /proc/self/status, read with open() (preload)
             int fd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
             char buf[4096] = {};

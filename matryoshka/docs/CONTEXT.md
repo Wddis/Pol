@@ -366,8 +366,33 @@ syscall args]` для vold/vdc/sgdisk каждые 60 с и раздел лог�
 StorageManager, UserController). Кандидаты: SetDefaultAcl (system.posix_acl_default),
 vold_prepare_subdirs (fork/exec + restorecon), квоты проектов (FS_IOC_FSSETXATTR).
 
+### 0.6.2 — binder: найдены и исправлены корни зависаний
+Владелец просит: не отвлекать, присылать только исправленные сборки (логи — по одному на сборку).
+Лог 0.6.1: vold — 4 потока, binder-потоки простаивают (recvmsg), поток 539 ждёт свойство
+`vold.checkpoint_committed` (KeyStorage, фоновый — безвреден). Значит, вызов system_server→vold
+до vold не доходит. Стенд показал то же на wificond (system_server ждёт code 5). Причины и фиксы:
+1. **Протухшая запись netlink в preload**: guest закрывает netlink fd мимо нашего close()
+   (bionic fdsan / unique_fd), номер достаётся нашему сокету брокера, и `send()` (наш же враппер)
+   отправлял Hello процесса в эмуляцию netlink → брокер не знал процесс, поток висел «сиротой».
+   Фикс: NlFd хранит inode (fdInodeFast, fast path fstat), при несовпадении запись удаляется;
+   клиент vbinder шлёт/читает только raw syscall (SYS_sendto/sendmsg/recvmsg/recvfrom).
+   Тест stale_netlink_fd_does_not_swallow_a_reused_number. Тот же контроль inode для BinderFd.
+2. Протухший poll-wake: чтение без работы при wakeSent → сразу BR_NOOP + drain (иначе поток,
+   опрашивающий fd, блокировался в чтении одного экземпляра binder, пока копятся вызовы другого).
+3. После mmap-ack wakeSent сбрасывается и будится заново (клиент съедает wake-байты до ack).
+4. Ровно один ответ на запрос (`outstanding`), лишние — в лог и в мусор.
+5. Refcount: release при ещё не доставленном increment отменяет его (CANCELLED, без erase —
+   очереди могут итерироваться); node-работа умирающего потока переносится в очередь процесса
+   (media.swcodec «decWeak … too many times»).
+6. Codec2 pool BLOB (`debug.stagefright.c2-poolmask=786432`) — только если у хоста нет /dev/ion
+   (на стенде иначе system_server падает; на телефоне ion есть).
+Диагностика: `nest: binder: pid A tid T waits Ns for pid B (code C) … | ctxN wake= todo=: tid[...]`
+(сторож 20 с), `NEST_BINDER_DEBUG=1` — hello/mmap/destroy. Стенд: дошёл до «Boot is finished»
+(308 с) один раз; поздние стадии стенд не тянет (Watchdog 60 с, qemu медленный, tombstone нет —
+crash_dump не может ptrace под qemu). Остаётся: SIGSEGV app_process на стенде без tombstone.
+
 ### Ждём от владельца
-Тест **0.6.1-nest** (было 0.6.0, 0.5.10 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.6.2-nest** (было 0.6.1 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

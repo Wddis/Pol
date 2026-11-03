@@ -674,6 +674,15 @@ TEST(android_virtual_network_config) {
     EXPECT_EQ(r.out, "0\n0\n1\n\n");
 }
 
+TEST(stale_netlink_fd_does_not_swallow_a_reused_number) {
+    // A netlink fd closed behind the preload (bionic fdsan) must not capture the socket that
+    // gets its number next (it swallowed binder hellos: wificond stopped serving calls).
+    std::string dir = mktmp();
+    std::string cmd = std::string("NEST_VFS_FILE=") + dir + "/x LD_PRELOAD=" + NEST_PRELOAD_PATH + " " + NEST_IDPROG_PATH + " nl-stale";
+    auto r = run({"/bin/sh", "-c", cmd});
+    EXPECT_EQ(r.out, "5 5 hello\n");
+}
+
 TEST(proc_status_shows_virtual_ids) {
     // ActivityManager compares /proc/<pid>/status's uid with the process's (isProcessAliveLocked).
     // The tracer publishes each process's virtual ids in <state>/attr/creds-<pid> ...

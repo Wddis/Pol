@@ -165,6 +165,9 @@ int main(int argc, char** argv) {
             text += "ro.hardware.gralloc=default\nro.hardware.egl=swiftshader\n";
             // the whole Android screen in one window (default "none": hwcomposer shows nothing)
             text += "waydroid.active_apps=Waydroid\n";
+            // Codec2 linear buffers from gralloc (BLOB) instead of ION, only where the host has no
+            // /dev/ion (newer kernels): Codec2 crashes its user (system_server) without one of them.
+            if (access("/dev/ion", R_OK) != 0) text += "debug.stagefright.c2-poolmask=786432\n";
             if (FILE* f = fopen(copy.c_str(), "we")) {
                 fwrite(text.data(), 1, text.size(), f);
                 fclose(f);
