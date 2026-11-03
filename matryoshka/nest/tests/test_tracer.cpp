@@ -589,6 +589,14 @@ TEST(kernel_uevent_socket_is_faked) {
     EXPECT_EQ(r.out, "socket ok bind ok\n");
 }
 
+TEST(netd_netlink_families_open_and_bind) {
+    // netd/wificond open several netlink families (route, sock_diag, xfrm, netfilter); an untrusted
+    // app may not, and netd exits if NetlinkManager cannot start. All must open and bind as black holes.
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "--", NEST_IDPROG_PATH, "netlink", "0", "netlink", "4", "netlink", "6",
+                  "netlink", "12", "netlink", "15"});
+    EXPECT_EQ(r.out, "nl0 ok\nnl4 ok\nnl6 ok\nnl12 ok\nnl15 ok\n");
+}
+
 TEST(rlimit_raise_succeeds_as_unprivileged_host_user) {
     // Like the phone: the host user may not raise hard limits at all; init's `rlimit memlock 1G`
     // for bpfloader must still succeed for the guest's root.

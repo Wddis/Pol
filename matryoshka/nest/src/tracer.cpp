@@ -2058,13 +2058,14 @@ void Tracer::handleSeccomp(pid_t tid) {
                 break;
             }
             case Kind::Socket: {
-                // socket(AF_NETLINK, type, NETLINK_KOBJECT_UEVENT): an untrusted app may not open
-                // it, and a VM has no hardware uevents. Create a harmless AF_UNIX datagram socket
-                // instead (a black hole: it binds, never delivers), and remember the fd.
-                constexpr int kAfNetlink = 16, kNetlinkKobjectUevent = 15;
-                if (cfg_.fakeRoot && static_cast<int>(r.arg[0]) == kAfNetlink &&
-                    static_cast<int>(r.arg[2]) == kNetlinkKobjectUevent) {
+                // Netlink sockets (uevent for ueventd; route/xfrm/netfilter/sock_diag for netd and
+                // wificond): an untrusted app may not open most of them, and a VM has no real kernel
+                // networking. Create a harmless AF_UNIX datagram socket instead (a black hole: it
+                // binds and blocks, never delivers), so the daemons' listeners start and stay alive.
+                constexpr int kAfNetlink = 16;
+                if (cfg_.fakeRoot && static_cast<int>(r.arg[0]) == kAfNetlink) {
                     r.arg[0] = AF_UNIX;
+                    r.arg[1] = SOCK_DGRAM | (static_cast<int>(r.arg[1]) & (SOCK_CLOEXEC | SOCK_NONBLOCK));
                     r.arg[2] = 0;
                     setArgs(tid, r);
                     Pending p;

@@ -85,6 +85,17 @@ int main(int argc, char** argv) {
             // like many Android daemons: not dumpable any more (then only root may read our memory)
             int a = prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
             printf("%d %d\n", a, prctl(PR_GET_DUMPABLE, 0, 0, 0, 0));
+        } else if (!strcmp(c, "netlink")) {
+            int proto = atoi(argv[++i]);
+            int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, proto);
+            int ok = fd >= 0;
+            if (ok) {
+                struct sockaddr_nl addr = {};
+                addr.nl_family = AF_NETLINK;
+                ok = bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) == 0;
+                close(fd);
+            }
+            printf("nl%d %s\n", proto, ok ? "ok" : strerror(errno));
         } else if (!strcmp(c, "uevent")) {
             // like ueventd: open the kernel-uevent netlink socket, set rcvbuf, bind to all groups
             int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, 15 /*NETLINK_KOBJECT_UEVENT*/);
