@@ -76,6 +76,7 @@ enum class Kind {
     StatFix,    // untagged fstat (static binaries, raw syscalls): virtual owner patched in at exit
     Fchmod,     // untagged fchmod: virtual mode (see recordMode)
     GuestSeccomp,  // seccomp(): guest filters (minijail) would block the engine's own calls (binder)
+    TaskDir,    // bench only (NEST_HIDE_EMU_THREADS): getdents64 of /proc/N/task without the CPU emulator's threads
 };
 
 constexpr int NONE = -1;
@@ -402,6 +403,9 @@ std::vector<Spec> buildCompatSpecs() {
 const std::vector<Spec>& specs() {
     static const std::vector<Spec> s = [] {
         auto v = buildSpecs();
+        // Bench (qemu-user): the emulator's own helper thread sits in every guest process, and ART's
+        // zygote waits before each fork until /proc/self/task lists one thread. Never set on a phone.
+        if (getenv("NEST_HIDE_EMU_THREADS")) v.push_back({SYS_getdents64, Kind::TaskDir});
         for (auto& x : v) x.logical = x.nr;
         return v;
     }();
@@ -2018,6 +2022,22 @@ void Tracer::handleSeccomp(pid_t tid) {
                     }
                 }
                 break;
+            case Kind::TaskDir: {
+                char link[64], target[128] = {};
+                snprintf(link, sizeof(link), "/proc/%d/fd/%d", tid, static_cast<int>(r.arg[0]));
+                ssize_t n = readlink(link, target, sizeof(target) - 1);
+                int pid = 0;
+                char rest[8] = {};
+                if (n > 0 && sscanf(target, "/proc/%d/tas%7s", &pid, rest) == 2 && !strcmp(rest, "k")) {
+                    Pending p;
+                    p.nr = -5;
+                    p.buf = r.arg[1];
+                    p.bufSize = static_cast<uint64_t>(pid);
+                    pending_[tid] = p;
+                    wantExit = true;
+                }
+                break;
+            }
             case Kind::StatFix:
                 if (cfg_.fakeRoot && r.arg[1]) {
                     Pending p;
@@ -2238,6 +2258,37 @@ void Tracer::handleSyscallExit(pid_t tid) {
     }
     long ret = static_cast<long>(r.ret);
     if (r.compat) ret = static_cast<int32_t>(static_cast<uint32_t>(ret));
+    if (p.nr == -5) {  // bench: /proc/N/task listing without the emulator's threads
+        if (ret > 0) {
+            std::vector<uint8_t> b(static_cast<size_t>(ret)), out;
+            if (readMem(tid, p.buf, b.data(), b.size())) {
+                for (size_t off = 0; off + 19 < b.size();) {
+                    uint16_t reclen;
+                    memcpy(&reclen, b.data() + off + 16, 2);
+                    if (!reclen || off + reclen > b.size()) break;
+                    const char* name = reinterpret_cast<const char*>(b.data() + off + 19);
+                    bool hide = false;
+                    if (name[0] >= '0' && name[0] <= '9' && atoi(name) != static_cast<int>(p.bufSize)) {
+                        char path[96], comm[32] = {};
+                        snprintf(path, sizeof(path), "/proc/%d/task/%s/comm", static_cast<int>(p.bufSize), name);
+                        int fd = open(path, O_RDONLY | O_CLOEXEC);
+                        if (fd >= 0) {
+                            ssize_t n = read(fd, comm, sizeof(comm) - 1);
+                            close(fd);
+                            if (n > 0 && comm[n - 1] == '\n') comm[n - 1] = 0;
+                            hide = !strcmp(comm, "linker64") || !strcmp(comm, "linker");
+                        }
+                    }
+                    if (!hide) out.insert(out.end(), b.begin() + off, b.begin() + off + reclen);
+                    off += reclen;
+                }
+                if (out.size() != b.size() && writeMem(tid, p.buf, out.data(), out.size()))
+                    setReturn(tid, r, static_cast<long>(out.size()));
+            }
+        }
+        ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+        return;
+    }
     if (p.nr == -4) {  // stat family: virtual owner
         if (ret == 0) fixStatOwner(tid, r, p);
         ptrace(PTRACE_CONT, tid, nullptr, nullptr);

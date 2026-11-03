@@ -9,6 +9,6 @@
     chmod; fchmodat; fchmod; rename; renameat;
     ioctl; mmap; mmap64; close; syscall;
     socket; bind; connect; getsockname; setsockopt; send; sendto; sendmsg; write; writev; recvfrom; recvmsg;
-    opendir; readdir; prctl; readdir64; closedir;
+    extern "C++" { "set_app_seccomp_filter()"; "set_app_zygote_seccomp_filter()"; "set_system_seccomp_filter()"; "install_setuidgid_seccomp_filter(unsigned int, unsigned int)"; };
   local: *;
 };
