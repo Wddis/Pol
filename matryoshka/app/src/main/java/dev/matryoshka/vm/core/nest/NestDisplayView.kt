@@ -24,7 +24,12 @@ import java.util.concurrent.Executors
  * presents into STATE/display.fb (64-byte header "NFB1" + pixels, see nest/src/wayland_server.h).
  * Touches go back as datagrams "d|u|m ID X Y" (display pixels) on STATE/input.sock.
  */
-class NestDisplayView(context: Context, private val stateDir: File) : View(context) {
+class NestDisplayView(context: Context, private val stateDir: File, private val waitingText: String) : View(context) {
+    private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.LTGRAY
+        textAlign = Paint.Align.CENTER
+        textSize = 14f * context.resources.displayMetrics.scaledDensity
+    }
     private var map: MappedByteBuffer? = null
     private var mappedSize = 0L
     private var bitmap: Bitmap? = null
@@ -102,7 +107,10 @@ class NestDisplayView(context: Context, private val stateDir: File) : View(conte
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(Color.BLACK)
-        val bmp = bitmap ?: return
+        val bmp = bitmap ?: run {
+            canvas.drawText(waitingText, width / 2f, height / 2f, textPaint)
+            return
+        }
         val s = minOf(width / bmp.width.toFloat(), height / bmp.height.toFloat())
         val dw = (bmp.width * s).toInt()
         val dh = (bmp.height * s).toInt()

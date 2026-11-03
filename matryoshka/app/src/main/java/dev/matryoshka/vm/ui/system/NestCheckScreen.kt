@@ -233,9 +233,10 @@ private fun NestBootPanel() {
                     Text(stringResource(if (showScreen) R.string.nest_boot_hide_screen else R.string.nest_boot_show_screen))
                 }
                 if (showScreen) {
+                    val waiting = stringResource(R.string.nest_boot_screen_waiting)
                     // The guest's display (frames from its composer; touches go back to it).
                     androidx.compose.ui.viewinterop.AndroidView(
-                        factory = { NestDisplayView(it, NestGuest.stateDir(it.applicationContext)) },
+                        factory = { NestDisplayView(it, NestGuest.stateDir(it.applicationContext), waiting) },
                         modifier = Modifier.fillMaxWidth().height(520.dp).padding(top = 8.dp),
                     )
                 }

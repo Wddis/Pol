@@ -136,6 +136,9 @@ struct Broker::Impl {
     std::map<int, Proc*> procConns;      // conn fd -> proc
     std::map<int, Thread*> threadConns;  // conn fd -> thread
     std::set<int> pendingHello;
+    // Thread connections whose process connection has not said hello yet (two sockets: the broker
+    // may read them in either order). Parked outside epoll until their process arrives.
+    std::map<uint64_t, std::vector<std::pair<int, Hello>>> orphanThreads;
     std::map<uint64_t, Proc*> procs;  // by open instance (Hello::inst)
     Node* mgr[3] = {nullptr, nullptr, nullptr};
     mutable std::mutex statsMu;
@@ -993,22 +996,44 @@ struct Broker::Impl {
             p->inst = h.inst;
             procs[h.inst] = p;
             procConns[fd] = p;
-            std::lock_guard<std::mutex> g(statsMu);
-            st.processes++;
+            {
+                std::lock_guard<std::mutex> g(statsMu);
+                st.processes++;
+            }
+            auto orphans = orphanThreads.find(h.inst);
+            if (orphans != orphanThreads.end()) {
+                auto list = std::move(orphans->second);
+                orphanThreads.erase(orphans);
+                for (auto& [tfd, th] : list) {
+                    attachThread(p, tfd, th);
+                    epoll_event ev{};
+                    ev.events = EPOLLIN;
+                    ev.data.fd = tfd;
+                    epoll_ctl(epfd, EPOLL_CTL_ADD, tfd, &ev);
+                }
+            }
         } else {
             auto it = procs.find(h.inst);
             if (it == procs.end()) {
                 epoll_ctl(epfd, EPOLL_CTL_DEL, fd, nullptr);
-                close(fd);
+                auto& list = orphanThreads[h.inst];
+                if (list.size() >= 64) {  // nobody will claim these
+                    for (auto& o : list) close(o.first);
+                    list.clear();
+                }
+                list.push_back({fd, h});
                 return;
             }
-            Proc* p = it->second;
-            auto old = p->threads.find(h.tid);
-            if (old != p->threads.end()) destroyThread(old->second);
-            auto* t = new Thread{p, h.tid, fd};
-            p->threads[h.tid] = t;
-            threadConns[fd] = t;
+            attachThread(it->second, fd, h);
         }
+    }
+
+    void attachThread(Proc* p, int fd, const Hello& h) {
+        auto old = p->threads.find(h.tid);
+        if (old != p->threads.end()) destroyThread(old->second);
+        auto* t = new Thread{p, h.tid, fd};
+        p->threads[h.tid] = t;
+        threadConns[fd] = t;
     }
 
     void onProcMsg(Proc* p, const uint8_t* buf, size_t n, std::vector<int>& fds) {

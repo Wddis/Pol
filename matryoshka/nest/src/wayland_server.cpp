@@ -77,6 +77,7 @@ struct Client {
     int fd = -1;
     std::map<uint32_t, Obj> objs;
     std::deque<int> fds;
+    uint32_t screenSurface = 0;  // surface whose buffer last became the screen
     std::vector<uint8_t> in;
     ~Client() {
         for (int f : fds) close(f);
@@ -270,7 +271,10 @@ struct WaylandServer::Impl {
             auto b = c.objs.find(s.buffer);
             if (b != c.objs.end() && b->second.type == T::Buffer) {
                 bool screen = s.toplevel || (b->second.width >= cfg.width && b->second.height >= cfg.height);
-                if (screen) present(b->second);
+                if (screen) {
+                    present(b->second);
+                    c.screenSurface = sid;
+                }
                 send(c, Msg(s.buffer, 0));  // wl_buffer.release: the copy is done
             }
         }
@@ -456,9 +460,18 @@ struct WaylandServer::Impl {
         for (auto& e : evs) {
             for (auto& cp : clients) {
                 Client& c = *cp;
-                uint32_t surf = 0;
-                for (auto& kv : c.objs)
-                    if (kv.second.type == T::Surface && kv.second.toplevel) surf = kv.first;
+                // Focus: the toplevel window, else the surface that presented the screen, else any
+                // surface. wl_touch.down's surface is non-nullable: without one the event is dropped
+                // (a null object makes libwayland disconnect the client, and the composer HAL aborts).
+                uint32_t surf = 0, any = 0;
+                for (auto& kv : c.objs) {
+                    if (kv.second.type != T::Surface) continue;
+                    if (kv.second.toplevel) surf = kv.first;
+                    any = kv.first;
+                }
+                if (!surf && c.objs.count(c.screenSurface) && c.objs[c.screenSurface].type == T::Surface) surf = c.screenSurface;
+                if (!surf) surf = any;
+                if (!surf) continue;
                 for (auto& kv : c.objs) {
                     if (kv.second.type != T::Touch) continue;
                     int32_t fx = static_cast<int32_t>(e.x * 256), fy = static_cast<int32_t>(e.y * 256);
