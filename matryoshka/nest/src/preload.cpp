@@ -446,12 +446,9 @@ NEST_EXPORT int openat64(int dirfd, const char* path, int flags, ...) {
 }
 
 // Bionic's FORTIFY entry points.
-NEST_EXPORT int __open_2(const char* path, int flags) {
-    return static_cast<int>(pathCall(SYS_openat, AT_FDCWD, path, flags, 0, 0, openFlagsFollow(flags)));
-}
-NEST_EXPORT int __openat_2(int dirfd, const char* path, int flags) {
-    return static_cast<int>(pathCall(SYS_openat, dirfd, path, flags, 0, 0, openFlagsFollow(flags)));
-}
+// Fortified open (bionic's 2-argument open() in code built with FORTIFY: most of Android).
+NEST_EXPORT int __open_2(const char* path, int flags) { return openat(AT_FDCWD, path, flags); }
+NEST_EXPORT int __openat_2(int dirfd, const char* path, int flags) { return openat(dirfd, path, flags); }
 
 // The *64 variants receive the kernel's stat layout on every ABI.
 

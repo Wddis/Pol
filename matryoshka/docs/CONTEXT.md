@@ -324,8 +324,16 @@ system_server — в нашем коде: vbinder_client.cpp clientIoctl, memcpy
 vbinder-client.log, EIO). Символизация падений preload: build-id из tombstone →
 `app/build/intermediates/cxx/Debug/*/obj/arm64-v8a/libnest_preload.so` + llvm-symbolizer.
 
+### 0.5.9 — по логу 0.5.8
+Брошенных ожиданий binder не было; SIGSEGV из-за них ушёл. Но «is crashing» → «Lost network stack»
+остался: подмена Uid не срабатывала, т.к. libandroid_runtime/libbase (FORTIFY) открывают через
+`__open_2`, а он шёл мимо virtualStatus. Теперь `__open_2/__openat_2` → наш openat.
+Брокер пишет `nest: binder: pid N (state X) closed its binder device …` (живой процесс потерял
+соединение процесса) и `instance reused`. Один SIGSEGV в libbinder (fault -12) после
+«broker closed the connection» у того же pid — ждём новые строки брокера.
+
 ### Ждём от владельца
-Тест **0.5.8-nest** (было 0.5.7 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.5.9-nest** (было 0.5.8 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

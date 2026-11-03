@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <csignal>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -987,7 +988,10 @@ struct Broker::Impl {
         getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &cl);
         if (h.kind == ConnKind::Process) {
             auto it = procs.find(h.inst);
-            if (it != procs.end()) destroyProc(it->second);  // stale instance id
+            if (it != procs.end()) {  // stale instance id
+                fprintf(stderr, "nest: binder: pid %d: instance reused, old one dropped\n", h.pid);
+                destroyProc(it->second);
+            }
             auto* p = new Proc();
             p->pid = h.pid;
             p->ctx = h.ctx;
@@ -1143,7 +1147,23 @@ struct Broker::Impl {
             } else if (auto it = threadConns.find(fd); it != threadConns.end()) {
                 destroyThread(it->second);
             } else if (auto pt = procConns.find(fd); pt != procConns.end()) {
-                destroyProc(pt->second);
+                // Normal at process exit. A live process losing its binder means the guest closed
+                // the device fd (or something closed it for it): every thread of it then fails.
+                Proc* dp = pt->second;
+                if (kill(dp->pid, 0) == 0 && !dp->threads.empty()) {
+                    char path[48], st = '?';
+                    snprintf(path, sizeof(path), "/proc/%d/stat", dp->pid);
+                    if (FILE* f = fopen(path, "re")) {
+                        char b[512] = {};
+                        size_t got = fread(b, 1, sizeof(b) - 1, f);
+                        fclose(f);
+                        const char* cp = got ? strrchr(b, ')') : nullptr;
+                        if (cp && cp[1] && cp[2]) st = cp[2];
+                    }
+                    fprintf(stderr, "nest: binder: pid %d (state %c) closed its binder device (ctx %d, %zu threads, n=%zd errno=%d)\n",
+                            dp->pid, st, static_cast<int>(dp->ctx), dp->threads.size(), n, n < 0 ? errno : 0);
+                }
+                destroyProc(dp);
             }
             return;
         }
