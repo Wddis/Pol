@@ -17,7 +17,7 @@
 namespace nest::vbinder {
 
 constexpr uint32_t kMagic = 0x564e4252;  // "RBNV"
-constexpr uint32_t kVersion = 2;
+constexpr uint32_t kVersion = 3;
 constexpr int kMaxFds = 64;               // per message
 constexpr uint32_t kMaxReadSize = 64 * 1024;
 constexpr uint32_t kMaxWriteSize = 64 * 1024;
@@ -33,6 +33,9 @@ struct Hello {
     Ctx ctx;
     int32_t pid;
     int32_t tid;
+    // Which open() of the device this connection belongs to: a process may open the same binder
+    // device more than once (two libraries), and each open is a separate binder instance.
+    uint64_t inst;
 };
 
 enum class Op : uint32_t {

@@ -387,6 +387,10 @@ int main(int argc, char** argv) {
     }
 
     if (role == "client") {
+        // A second library in the same process opens the device too (Waydroid's hwcomposer does):
+        // each open is its own binder instance and must not disturb the first.
+        int second = open("/dev/binder", O_RDWR | O_CLOEXEC);
+        (void)second;
         g_handler = [](const binder_transaction_data& tr, const Reply&) -> Parcel {
             if (tr.code == 20 && tr.target.ptr == 0x3000) return Parcel::bytes("cb-ok");
             return Parcel::bytes("cb-bad");

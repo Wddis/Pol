@@ -5,10 +5,12 @@
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
+#include <string>
 #include <fcntl.h>
 #include <linux/android/binder.h>
 #include <mutex>
 #include <sys/mman.h>
+#include <sys/resource.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
@@ -29,9 +31,11 @@ struct BinderFd {
     int procSock = -1;
     Ctx ctx = Ctx::Binder;
     pid_t pid = 0;
+    uint64_t inst = 0;  // this open's identity at the broker
     void* map = nullptr;
     size_t mapSize = 0;
 };
+std::atomic<uint32_t> g_openSeq{0};
 
 std::mutex g_mu;
 BinderFd* g_fds[kMaxTrackedFd];  // fd -> state (only binder fds are non-null)
@@ -39,6 +43,19 @@ std::atomic<int> g_count{0};
 
 pid_t myPid() { return static_cast<pid_t>(syscall(SYS_getpid)); }
 pid_t myTid() { return static_cast<pid_t>(syscall(SYS_gettid)); }
+
+// The engine's own descriptors live in the guest's fd table. Guest code that dup2()s onto fixed
+// numbers or closes descriptors it did not open must not hit them: move them high, far from where
+// the kernel hands out new fds (lowest free number).
+int moveHigh(int fd) {
+    struct { unsigned long cur, max; } lim{1024, 1024};
+    syscall(SYS_prlimit64, 0, RLIMIT_NOFILE, nullptr, &lim);
+    long base = lim.cur > 1200 ? 1000 : static_cast<long>(lim.cur * 3 / 4);
+    long nfd = syscall(SYS_fcntl, fd, F_DUPFD_CLOEXEC, base);
+    if (nfd < 0) return fd;
+    syscall(SYS_close, fd);
+    return static_cast<int>(nfd);
+}
 
 int connectBroker(int cloexec) {
     const char* path = getenv("NEST_BINDER_SOCK");
@@ -56,10 +73,11 @@ int connectBroker(int cloexec) {
     return s;
 }
 
-bool sendHello(int s, ConnKind kind, Ctx ctx) {
+bool sendHello(int s, ConnKind kind, Ctx ctx, uint64_t inst) {
     Hello h{};
     h.kind = kind;
     h.ctx = ctx;
+    h.inst = inst;
     h.pid = myPid();
     h.tid = myTid();
     return send(s, &h, sizeof(h), MSG_NOSIGNAL) == sizeof(h);
@@ -108,10 +126,12 @@ ssize_t recvFds(int s, void* buf, size_t len, std::vector<int>& fds) {
     return n;
 }
 
-// Per-thread broker connections, one per binder context; closed at thread exit so the broker
-// forgets the thread (like BINDER_THREAD_EXIT).
+// Per-thread broker connections, one per open binder device instance; closed at thread exit so
+// the broker forgets the thread (like BINDER_THREAD_EXIT).
 struct ThreadConns {
-    int sock[3] = {-1, -1, -1};
+    static constexpr int kSlots = 8;
+    uint64_t inst[kSlots] = {};
+    int sock[kSlots] = {-1, -1, -1, -1, -1, -1, -1, -1};
     pid_t pid = 0;
     ~ThreadConns() {
         for (int s : sock)
@@ -120,20 +140,37 @@ struct ThreadConns {
 };
 thread_local ThreadConns t_conns;
 
-int threadSock(Ctx ctx) {
-    int i = static_cast<int>(ctx);
+int* threadSlot(uint64_t inst) {
     if (t_conns.pid != myPid()) {  // forked: the inherited connections belong to the parent
         for (int& s : t_conns.sock) s = -1;
+        for (uint64_t& i : t_conns.inst) i = 0;
         t_conns.pid = myPid();
     }
-    if (t_conns.sock[i] >= 0) return t_conns.sock[i];
+    int freeSlot = -1;
+    for (int k = 0; k < ThreadConns::kSlots; k++) {
+        if (t_conns.sock[k] >= 0 && t_conns.inst[k] == inst) return &t_conns.sock[k];
+        if (t_conns.sock[k] < 0 && freeSlot < 0) freeSlot = k;
+    }
+    if (freeSlot < 0) {  // more open binder devices than slots: reuse the first
+        syscall(SYS_close, t_conns.sock[0]);
+        freeSlot = 0;
+    }
+    t_conns.inst[freeSlot] = inst;
+    t_conns.sock[freeSlot] = -1;
+    return &t_conns.sock[freeSlot];
+}
+
+int threadSock(BinderFd* b) {
+    int* slot = threadSlot(b->inst);
+    if (*slot >= 0) return *slot;
     int s = connectBroker(1);
     if (s < 0) return -1;
-    if (!sendHello(s, ConnKind::Thread, ctx)) {
+    s = moveHigh(s);
+    if (!sendHello(s, ConnKind::Thread, b->ctx, b->inst)) {
         syscall(SYS_close, s);
         return -1;
     }
-    t_conns.sock[i] = s;
+    *slot = s;
     return s;
 }
 
@@ -175,19 +212,55 @@ void collectFds(const uint8_t* buf, size_t size, std::vector<int>& fds) {
     }
 }
 
+// Diagnostics: why a binder call failed, appended to <state>/vbinder-client.log (the state dir is
+// where NEST_VFS_FILE lives). Errors here end in IPCThreadState aborting, so they must be visible.
+void clientError(const char* what, int fd, int err) {
+    const char* vfs = getenv("NEST_VFS_FILE");
+    if (!vfs) return;
+    std::string path(vfs);
+    size_t slash = path.rfind('/');
+    if (slash == std::string::npos) return;
+    path = path.substr(0, slash) + "/vbinder-client.log";
+    int f = static_cast<int>(taggedSyscall(SYS_openat, AT_FDCWD, reinterpret_cast<long>(path.c_str()),
+                                           O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644));
+    if (f < 0) return;
+    char line[160];
+    int n = snprintf(line, sizeof(line), "pid %d tid %d: %s fd=%d errno=%d (%s)\n", myPid(), myTid(), what, fd, err,
+                     strerror(err));
+    syscall(SYS_write, f, line, n);
+    syscall(SYS_close, f);
+}
+
 int roundTrip(BinderFd* b, const IoctlReq& req, const void* payload, size_t payloadLen,
               const std::vector<int>& fds, std::vector<uint8_t>& readOut, IoctlResp& resp) {
-    int s = threadSock(b->ctx);
-    if (s < 0) return -EIO;
+    int s = threadSock(b);
+    if (s < 0) {
+        clientError("connect broker", -1, errno);
+        return -EIO;
+    }
     std::vector<uint8_t> msg(sizeof(req) + payloadLen);
     memcpy(msg.data(), &req, sizeof(req));
     if (payloadLen) memcpy(msg.data() + sizeof(req), payload, payloadLen);
-    if (!sendFds(s, msg.data(), msg.size(), fds)) return -EIO;
+    if (!sendFds(s, msg.data(), msg.size(), fds)) {
+        int e = errno;
+        // The guest closed or replaced our connection (EBADF/EPIPE): nothing reached the broker,
+        // so a fresh thread connection can carry this request.
+        if (e == EBADF || e == EPIPE || e == ENOTSOCK || e == ECONNRESET) {
+            *threadSlot(b->inst) = -1;
+            s = threadSock(b);
+            if (s >= 0 && sendFds(s, msg.data(), msg.size(), fds)) goto sent;
+            e = errno;
+        }
+        clientError("send request", s, e);
+        return -EIO;
+    }
+sent:
 
     std::vector<uint8_t> in(sizeof(IoctlResp) + kMaxReadSize + kMaxFds * 8);
     std::vector<int> got;
     ssize_t n = recvFds(s, in.data(), in.size(), got);
     if (n < static_cast<ssize_t>(sizeof(IoctlResp))) {
+        clientError(n == 0 ? "broker closed the connection" : "short response", s, n < 0 ? errno : 0);
         for (int f : got) syscall(SYS_close, f);
         return -EIO;
     }
@@ -235,12 +308,14 @@ int clientOpen(const char* path, int flags) {
         errno = ENOENT;
         return -1;
     }
-    if (s >= kMaxTrackedFd || !sendHello(s, ConnKind::Process, ctx)) {
+    uint64_t inst = (static_cast<uint64_t>(static_cast<uint32_t>(myPid())) << 32) | (g_openSeq.fetch_add(1) + 1);
+    if (s >= kMaxTrackedFd || !sendHello(s, ConnKind::Process, ctx, inst)) {
         syscall(SYS_close, s);
         errno = EMFILE;
         return -1;
     }
     auto* b = new BinderFd();
+    b->inst = inst;
     b->procSock = s;
     b->ctx = ctx;
     b->pid = myPid();

@@ -19,7 +19,7 @@ if(NEST_PRELOAD_ONLY)
   return()
 endif()
 
-add_library(nest_core STATIC src/vfs.cpp src/arch.cpp src/tracer.cpp src/probe.cpp src/vbinder.cpp src/vfs_share.cpp src/android_profile.cpp src/guest_log.cpp src/bpf_emu.cpp src/netlink_emu.cpp)
+add_library(nest_core STATIC src/vfs.cpp src/arch.cpp src/tracer.cpp src/probe.cpp src/vbinder.cpp src/vfs_share.cpp src/android_profile.cpp src/guest_log.cpp src/bpf_emu.cpp src/netlink_emu.cpp src/wayland_server.cpp)
 target_include_directories(nest_core PUBLIC src)
 set_target_properties(nest_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
@@ -52,7 +52,7 @@ if(ANDROID)
   target_link_options(nest_binderprog PRIVATE -pie)
 else()
   enable_testing()
-  add_executable(nest_tests tests/test_main.cpp tests/test_vfs.cpp tests/test_tracer.cpp tests/test_vbinder.cpp)
+  add_executable(nest_tests tests/test_main.cpp tests/test_vfs.cpp tests/test_tracer.cpp tests/test_vbinder.cpp tests/test_wayland.cpp)
   target_link_libraries(nest_tests nest_core pthread)
   add_executable(nest_idprog tests/idprog.cpp)
   # Statically linked like Android's bootstrap linkerconfig: no preload, everything traced.

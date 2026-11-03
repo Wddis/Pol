@@ -4,7 +4,7 @@
 // place apps may execute code from regardless of targetSdk). On Linux it is used by the tests.
 //
 //   nest-run --probe DIR                       run the capability probe
-//   nest-run [-b GUEST=HOST[:ro]]... [-w GUEST_CWD] [-0|-n] [--pid1] [-v]... [-s] [-E K=V]... [-c] -- PROGRAM [ARGS...]
+//   nest-run [-b GUEST=HOST[:ro]]... [-w GUEST_CWD] [-0|-n] [--pid1] [--display WxH@DPI] [-v]... [-s] [-E K=V]... [-c] -- PROGRAM [ARGS...]
 //
 //   -b   bind a host directory/file at a guest path ("-b /=rootfs" sets the guest root)
 //   -w   guest working directory (default "/")
@@ -25,6 +25,9 @@
 #include <string>
 #include <sys/syscall.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include <sys/un.h>
+#include <sys/socket.h>
 #include <vector>
 
 #include <thread>
@@ -33,12 +36,13 @@
 #include "guest_log.h"
 #include "probe.h"
 #include "vbinder.h"
+#include "wayland_server.h"
 #include "tracer.h"
 
 extern char** environ;
 
 static void usage() {
-    fprintf(stderr, "usage: nest-run [-b GUEST=HOST[:ro]]... [-w CWD] [-0|-n] [--pid1] [-v] [-s] [-E K=V]... [-c] -- PROG [ARGS]\n");
+    fprintf(stderr, "usage: nest-run [-b GUEST=HOST[:ro]]... [-w CWD] [-0|-n] [--pid1] [--display WxH@DPI] [-v] [-s] [-E K=V]... [-c] -- PROG [ARGS]\n");
 }
 
 int main(int argc, char** argv) {
@@ -50,6 +54,7 @@ int main(int argc, char** argv) {
     nest::TracerConfig cfg;
     bool stats = false, clean = false;
     std::string preload, binderSock, androidState;
+    nest::DisplayConfig display;
     std::vector<std::string> extraEnv;
     int i = 1;
     for (; i < argc; i++) {
@@ -78,6 +83,12 @@ int main(int argc, char** argv) {
             cfg.preload32Host = argv[++i];
         } else if (a == "--android" && i + 1 < argc) {
             androidState = argv[++i];
+        } else if (a == "--display" && i + 1 < argc) {
+            // WIDTHxHEIGHT[@DPI]: the guest's screen (Wayland output + framebuffer size)
+            if (sscanf(argv[++i], "%dx%d@%d", &display.width, &display.height, &display.dpi) < 2) {
+                usage();
+                return 2;
+            }
         } else if (a == "--simulate-app-seccomp") {
             // Tests: behave like Android's app seccomp policy (SIGSYS on mount & co.).
             cfg.simulateTrap = {SYS_mount, SYS_umount2, SYS_pivot_root, SYS_chroot, SYS_reboot, SYS_swapon, SYS_bpf,
@@ -125,6 +136,28 @@ int main(int argc, char** argv) {
             return 125;
         }
         setenv("NEST_STATE_DIR", androidState.c_str(), 1);
+        // Display (graphics, step 1): the guest's composer connects to /run/user/1000/wayland-0.
+        mkdir((androidState + "/run").c_str(), 0755);
+        cfg.vfs.bind("/run/user/1000", androidState + "/run", false, true);
+        // Properties the display needs, appended to the vendor's build.prop (a private copy).
+        std::string vendorProp;
+        if (cfg.vfs.resolve("/vendor/build.prop", "/", true, vendorProp)) {
+            std::string copy = androidState + "/vendor-build.prop";
+            std::string text;
+            if (FILE* f = fopen(vendorProp.c_str(), "re")) {
+                char buf[4096];
+                size_t n;
+                while ((n = fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+                fclose(f);
+            }
+            if (!text.empty() && text.back() != '\n') text += '\n';
+            text += "# Matryoshka Nest display\nro.sf.lcd_density=" + std::to_string(display.dpi) + "\n";
+            if (FILE* f = fopen(copy.c_str(), "we")) {
+                fwrite(text.data(), 1, text.size(), f);
+                fclose(f);
+                cfg.vfs.bind("/vendor/build.prop", copy, true, true);
+            }
+        }
     }
     if (!preload.empty()) {
         // Fast path: the preload library must be visible inside the guest at its host path, and
@@ -174,7 +207,48 @@ int main(int argc, char** argv) {
         }
         brokerThread = std::thread([&] { broker->serve(); });
     }
+    // Guest display: Wayland server for the composer HAL, frames into STATE/display.fb, touch
+    // input from the app as datagrams on STATE/input.sock ("d|u|m ID X Y").
+    std::unique_ptr<nest::WaylandServer> wayland;
+    int inputFd = -1;
+    std::thread inputThread;
+    if (!androidState.empty()) {
+        wayland.reset(new nest::WaylandServer(androidState + "/run/wayland-0", androidState + "/display.fb", display));
+        if (!wayland->start()) {
+            perror("nest: wayland display");
+            wayland.reset();
+        } else {
+            std::string in = androidState + "/input.sock";
+            unlink(in.c_str());
+            inputFd = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+            sockaddr_un sa{};
+            sa.sun_family = AF_UNIX;
+            if (in.size() < sizeof(sa.sun_path)) memcpy(sa.sun_path, in.c_str(), in.size() + 1);
+            if (inputFd >= 0 && bind(inputFd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0) {
+                inputThread = std::thread([&] {
+                    char msg[64];
+                    for (;;) {
+                        ssize_t n = recv(inputFd, msg, sizeof(msg) - 1, 0);
+                        if (n <= 0) break;
+                        msg[n] = 0;
+                        char kind = 0;
+                        int id = 0;
+                        float x = 0, y = 0;
+                        if (sscanf(msg, "%c %d %f %f", &kind, &id, &x, &y) < 2) continue;
+                        wayland->sendTouch(kind == 'd' ? 0 : kind == 'u' ? 1 : 2, id, x, y);
+                    }
+                });
+            }
+        }
+    }
     int rc = tracer.run(args[0], args, env);
+    if (inputFd >= 0) {
+        shutdown(inputFd, SHUT_RDWR);
+        close(inputFd);
+    }
+    if (inputThread.joinable()) inputThread.detach();
+    if (wayland && stats) fprintf(stderr, "nest: display frames=%llu\n", (unsigned long long)wayland->frames());
+    if (wayland) wayland->stop();
     clock_gettime(CLOCK_MONOTONIC, &t1);
     if (stats) {
         const auto& s = tracer.stats();

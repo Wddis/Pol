@@ -123,6 +123,7 @@ struct Proc {
     bool dead = false;
     uint32_t hostUid = 0;
     bool wakeSent = false;  // a poll wake message is outstanding on conn
+    uint64_t inst = 0;      // which open() of the device (Hello::inst)
 };
 
 }  // namespace
@@ -135,7 +136,7 @@ struct Broker::Impl {
     std::map<int, Proc*> procConns;      // conn fd -> proc
     std::map<int, Thread*> threadConns;  // conn fd -> thread
     std::set<int> pendingHello;
-    std::map<std::pair<int, Ctx>, Proc*> procs;
+    std::map<uint64_t, Proc*> procs;  // by open instance (Hello::inst)
     Node* mgr[3] = {nullptr, nullptr, nullptr};
     mutable std::mutex statsMu;
     BrokerStats st;
@@ -965,7 +966,7 @@ struct Broker::Impl {
         procConns.erase(p->conn);
         epoll_ctl(epfd, EPOLL_CTL_DEL, p->conn, nullptr);
         close(p->conn);
-        procs.erase({p->pid, p->ctx});
+        procs.erase(p->inst);
         // Nodes stay allocated (owner->dead) so refs elsewhere keep a valid pointer.
     }
 
@@ -982,19 +983,20 @@ struct Broker::Impl {
         socklen_t cl = sizeof(cred);
         getsockopt(fd, SOL_SOCKET, SO_PEERCRED, &cred, &cl);
         if (h.kind == ConnKind::Process) {
-            auto it = procs.find({h.pid, h.ctx});
-            if (it != procs.end()) destroyProc(it->second);  // pid reused / reopened
+            auto it = procs.find(h.inst);
+            if (it != procs.end()) destroyProc(it->second);  // stale instance id
             auto* p = new Proc();
             p->pid = h.pid;
             p->ctx = h.ctx;
             p->conn = fd;
             p->hostUid = cred.uid;
-            procs[{h.pid, h.ctx}] = p;
+            p->inst = h.inst;
+            procs[h.inst] = p;
             procConns[fd] = p;
             std::lock_guard<std::mutex> g(statsMu);
             st.processes++;
         } else {
-            auto it = procs.find({h.pid, h.ctx});
+            auto it = procs.find(h.inst);
             if (it == procs.end()) {
                 epoll_ctl(epfd, EPOLL_CTL_DEL, fd, nullptr);
                 close(fd);

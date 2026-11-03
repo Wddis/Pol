@@ -498,6 +498,12 @@ NEST_EXPORT int socket(int domain, int type, int protocol) {
         errno = EMFILE;
         return -1;
     }
+    // The "kernel" end is ours: keep it away from fd numbers the guest uses.
+    long hi = syscall(SYS_fcntl, sv[1], F_DUPFD_CLOEXEC, 1000);
+    if (hi >= 0) {
+        syscall(SYS_close, sv[1]);
+        sv[1] = static_cast<int>(hi);
+    }
     g_nl[sv[0]].proto = protocol;
     g_nl[sv[0]].peer = sv[1];
     __atomic_add_fetch(&g_nlCount, 1, __ATOMIC_RELAXED);
