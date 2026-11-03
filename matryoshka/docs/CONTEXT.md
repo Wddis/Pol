@@ -278,8 +278,14 @@ Wayland-сервер). `nest/tools/bench/setup-binfmt.sh` — перерегис
    надпись-ожидание на чёрном экране.
 Не разобрано: `E/FMQ grantorIdx must be less than 3` (FMQ через vbinder), SF ↔ hwcomposer.
 
+### 0.5.4 — по логу 0.5.3
+hwcomposer и wificond больше не падают. system_server убивает Watchdog («Blocked in handler on main
+thread»): ждёт ISensors, а Waydroid sensors HAL без `waydroid.stub_sensors_hal=1` сразу выходит
+(exit 0). В копию vendor build.prop добавлено `waydroid.stub_sensors_hal=1`,
+`waydroid.multi_windows=false`. Стенд: HAL «ready», system_server до StartConnectivityService.
+
 ### Ждём от владельца
-Тест **0.5.3-nest** (было 0.5.2, 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.5.4-nest** (было 0.5.3, 0.5.2, 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

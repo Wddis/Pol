@@ -155,6 +155,9 @@ int main(int argc, char** argv) {
             // Shared memory: memfd where the kernel has sealing for it (5.1+; libcutils checks and
             // falls back to /dev/ashmem otherwise, e.g. on a 4.14 phone kernel).
             text += "sys.use_memfd=true\n";
+            // Waydroid's vendor HALs: the sensors HAL registers its stub only when asked (it exits
+            // otherwise, and system_server's watchdog then kills it waiting for sensors); one window.
+            text += "waydroid.stub_sensors_hal=1\nwaydroid.multi_windows=false\n";
             if (FILE* f = fopen(copy.c_str(), "we")) {
                 fwrite(text.data(), 1, text.size(), f);
                 fclose(f);
