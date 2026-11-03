@@ -1,7 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 #include "android_profile.h"
 
+#include <cerrno>
 #include <cstdio>
+#include <cstring>
+#include <fcntl.h>
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/utsname.h>
@@ -85,9 +88,18 @@ bool applyAndroidProfile(TracerConfig& cfg, const std::string& state, const std:
         ok &= writeFile(lo + "/" + kv.first, kv.second);
     cfg.vfs.bind("/sys/class/net", state + "/sys/class/net", false, true);
     cfg.vfs.bind("/dev", state + "/dev");
-    for (const char* d : {"null", "zero", "full", "random", "urandom", "tty", "ptmx", "ashmem", "tun"}) {
+    // ion: media buffers (Codec2 in system_server aborts without it; apps may open it read-only).
+    for (const char* d : {"null", "zero", "full", "random", "urandom", "tty", "ptmx", "ashmem", "tun", "ion"}) {
         std::string host = std::string("/dev/") + d;
-        if (!exists(host)) continue;
+        if (!exists(host)) {
+            if (!strcmp(d, "ion") || !strcmp(d, "ashmem")) fprintf(stderr, "nest: host /dev/%s: absent\n", d);
+            continue;
+        }
+        if (!strcmp(d, "ion")) {
+            int fd = open(host.c_str(), O_RDONLY | O_CLOEXEC);
+            fprintf(stderr, "nest: host /dev/ion: %s\n", fd >= 0 ? "usable" : strerror(errno));
+            if (fd >= 0) close(fd);
+        }
         ensureMountPoint(state + "/dev/" + d, false);
         cfg.vfs.bind(std::string("/dev/") + d, host, false, true);
     }
