@@ -10,6 +10,7 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 #include <cerrno>
+#include <cstdio>
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
@@ -134,6 +135,46 @@ int openFlagsFollow(int flags) { return !(flags & O_NOFOLLOW); }
 
 }  // namespace
 
+// ---- virtual file ownership
+// Guest files all belong to the app's host uid. The guest sees the owner its chown() recorded
+// (xattr user.nest.owner = "uid:gid", written by the tracer), and root for everything else the
+// app owns: bionic's property area, for one, refuses files not owned by root.
+namespace {
+long envId(const char* name) {
+    const char* v = getenv(name);
+    return v && *v ? strtol(v, nullptr, 10) : -1;
+}
+long hostUid() { static long v = envId("NEST_HOST_UID"); return v; }
+long hostGid() { static long v = envId("NEST_HOST_GID"); return v; }
+
+// xattr lookup: path (already a host path) or fd.
+bool recordedOwner(const char* hostPath, int fd, bool follow, unsigned& uid, unsigned& gid) {
+    char buf[40];
+    long n;
+    if (hostPath)
+        n = nest::taggedSyscall(follow ? SYS_getxattr : SYS_lgetxattr, reinterpret_cast<long>(hostPath),
+                                reinterpret_cast<long>(nest::kOwnerXattr), reinterpret_cast<long>(buf), sizeof(buf) - 1);
+    else
+        n = syscall(SYS_fgetxattr, fd, nest::kOwnerXattr, buf, sizeof(buf) - 1);
+    if (n <= 0) return false;
+    buf[n] = 0;
+    return sscanf(buf, "%u:%u", &uid, &gid) == 2;
+}
+
+template <typename St>
+void virtualOwner(St* st, const char* hostPath, int fd, bool follow) {
+    if (hostUid() < 0 || !st) return;
+    unsigned u, g;
+    if (static_cast<long>(st->st_uid) == hostUid() && recordedOwner(hostPath, fd, follow, u, g)) {
+        st->st_uid = u;
+        st->st_gid = g;
+        return;
+    }
+    if (static_cast<long>(st->st_uid) == hostUid()) st->st_uid = 0;
+    if (static_cast<long>(st->st_gid) == hostGid() || static_cast<long>(st->st_gid) == hostUid()) st->st_gid = 0;
+}
+}  // namespace
+
 extern "C" {
 
 #define NEST_EXPORT __attribute__((visibility("default")))
@@ -208,10 +249,33 @@ NEST_EXPORT int __openat_2(int dirfd, const char* path, int flags) {
 }
 
 // The *64 variants receive the kernel's stat layout on every ABI.
+
 NEST_EXPORT int fstatat64(int dirfd, const char* path, struct stat64* st, int flags) {
-    return static_cast<int>(pathCall(nest::kSysFstatat, dirfd, path, reinterpret_cast<long>(st), flags, 0,
-                                     !(flags & AT_SYMLINK_NOFOLLOW)));
+    bool follow = !(flags & AT_SYMLINK_NOFOLLOW);
+    std::string host;
+    long r;
+    if (translate(path, follow, host)) {
+        r = ret(taggedSyscall(nest::kSysFstatat, dirfd, reinterpret_cast<long>(host.c_str()), reinterpret_cast<long>(st), flags));
+        if (r == 0) virtualOwner(st, host.c_str(), -1, follow);
+    } else {
+        r = syscall(nest::kSysFstatat, dirfd, path, st, flags);
+        if (r == 0) virtualOwner(st, nullptr, (path && path[0]) ? -1 : dirfd, follow);
+    }
+    return static_cast<int>(r);
 }
+#if defined(__LP64__) || defined(__BIONIC__)
+// fstat: the kernel's 64-bit stat layout on these ABIs (bionic arm32: fstat64).
+NEST_EXPORT int fstat(int fd, struct stat* st) {
+#if defined(SYS_fstat64)
+    long r = syscall(SYS_fstat64, fd, st);
+#else
+    long r = syscall(SYS_fstat, fd, st);
+#endif
+    if (r == 0) virtualOwner(st, nullptr, fd, true);
+    return static_cast<int>(r);
+}
+NEST_EXPORT int fstat64(int fd, struct stat64* st) { return fstat(fd, reinterpret_cast<struct stat*>(st)); }
+#endif
 NEST_EXPORT int stat64(const char* path, struct stat64* st) { return fstatat64(AT_FDCWD, path, st, 0); }
 NEST_EXPORT int lstat64(const char* path, struct stat64* st) { return fstatat64(AT_FDCWD, path, st, AT_SYMLINK_NOFOLLOW); }
 #if !(defined(__i386__) && defined(__GLIBC__))

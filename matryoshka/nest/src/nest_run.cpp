@@ -149,6 +149,9 @@ int main(int argc, char** argv) {
         if (st && *st) cfg.stateDir = st;
     }
     if (!binderSock.empty()) cfg.injectEnv.push_back("NEST_BINDER_SOCK=" + binderSock);
+    // Host identity of every guest file (virtual ownership in the preload's stat wrappers).
+    cfg.injectEnv.push_back("NEST_HOST_UID=" + std::to_string(getuid()));
+    cfg.injectEnv.push_back("NEST_HOST_GID=" + std::to_string(getgid()));
     // Guest logcat tee: liblog's connect to /dev/socket/logdw reaches the tee, which keeps a copy
     // in STATE/logcat.txt and forwards to the guest logd's socket (created by guest init's bind).
     nest::GuestLog guestLog;

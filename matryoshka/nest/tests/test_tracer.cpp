@@ -555,6 +555,28 @@ TEST(lower_nice_is_never_refused_to_the_guest) {
     EXPECT_EQ(r.out, "0\n0\n");
 }
 
+TEST(virtual_file_owner_like_the_phone) {
+    // On the phone every guest file belongs to the app's uid. The guest must see root (bionic's
+    // property area refuses anything else) and the owners its chown() set.
+    std::vector<std::string> drop{"/usr/bin/setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"};
+    auto with = [&](std::vector<std::string> v) { v.insert(v.begin(), drop.begin(), drop.end()); return v; };
+    if (run(with({"/bin/true"})).status != 0) {
+        fprintf(stderr, "  skipped: cannot run unprivileged here\n");
+        return;
+    }
+    std::string dir = mktmp();
+    chmod(dir.c_str(), 0777);
+    std::string f = dir + "/property_info";
+    std::string cmd = "touch " + f;
+    auto mk = run(with({"/bin/sh", "-c", cmd}));
+    (void)mk;
+    auto r = run(with({NEST_RUN_PATH, "-b", "/=/", "-P", NEST_PRELOAD_PATH, "--", NEST_IDPROG_PATH, "owner", f, "chown", f,
+                       "1000", "1001", "owner", f, "fchown", f, "-1", "2000", "owner", f, "chown", f, "0", "0", "owner", f}));
+    EXPECT_EQ(r.out, "0:0 0:0\n0\n1000:1001 1000:1001\n0\n1000:2000 1000:2000\n0\n0:0 0:0\n");
+    struct stat st;
+    EXPECT_TRUE(stat(f.c_str(), &st) == 0 && st.st_uid == 65534);  // the host file never changed owner
+}
+
 TEST(mount_requires_root_identity) {
     auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
     EXPECT_EQ(r.out, "-1 EPERM\n");

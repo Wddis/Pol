@@ -29,7 +29,27 @@ int main(int argc, char** argv) {
     setvbuf(stdout, nullptr, _IONBF, 0);
     for (int i = 1; i < argc; i++) {
         const char* c = argv[i];
-        if (!strcmp(c, "nice")) {
+        if (!strcmp(c, "owner")) {
+            // stat and fstat owners, like bionic's property area checks
+            const char* p = argv[++i];
+            struct stat a{}, b{};
+            int fd = open(p, O_RDONLY | O_CLOEXEC);
+            int r1 = stat(p, &a), r2 = fstat(fd, &b);
+            close(fd);
+            if (r1 || r2) printf("stat-failed %s\n", strerror(errno));
+            else printf("%u:%u %u:%u\n", a.st_uid, a.st_gid, b.st_uid, b.st_gid);
+        } else if (!strcmp(c, "chown")) {
+            const char* p = argv[++i];
+            int u = atoi(argv[++i]);
+            int g = atoi(argv[++i]);
+            printRes(chown(p, static_cast<uid_t>(u), static_cast<gid_t>(g)));
+        } else if (!strcmp(c, "fchown")) {
+            int fd = open(argv[++i], O_RDONLY | O_CLOEXEC);
+            int u = atoi(argv[++i]);
+            int g = atoi(argv[++i]);
+            printRes(fchown(fd, static_cast<uid_t>(u), static_cast<gid_t>(g)));
+            close(fd);
+        } else if (!strcmp(c, "nice")) {
             // like init's `priority -20` for zygote
             int rc = setpriority(PRIO_PROCESS, 0, atoi(argv[++i]));
             printf("%s\n", rc == 0 ? "0" : strerror(errno));

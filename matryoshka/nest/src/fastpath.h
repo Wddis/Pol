@@ -19,6 +19,9 @@ namespace nest {
 
 constexpr uint64_t kFastPathTag = 0x4e4553546d766d21ull;  // "NESTmvm!" (32-bit: low word only)
 
+// Virtual owner of a guest file, "uid:gid" (written by the tracer on chown, read by the preload).
+constexpr const char* kOwnerXattr = "user.nest.owner";
+
 // The tag a call with syscall number `nr` must carry (the filter computes the same XOR).
 constexpr uint64_t fastPathTag(long nr) { return kFastPathTag ^ static_cast<uint32_t>(nr); }
 

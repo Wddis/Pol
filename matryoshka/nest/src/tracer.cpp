@@ -23,6 +23,7 @@
 #include <sys/mount.h>
 #include <sys/reboot.h>
 #include <sys/wait.h>
+#include <sys/xattr.h>
 #include <unistd.h>
 
 #include "arch.h"
@@ -1560,6 +1561,30 @@ bool Tracer::securityXattr(pid_t tid, Regs& r) {
     return true;
 }
 
+// Virtual file ownership (see preload.cpp): chown() by the guest is recorded as an xattr on the
+// host file; uid/gid -1 keep the current virtual value.
+void Tracer::recordOwner(const std::string& hostPath, bool follow, uint64_t uidArg, uint64_t gidArg) {
+    uint32_t u = static_cast<uint32_t>(uidArg), g = static_cast<uint32_t>(gidArg);
+    unsigned cu = 0, cg = 0;
+    char buf[40];
+    ssize_t n = follow ? getxattr(hostPath.c_str(), kOwnerXattr, buf, sizeof(buf) - 1)
+                       : lgetxattr(hostPath.c_str(), kOwnerXattr, buf, sizeof(buf) - 1);
+    if (n > 0) {
+        buf[n] = 0;
+        if (sscanf(buf, "%u:%u", &cu, &cg) != 2) cu = cg = 0;
+    }
+    if (u != 0xffffffffu) cu = u;
+    if (g != 0xffffffffu) cg = g;
+    if (cu == 0 && cg == 0) {  // root is what unrecorded files show anyway
+        if (n > 0) (follow ? removexattr : lremovexattr)(hostPath.c_str(), kOwnerXattr);
+        return;
+    }
+    snprintf(buf, sizeof(buf), "%u:%u", cu, cg);
+    int rc = follow ? setxattr(hostPath.c_str(), kOwnerXattr, buf, strlen(buf), 0)
+                    : lsetxattr(hostPath.c_str(), kOwnerXattr, buf, strlen(buf), 0);
+    if (rc != 0) logf(1, "owner of %s not recorded: %s", hostPath.c_str(), strerror(errno));
+}
+
 void Tracer::publishVfs() {
     if (share_) share_->publish(cfg_.vfs.serialize());
 }
@@ -1727,10 +1752,17 @@ bool Tracer::handleSigsys(pid_t tid) {
             case Kind::Ids: handleIds(tid, r, sp->logical); return true;
             case Kind::Caps: handleCaps(tid, r, sp->logical); return true;
             case Kind::FakeZero:
-            case Kind::FakeChown:
+            case Kind::FakeChown: {
                 stats_.faked++;
-                setReturn(tid, r, credsOf(tid).hasCap(kCapChown) ? 0 : -EPERM);
+                bool ok = credsOf(tid).hasCap(kCapChown);
+                if (ok && sp->kind == Kind::FakeZero) {
+                    char fdPath[64];
+                    snprintf(fdPath, sizeof(fdPath), "/proc/%d/fd/%d", tid, static_cast<int>(r.arg[0]));
+                    recordOwner(fdPath, true, r.arg[1], r.arg[2]);
+                }
+                setReturn(tid, r, ok ? 0 : -EPERM);
                 return true;
+            }
             default: break;
         }
     }
@@ -1869,8 +1901,15 @@ void Tracer::handleSeccomp(pid_t tid) {
             case Kind::FakeChown:
                 if (cfg_.fakeRoot) {
                     stats_.faked++;
+                    bool ok = credsOf(tid).hasCap(kCapChown);
+                    if (ok) {  // remember the owner on the host file (preload shows it in stat)
+                        int ua = s->logical == SYS_fchownat ? 2 : 1;
+                        lastHost_.clear();
+                        rewritePath(tid, r, s->dirfd1, s->path1, follow(*s), scratch);
+                        if (!lastHost_.empty()) recordOwner(lastHost_, follow(*s), r.arg[ua], r.arg[ua + 1]);
+                    }
                     setSyscall(tid, r, -1);
-                    setReturn(tid, r, credsOf(tid).hasCap(kCapChown) ? 0 : -EPERM);
+                    setReturn(tid, r, ok ? 0 : -EPERM);
                 } else {
                     if (rewritePath(tid, r, s->dirfd1, s->path1, follow(*s), scratch)) setArgs(tid, r);
                 }
@@ -1879,8 +1918,16 @@ void Tracer::handleSeccomp(pid_t tid) {
                 // fchown: ownership is not representable on the host; succeed only for root.
                 if (!cfg_.fakeRoot) break;
                 stats_.faked++;
-                setSyscall(tid, r, -1);
-                setReturn(tid, r, credsOf(tid).hasCap(kCapChown) ? 0 : -EPERM);
+                if (credsOf(tid).hasCap(kCapChown)) {
+                    char fdPath[64];
+                    snprintf(fdPath, sizeof(fdPath), "/proc/%d/fd/%d", tid, static_cast<int>(r.arg[0]));
+                    recordOwner(fdPath, true, r.arg[1], r.arg[2]);
+                    setSyscall(tid, r, -1);
+                    setReturn(tid, r, 0);
+                } else {
+                    setSyscall(tid, r, -1);
+                    setReturn(tid, r, -EPERM);
+                }
                 break;
             case Kind::Ids:
                 if (cfg_.fakeRoot) handleIds(tid, r, s->logical);

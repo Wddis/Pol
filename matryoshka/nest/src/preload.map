@@ -3,7 +3,7 @@
 {
   global:
     open; open64; openat; openat64; __open_2; __openat_2;
-    stat; stat64; lstat; lstat64; fstatat; fstatat64;
+    stat; stat64; lstat; lstat64; fstatat; fstatat64; fstat; fstat64;
     access; faccessat; readlink; readlinkat;
     mkdir; mkdirat; unlink; unlinkat; rmdir;
     chmod; fchmodat; rename; renameat;
