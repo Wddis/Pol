@@ -165,6 +165,10 @@ int main(int argc, char** argv) {
             text += "ro.hardware.gralloc=default\nro.hardware.egl=swiftshader\n";
             // the whole Android screen in one window (default "none": hwcomposer shows nothing)
             text += "waydroid.active_apps=Waydroid\n";
+            // No A/B checkpoints in a VM: vold's key storage otherwise waits for the checkpoint
+            // commit (vold.checkpoint_committed, set only after boot) while holding its lock, and
+            // the user unlock, hence the boot, waits for vold -> system_server's watchdog fires.
+            text += "vold.checkpoint_committed=1\n";
             // Codec2 linear buffers from gralloc (BLOB) instead of ION, only where the host has no
             // /dev/ion (newer kernels): Codec2 crashes its user (system_server) without one of them.
             if (access("/dev/ion", R_OK) != 0) text += "debug.stagefright.c2-poolmask=786432\n";
