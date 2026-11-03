@@ -302,8 +302,20 @@ networkstack — все стартуют), но 8 раз падает SIGSEGV: S
 `nest: host /dev/ion: usable|<ошибка>|absent`. Память: ~0.9–1.1 ГБ свободно, swap убывает
 (900 → 500 МБ за 5 мин) — следить. frames=1 (экран почти не обновляется — следующий вопрос).
 
+### 0.5.7 — по логу 0.5.6
+/dev/ion usable, SIGSEGV ушёл. Новая цепочка: AMS «Existing provider SettingsProvider is crashing;
+detaching …» → приложения ждут провайдер настроек 20 с → ANR networkstack → system_server
+«Lost network stack» (сам себя убивает). Причина (по коду AOSP 11): `isProcessAliveLocked()`
+сверяет `Process.getUidForPid(pid)` (строка Uid: в /proc/<pid>/status) с uid процесса —
+хост показывает uid приложения (10461), а не виртуальный 1000. Исправлено: трассировщик пишет
+`<state>/attr/creds-<pid>` («ruid euid suid fsuid rgid egid sgid fsgid»), preload подменяет
+Uid:/Gid: при open() /proc/<pid|self>[/task/N]/status (memfd). Тест proc_status_shows_virtual_ids.
+Диагностика: `<state>/preload.log` (неудачные open в /proc), `nest: ps` раз в минуту
+(процессы не в S/R/I), оба в логе тестера. ART/libopenjdk preload не видит — open() из Java
+идёт мимо (только libandroid_runtime и др. из default namespace).
+
 ### Ждём от владельца
-Тест **0.5.6-nest** (было 0.5.5 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.5.7-nest** (было 0.5.6 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

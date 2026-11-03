@@ -61,6 +61,8 @@ object TesterLog {
                 Triple("guest kmsg", NestGuest.kmsg(context), 1500),
                 Triple("guest logcat", NestGuest.logcat(context), 3000),
                 Triple("binder trace", NestGuest.binderLog(context), 3000),
+                Triple("preload log (failed /proc opens)", File(NestGuest.stateDir(context), "preload.log"), 400),
+                Triple("vbinder client errors", File(NestGuest.stateDir(context), "vbinder-client.log"), 200),
             )) {
                 if (!f.exists()) continue
                 w.appendLine("-- $title (${f.length()} bytes, last $n lines)")

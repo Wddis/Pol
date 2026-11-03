@@ -1059,6 +1059,7 @@ void Tracer::onNewTask(pid_t parent, pid_t tid) {
     tgid_[tid] = tgid;
     if (tgid == tid) {
         creds_[tid] = inherited;  // new process inherits its parent's identity
+        publishCreds(tid, inherited);
         auto e = exe_.find(tgidOf(parent));
         if (e != exe_.end()) exe_[tid] = e->second;
     }
@@ -1153,6 +1154,7 @@ void Tracer::handleIds(pid_t tid, Regs& r, long nr) {
         std::lock_guard<std::mutex> g(credsMu_);
         creds_[tgidOf(tid)] = c;
     }
+    publishCreds(tgidOf(tid), c);
     setSyscall(tid, r, -1);
     setReturn(tid, r, ret);
 }
@@ -1281,6 +1283,7 @@ void Tracer::handleCaps(pid_t tid, Regs& r, long nr) {
         std::lock_guard<std::mutex> g(credsMu_);
         creds_[tgidOf(tid)] = c;
     }
+    publishCreds(tgidOf(tid), c);
     finish(ret);
 }
 
@@ -1314,6 +1317,22 @@ pid_t Tracer::parentOf(pid_t tid) const {
 
 // Virtual pid 1. Returns true when the call is answered here (result), false to let it run
 // (possibly with translated arguments).
+// /proc/<pid>/status shows the host's ids; ActivityManager checks a process's uid there
+// (isProcessAliveLocked). The preload rewrites the Uid:/Gid: lines from these files.
+void Tracer::publishCreds(pid_t tgid, const Creds& c) {
+    if (cfg_.procAttrDir.empty() || !cfg_.fakeRoot) return;
+    std::string path = cfg_.procAttrDir + "/creds-" + std::to_string(tgid);
+    std::string tmp = path + ".tmp";
+    char text[160];
+    int n = snprintf(text, sizeof(text), "%u %u %u %u %u %u %u %u\n", c.ruid, c.euid, c.suid, c.fsuid, c.rgid, c.egid,
+                     c.sgid, c.fsgid);
+    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd < 0) return;
+    ssize_t w = write(fd, text, static_cast<size_t>(n));
+    close(fd);
+    if (w == n) rename(tmp.c_str(), path.c_str());
+}
+
 std::string Tracer::procName(pid_t pid) {
     // argv[0] (zygote renames its children there), else comm
     char path[48], buf[256] = {};
@@ -2501,6 +2520,7 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
         tgid_[child] = child;
         creds_[child] = initial;  // initial identity from the config
         initTgid_ = child;
+        publishCreds(child, initial);
     }
     // A new task is resumed only once BOTH its initial SIGSTOP and its parent's fork/clone event
     // were seen (they arrive in either order): its identity must be inherited before it runs.
@@ -2531,6 +2551,7 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
             {
                 std::lock_guard<std::mutex> g(credsMu_);
                 if (tgidOf(tid) == tid) {
+                    if (!cfg_.procAttrDir.empty()) unlink((cfg_.procAttrDir + "/creds-" + std::to_string(tid)).c_str());
                     creds_.erase(tid);
                     exe_.erase(tid);
                     netlinkFds_.erase(tid);

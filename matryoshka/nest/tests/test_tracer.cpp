@@ -674,6 +674,24 @@ TEST(android_virtual_network_config) {
     EXPECT_EQ(r.out, "0\n0\n1\n\n");
 }
 
+TEST(proc_status_shows_virtual_ids) {
+    // ActivityManager compares /proc/<pid>/status's uid with the process's (isProcessAliveLocked).
+    // The tracer publishes each process's virtual ids in <state>/attr/creds-<pid> ...
+    std::string state = mktmp();
+    std::string inner = "cat " + state + "/attr/creds-$$";
+    auto t = run({NEST_RUN_PATH, "-b", "/=/", "--android", state, "-u", "1000", "--", "/bin/sh", "-c",
+                  "/bin/sh -c '" + inner + "'"});
+    EXPECT_EQ(t.out, "1000 1000 1000 1000 1000 1000 1000 1000\n");
+    // ... and the preload rewrites the Uid:/Gid: lines from them.
+    std::string dir = mktmp();
+    mkdir((dir + "/attr").c_str(), 0755);
+    std::string cmd = "NEST_VFS_FILE=" + dir + "/nest-vfs LD_PRELOAD=" + NEST_PRELOAD_PATH +
+                      " /bin/sh -c 'echo 1000 1000 1000 1000 1001 1001 1001 1001 > " + dir + "/attr/creds-$$; exec " +
+                      NEST_IDPROG_PATH + " status-ids'";
+    auto r = run({"/bin/sh", "-c", cmd});
+    EXPECT_EQ(r.out, "Uid: 1000 1000 1000 1000\nGid: 1001 1001 1001 1001\n");
+}
+
 TEST(mount_requires_root_identity) {
     auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
     EXPECT_EQ(r.out, "-1 EPERM\n");

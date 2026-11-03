@@ -18,6 +18,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 #include <cstdio>
+#include <fcntl.h>
+#include <dirent.h>
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
@@ -273,6 +275,35 @@ int main(int argc, char** argv) {
                         sscanf(line, "SwapFree: %ld kB", &swapFreeKb);
                     }
                     fclose(f);
+                }
+                if (t % 60 == 0) {
+                    // processes of this uid that are not simply running/sleeping (zombie, stopped,
+                    // disk wait): ActivityManager treats Z/X as dead
+                    std::string odd;
+                    int total = 0;
+                    if (DIR* d = opendir("/proc")) {
+                        while (dirent* e = readdir(d)) {
+                            if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+                            char path[64], buf[512] = {};
+                            snprintf(path, sizeof(path), "/proc/%s/stat", e->d_name);
+                            struct stat pst;
+                            if (stat(path, &pst) != 0 || pst.st_uid != getuid()) continue;
+                            int fd = open(path, O_RDONLY | O_CLOEXEC);
+                            if (fd < 0) continue;
+                            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+                            close(fd);
+                            const char* close_ = n > 0 ? strrchr(buf, ')') : nullptr;
+                            if (!close_ || !close_[1] || !close_[2]) continue;
+                            total++;
+                            char st = close_[2];
+                            if (st == 'S' || st == 'R' || st == 'I') continue;
+                            const char* open_ = strchr(buf, '(');
+                            odd += " " + std::string(e->d_name) + ":" + st + ":" +
+                                   (open_ ? std::string(open_ + 1, close_) : std::string("?"));
+                        }
+                        closedir(d);
+                    }
+                    fprintf(stderr, "nest: ps total=%d not-running/sleeping:%s\n", total, odd.empty() ? " none" : odd.c_str());
                 }
                 fprintf(stderr, "nest: t=%ds mem_avail=%ldMB swap_free=%ldMB frames=%llu\n", t, availKb / 1024,
                         swapFreeKb / 1024, static_cast<unsigned long long>(wayland ? wayland->frames() : 0));

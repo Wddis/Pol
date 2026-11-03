@@ -118,7 +118,8 @@ private:
     };
 
     void handleSeccomp(pid_t tid);
-    std::string procName(pid_t pid);                         // guest program name for the log
+    std::string procName(pid_t pid);
+    void publishCreds(pid_t tgid, const Creds& c);           // for the preload's /proc/<pid>/status                         // guest program name for the log
     void logKill(pid_t tid, const struct Regs& r, long nr);  // tester log: who kills whom
     bool handleSigsys(pid_t tid);
     long emulate(pid_t tid, struct Regs& r, long nr, bool& handled);

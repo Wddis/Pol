@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <string>
 #include <linux/capability.h>
 #include <signal.h>
 #include <cstddef>
@@ -348,6 +349,18 @@ int main(int argc, char** argv) {
             if (!f) { printf("write-failed %s\n", strerror(errno)); ++i; continue; }
             fputs(argv[++i], f);
             fclose(f);
+        } else if (!strcmp(c, "status-ids")) {  // Uid:/Gid: of /proc/self/status, read with open() (preload)
+            int fd = open("/proc/self/status", O_RDONLY | O_CLOEXEC);
+            char buf[4096] = {};
+            ssize_t n = fd >= 0 ? read(fd, buf, sizeof(buf) - 1) : -1;
+            if (fd >= 0) close(fd);
+            std::string t(buf, n > 0 ? static_cast<size_t>(n) : 0);
+            for (const char* k : {"Uid:", "Gid:"}) {
+                size_t at = t.find(std::string("\n") + k);
+                std::string line = at == std::string::npos ? "?" : t.substr(at + 1, t.find('\n', at + 1) - at - 1);
+                for (char& ch : line) if (ch == '\t') ch = ' ';
+                printf("%s\n", line.c_str());
+            }
         } else if (!strcmp(c, "cat")) {
             FILE* f = fopen(argv[++i], "r");
             if (!f) { printf("cat-failed %s\n", strerror(errno)); continue; }

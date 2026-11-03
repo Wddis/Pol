@@ -285,6 +285,101 @@ NEST_EXPORT long syscall(long nr, ...) {
 }
 #endif
 
+// Tester log: guest opens of /proc files that fail (ActivityManager decides that a process is
+// dead when it cannot read /proc/<pid>/stat). Appended to <state>/preload.log, 40 per process.
+// /proc/<pid>/status with the guest's virtual ids (published by the tracer, attr/creds-<pid>):
+// ActivityManager compares the uid there with the process's (isProcessAliveLocked).
+constexpr long kNotStatus = -100000;  // virtualStatus: not a status file, open normally
+long virtualStatus(int dirfd, const char* path, int flags) {
+    if (!path || (flags & O_ACCMODE) != O_RDONLY || strncmp(path, "/proc/", 6) != 0) return kNotStatus;
+    const char* p = path + 6;
+    long pid;
+    if (!strncmp(p, "self/", 5)) {
+        // the real pid (getpid() may be virtual: the guest's init is pid 1)
+        char self[24] = {};
+        if (syscall(SYS_readlinkat, AT_FDCWD, "/proc/self", self, sizeof(self) - 1) <= 0) return kNotStatus;
+        pid = strtol(self, nullptr, 10);
+        p += 4;
+    } else {
+        char* end;
+        pid = strtol(p, &end, 10);
+        if (end == p || pid <= 0) return kNotStatus;
+        p = end;
+    }
+    if (!strncmp(p, "/task/", 6)) {  // a thread's status: same ids as its process
+        p += 6;
+        while (*p >= '0' && *p <= '9') p++;
+    }
+    if (strcmp(p, "/status") != 0) return kNotStatus;
+    const char* vfs = getenv("NEST_VFS_FILE");
+    const char* slash = vfs ? strrchr(vfs, '/') : nullptr;
+    if (!slash) return kNotStatus;
+    char credPath[512];
+    snprintf(credPath, sizeof(credPath), "%.*s/attr/creds-%ld", static_cast<int>(slash - vfs), vfs, pid);
+    unsigned id[8];
+    char cbuf[160] = {};
+    int cf = static_cast<int>(syscall(SYS_openat, AT_FDCWD, credPath, O_RDONLY | O_CLOEXEC));
+    if (cf < 0) return kNotStatus;
+    long cn = syscall(SYS_read, cf, cbuf, sizeof(cbuf) - 1);
+    syscall(SYS_close, cf);
+    if (cn <= 0 || sscanf(cbuf, "%u %u %u %u %u %u %u %u", &id[0], &id[1], &id[2], &id[3], &id[4], &id[5], &id[6], &id[7]) != 8)
+        return kNotStatus;
+    long real = pathCall(SYS_openat, dirfd, path, O_RDONLY | O_CLOEXEC, 0, 0, true);
+    if (real < 0) return -errno;
+    std::string text;
+    char buf[4096];
+    for (;;) {
+        long n = syscall(SYS_read, real, buf, sizeof(buf));
+        if (n <= 0) break;
+        text.append(buf, static_cast<size_t>(n));
+    }
+    syscall(SYS_close, real);
+    std::string out;
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t nl = text.find('\n', at);
+        std::string line = text.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+        at = nl == std::string::npos ? text.size() : nl + 1;
+        char repl[96];
+        if (!line.compare(0, 4, "Uid:")) {
+            snprintf(repl, sizeof(repl), "Uid:\t%u\t%u\t%u\t%u", id[0], id[1], id[2], id[3]);
+            line = repl;
+        } else if (!line.compare(0, 4, "Gid:")) {
+            snprintf(repl, sizeof(repl), "Gid:\t%u\t%u\t%u\t%u", id[4], id[5], id[6], id[7]);
+            line = repl;
+        }
+        out += line;
+        out += '\n';
+    }
+    long mfd = syscall(SYS_memfd_create, "status", (flags & O_CLOEXEC) ? MFD_CLOEXEC : 0);
+    if (mfd < 0) {
+        long r = pathCall(SYS_openat, dirfd, path, flags, 0, 0, true);
+        return r < 0 ? -errno : r;
+    }
+    syscall(SYS_write, mfd, out.data(), out.size());
+    syscall(SYS_lseek, mfd, 0, SEEK_SET);
+    return mfd;
+}
+
+void noteProcOpen(const char* path, long r) {
+    if (r >= 0 || !path || strncmp(path, "/proc/", 6) != 0) return;
+    static int budget = 40;
+    if (__atomic_sub_fetch(&budget, 1, __ATOMIC_RELAXED) < 0) return;
+    const char* vfs = getenv("NEST_VFS_FILE");
+    if (!vfs) return;
+    const char* slash = strrchr(vfs, '/');
+    if (!slash) return;
+    char logPath[512];
+    snprintf(logPath, sizeof(logPath), "%.*s/preload.log", static_cast<int>(slash - vfs), vfs);
+    int f = static_cast<int>(syscall(SYS_openat, AT_FDCWD, logPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644));
+    if (f < 0) return;
+    char line[600];
+    int n = snprintf(line, sizeof(line), "pid %d: open %s failed: %s\n", static_cast<int>(syscall(SYS_getpid)),
+                     path, strerror(static_cast<int>(-r)));
+    syscall(SYS_write, f, line, n);
+    syscall(SYS_close, f);
+}
+
 NEST_EXPORT int openat(int dirfd, const char* path, int flags, ...) {
     mode_t mode = 0;
     if (flags & (O_CREAT | O_TMPFILE)) {
@@ -293,7 +388,14 @@ NEST_EXPORT int openat(int dirfd, const char* path, int flags, ...) {
         mode = static_cast<mode_t>(va_arg(ap, int));
         va_end(ap);
     }
-    return static_cast<int>(pathCall(SYS_openat, dirfd, path, flags, mode, 0, openFlagsFollow(flags)));
+    long v = virtualStatus(dirfd, path, flags);
+    if (v != kNotStatus) {
+        if (v < 0) { errno = static_cast<int>(-v); return -1; }
+        return static_cast<int>(v);
+    }
+    long r = pathCall(SYS_openat, dirfd, path, flags, mode, 0, openFlagsFollow(flags));
+    if (r < 0) noteProcOpen(path, -errno);
+    return static_cast<int>(r);
 }
 
 NEST_EXPORT int open(const char* path, int flags, ...) {
@@ -304,7 +406,14 @@ NEST_EXPORT int open(const char* path, int flags, ...) {
         mode = static_cast<mode_t>(va_arg(ap, int));
         va_end(ap);
     }
-    return static_cast<int>(pathCall(SYS_openat, AT_FDCWD, path, flags, mode, 0, openFlagsFollow(flags)));
+    long v = virtualStatus(AT_FDCWD, path, flags);
+    if (v != kNotStatus) {
+        if (v < 0) { errno = static_cast<int>(-v); return -1; }
+        return static_cast<int>(v);
+    }
+    long r = pathCall(SYS_openat, AT_FDCWD, path, flags, mode, 0, openFlagsFollow(flags));
+    if (r < 0) noteProcOpen(path, -errno);
+    return static_cast<int>(r);
 }
 
 NEST_EXPORT int open64(const char* path, int flags, ...) {
@@ -315,7 +424,14 @@ NEST_EXPORT int open64(const char* path, int flags, ...) {
         mode = static_cast<mode_t>(va_arg(ap, int));
         va_end(ap);
     }
-    return static_cast<int>(pathCall(SYS_openat, AT_FDCWD, path, flags, mode, 0, openFlagsFollow(flags)));
+    long v = virtualStatus(AT_FDCWD, path, flags);
+    if (v != kNotStatus) {
+        if (v < 0) { errno = static_cast<int>(-v); return -1; }
+        return static_cast<int>(v);
+    }
+    long r = pathCall(SYS_openat, AT_FDCWD, path, flags, mode, 0, openFlagsFollow(flags));
+    if (r < 0) noteProcOpen(path, -errno);
+    return static_cast<int>(r);
 }
 
 NEST_EXPORT int openat64(int dirfd, const char* path, int flags, ...) {
