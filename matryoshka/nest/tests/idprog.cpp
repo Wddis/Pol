@@ -12,7 +12,9 @@
 #include <sys/mount.h>
 #include <sys/xattr.h>
 #include <sys/resource.h>
+#include <linux/filter.h>
 #include <linux/netlink.h>
+#include <linux/seccomp.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/prctl.h>
@@ -50,6 +52,20 @@ int main(int argc, char** argv) {
             int g = atoi(argv[++i]);
             printRes(fchown(fd, static_cast<uid_t>(u), static_cast<gid_t>(g)));
             close(fd);
+        } else if (!strcmp(c, "sandbox")) {
+            // like minijail in media services: a filter that kills on socket(); then the engine's
+            // own binder connection must still work - so the guest filter must not be applied
+            struct sock_filter f[] = {
+                BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(struct seccomp_data, nr)),
+                BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, SYS_socket, 0, 1),
+                BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_KILL),
+                BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW),
+            };
+            struct sock_fprog prog = {4, f};
+            int a = prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0);
+            int b = prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog);
+            int fd = socket(AF_UNIX, SOCK_DGRAM, 0);
+            printf("%d %d %s\n", a, b, fd >= 0 ? "alive" : strerror(errno));
         } else if (!strcmp(c, "mode")) {
             const char* p = argv[++i];
             struct stat a{}, b{};

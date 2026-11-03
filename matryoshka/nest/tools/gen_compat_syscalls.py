@@ -9,7 +9,7 @@ renameat renameat2 linkat symlinkat readlinkat execve getcwd connect bind fchown
 access mkdir rmdir unlink chmod mknod utimes rename link symlink readlink chown32 lchown32 getuid32 geteuid32 getgid32
 getegid32 setuid32 setgid32 setreuid32 setregid32 setresuid32 setresgid32 getresuid32 getresgid32 setfsuid32 setfsgid32
 setgroups32 mount umount2 pivot_root chroot sethostname setdomainname swapon swapoff acct reboot unshare setns init_module
-finit_module delete_module capget capset prctl getpid gettid getppid kill tkill tgkill getsockname getpeername accept accept4 setrlimit prlimit64 bpf fsetxattr fremovexattr setpriority ioprio_set sched_setscheduler sched_setattr socket fstat64 fchmod""".split()
+finit_module delete_module capget capset prctl getpid gettid getppid kill tkill tgkill getsockname getpeername accept accept4 setrlimit prlimit64 bpf fsetxattr fremovexattr setpriority ioprio_set sched_setscheduler sched_setattr socket fstat64 fchmod seccomp""".split()
 
 def parse(path):
     nums = {}

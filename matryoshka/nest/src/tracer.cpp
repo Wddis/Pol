@@ -75,6 +75,7 @@ enum class Kind {
     Socket,     // socket(): the kernel-uevent netlink socket an app may not open is faked (black hole)
     StatFix,    // untagged fstat (static binaries, raw syscalls): virtual owner patched in at exit
     Fchmod,     // untagged fchmod: virtual mode (see recordMode)
+    GuestSeccomp,  // seccomp(): guest filters (minijail) would block the engine's own calls (binder)
 };
 
 constexpr int NONE = -1;
@@ -98,7 +99,7 @@ struct Spec {
 // prctl options that read or change capability state; every other prctl runs untraced.
 const std::vector<uint32_t> kCapPrctls = {PR_GET_KEEPCAPS, PR_SET_KEEPCAPS, PR_CAPBSET_READ, PR_CAPBSET_DROP,
                                           PR_GET_SECUREBITS, PR_SET_SECUREBITS, PR_CAP_AMBIENT,
-                                          PR_GET_DUMPABLE, PR_SET_DUMPABLE};
+                                          PR_GET_DUMPABLE, PR_SET_DUMPABLE, PR_SET_SECCOMP};
 
 std::vector<Spec> buildSpecs() {
     std::vector<Spec> s;
@@ -164,6 +165,7 @@ std::vector<Spec> buildSpecs() {
     s.push_back({SYS_socket, Kind::Socket});
     s.push_back({SYS_fstat, Kind::StatFix});
     s.push_back({SYS_fchmod, Kind::Fchmod});
+    s.push_back({SYS_seccomp, Kind::GuestSeccomp});
     s.push_back({SYS_connect, Kind::Sock});
     s.push_back({SYS_bind, Kind::Sock});
     for (long nr : {SYS_getsockname, SYS_getpeername, SYS_accept, SYS_accept4}) s.push_back({nr, Kind::SockName});
@@ -309,6 +311,7 @@ std::vector<Spec> buildCompatSpecs() {
     add(C::socket, SYS_socket, Kind::Socket);
     add(C::fstat64, SYS_fstat, Kind::StatFix);
     add(C::fchmod, SYS_fchmod, Kind::Fchmod);
+    add(C::seccomp, SYS_seccomp, Kind::GuestSeccomp);
     add(C::connect, SYS_connect, Kind::Sock);
     add(C::bind, SYS_bind, Kind::Sock);
     add(C::getsockname, SYS_getsockname, Kind::SockName);
@@ -1222,6 +1225,9 @@ void Tracer::handleCaps(pid_t tid, Regs& r, long nr) {
         uint64_t a2 = r.compat ? static_cast<uint32_t>(r.arg[2]) : r.arg[2];
         uint32_t opt = static_cast<uint32_t>(r.arg[0]);
         switch (opt) {
+            case PR_SET_SECCOMP:  // a guest's own filter is not applied (see Kind::GuestSeccomp)
+                stats_.emulated++;
+                break;
             case PR_GET_DUMPABLE: ret = c.dumpable ? 1 : 0; break;
             case PR_SET_DUMPABLE:
                 if (a1 > 1) ret = -EINVAL;
@@ -1992,6 +1998,16 @@ void Tracer::handleSeccomp(pid_t tid) {
                 }
                 break;
             }
+            case Kind::GuestSeccomp:
+                // The guest's sandbox filters (minijail in media services) do not know the engine's
+                // own syscalls (vbinder's broker socket), so installing them would cut the process
+                // off. They are accepted and not installed; the app's own host sandbox still applies.
+                if (cfg_.fakeRoot) {
+                    stats_.emulated++;
+                    setSyscall(tid, r, -1);
+                    setReturn(tid, r, 0);
+                }
+                break;
             case Kind::Fchmod:
                 if (cfg_.fakeRoot) {
                     std::string fdPath = "/proc/" + std::to_string(tid) + "/fd/" + std::to_string(static_cast<int>(r.arg[0]));
@@ -2339,7 +2355,8 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
             }
             f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));
             sock_fprog prog{static_cast<unsigned short>(f.size()), f.data()};
-            if (prctl(PR_SET_SECCOMP, SECCOMP_MODE_FILTER, &prog) != 0) _exit(126);
+            // Tagged: the engine's own filter is already on and would treat it as a guest filter.
+            if (taggedSyscall(SYS_prctl, PR_SET_SECCOMP, SECCOMP_MODE_FILTER, reinterpret_cast<long>(&prog)) != 0) _exit(126);
         }
         // The guest path is translated by the tracer on this very execve.
         syscall(SYS_execve, program.c_str(), av.data(), ev.data());

@@ -644,6 +644,11 @@ TEST(virtual_file_mode_like_the_phone) {
     }
 }
 
+TEST(guest_seccomp_filter_is_accepted_not_installed) {
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "--", NEST_IDPROG_PATH, "sandbox"});
+    EXPECT_EQ(r.out, "0 0 alive\n");
+}
+
 TEST(mount_requires_root_identity) {
     auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
     EXPECT_EQ(r.out, "-1 EPERM\n");
