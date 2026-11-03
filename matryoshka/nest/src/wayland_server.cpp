@@ -8,6 +8,7 @@
 #include <deque>
 #include <fcntl.h>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <poll.h>
@@ -30,6 +31,7 @@ enum class T {
 
 struct Pool {
     int fd = -1;
+    uint32_t id = 0;  // for the direct viewer
     void* map = MAP_FAILED;
     size_t size = 0;
     ~Pool() {
@@ -166,6 +168,11 @@ struct WaylandServer::Impl {
     std::vector<std::unique_ptr<Client>> clients;
     uint8_t* fb = nullptr;
     size_t fbSize = 0;
+    // direct viewer
+    int viewerListen = -1, viewer = -1;
+    std::set<uint32_t> viewerPools;
+    uint32_t nextPoolId = 0;
+    uint64_t viewerSeq = 0;
     std::atomic<uint64_t> frameCount{0};
     uint32_t serial = 1;
     std::mutex touchMu;
@@ -197,7 +204,44 @@ struct WaylandServer::Impl {
         return true;
     }
 
+    // Hands the frame to the direct viewer; false when there is none (or it went away).
+    bool presentToViewer(const Obj& buf) {
+        if (viewer < 0 || !buf.pool || buf.pool->fd < 0) return false;
+        ViewerFrame f{kViewerMagic, buf.pool->id, buf.pool->size, static_cast<uint32_t>(buf.offset),
+                      static_cast<uint32_t>(buf.width), static_cast<uint32_t>(buf.height),
+                      static_cast<uint32_t>(buf.stride), buf.format, ++viewerSeq};
+        iovec iov{&f, sizeof(f)};
+        msghdr m{};
+        m.msg_iov = &iov;
+        m.msg_iovlen = 1;
+        char cbuf[CMSG_SPACE(sizeof(int))];
+        bool newPool = !viewerPools.count(buf.pool->id);
+        if (newPool) {
+            m.msg_control = cbuf;
+            m.msg_controllen = sizeof(cbuf);
+            cmsghdr* cm = CMSG_FIRSTHDR(&m);
+            cm->cmsg_level = SOL_SOCKET;
+            cm->cmsg_type = SCM_RIGHTS;
+            cm->cmsg_len = CMSG_LEN(sizeof(int));
+            memcpy(CMSG_DATA(cm), &buf.pool->fd, sizeof(int));
+        }
+        ssize_t r = sendmsg(viewer, &m, MSG_NOSIGNAL | MSG_DONTWAIT);
+        if (r == static_cast<ssize_t>(sizeof(f))) {
+            if (newPool) viewerPools.insert(buf.pool->id);
+            return true;
+        }
+        if (r < 0 && errno == EAGAIN) return true;  // the viewer is behind: drop this frame
+        close(viewer);
+        viewer = -1;
+        viewerPools.clear();
+        return false;
+    }
+
     void present(const Obj& buf) {
+        if (presentToViewer(buf)) {
+            frameCount++;
+            return;
+        }
         if (!fb || !buf.pool || buf.pool->map == MAP_FAILED) return;
         auto* h = reinterpret_cast<FbHeader*>(fb);
         int w = std::min(buf.width, cfg.width), hgt = std::min(buf.height, cfg.height);
@@ -355,6 +399,7 @@ struct WaylandServer::Impl {
                     int32_t size = a.i();
                     if (c.fds.empty()) break;
                     auto p = std::make_shared<Pool>();
+                    p->id = ++nextPoolId;
                     p->fd = c.fds.front();
                     c.fds.pop_front();
                     p->remap(static_cast<size_t>(std::max(size, 0)));
@@ -379,6 +424,7 @@ struct WaylandServer::Impl {
                     deleteId(c, id);
                 } else if (op == 2) {
                     int32_t size = a.i();
+                    viewerPools.erase(it->second.pool->id);  // the viewer must map it again
                     if (it->second.pool) it->second.pool->remap(static_cast<size_t>(std::max(size, 0)));
                 }
                 break;
@@ -523,6 +569,9 @@ struct WaylandServer::Impl {
             pf.push_back({listenFd, POLLIN, 0});
             pf.push_back({wake[0], POLLIN, 0});
             for (auto& c : clients) pf.push_back({c->fd, POLLIN, 0});
+            size_t vl = pf.size();
+            pf.push_back({viewerListen, POLLIN, 0});
+            pf.push_back({viewer, POLLIN, 0});
             if (poll(pf.data(), pf.size(), -1) < 0) {
                 if (errno == EINTR) continue;
                 break;
@@ -543,7 +592,23 @@ struct WaylandServer::Impl {
                     clients.push_back(std::move(c));
                 }
             }
-            for (size_t i = 2; i < pf.size(); i++) {
+            if (viewerListen >= 0 && (pf[vl].revents & POLLIN)) {
+                int fd = accept4(viewerListen, nullptr, nullptr, SOCK_CLOEXEC);
+                if (fd >= 0) {  // one viewer: the newest
+                    if (viewer >= 0) close(viewer);
+                    viewer = fd;
+                    viewerPools.clear();
+                }
+            }
+            if (viewer >= 0 && (pf[vl + 1].revents & (POLLIN | POLLHUP | POLLERR))) {
+                char b[64];
+                if (recv(viewer, b, sizeof(b), MSG_DONTWAIT) <= 0) {
+                    close(viewer);
+                    viewer = -1;
+                    viewerPools.clear();
+                }
+            }
+            for (size_t i = 2; i < vl; i++) {
                 if (!pf[i].revents) continue;
                 Client* c = clients[i - 2].get();
                 if (!(pf[i].revents & POLLIN) || !readClient(*c)) c->fd = -c->fd - 2;  // mark dead
@@ -583,6 +648,22 @@ bool WaylandServer::start() {
         return false;
     chmod(d_->socketPath.c_str(), 0777);
     if (pipe2(d_->wake, O_CLOEXEC) != 0) return false;
+    {
+        std::string vpath = d_->fbPath.substr(0, d_->fbPath.rfind('/') + 1) + "display.sock";
+        sockaddr_un va{};
+        va.sun_family = AF_UNIX;
+        if (vpath.size() < sizeof(va.sun_path)) {
+            memcpy(va.sun_path, vpath.c_str(), vpath.size() + 1);
+            unlink(vpath.c_str());
+            int s = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+            if (s >= 0 && bind(s, reinterpret_cast<sockaddr*>(&va), sizeof(va)) == 0 && listen(s, 2) == 0) {
+                chmod(vpath.c_str(), 0777);
+                d_->viewerListen = s;
+            } else if (s >= 0) {
+                close(s);
+            }
+        }
+    }
     d_->running = true;
     d_->th = std::thread([this] { d_->loop(); });
     return true;
@@ -595,9 +676,9 @@ void WaylandServer::stop() {
     (void)w;
     if (d_->th.joinable()) d_->th.join();
     d_->clients.clear();
-    for (int f : {d_->listenFd, d_->wake[0], d_->wake[1]})
+    for (int f : {d_->listenFd, d_->wake[0], d_->wake[1], d_->viewerListen, d_->viewer})
         if (f >= 0) close(f);
-    d_->listenFd = d_->wake[0] = d_->wake[1] = -1;
+    d_->listenFd = d_->wake[0] = d_->wake[1] = d_->viewerListen = d_->viewer = -1;
 }
 
 void WaylandServer::sendTouch(int action, int id, float x, float y) {

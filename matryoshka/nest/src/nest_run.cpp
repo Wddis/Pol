@@ -205,6 +205,16 @@ int main(int argc, char** argv) {
                 cfg.vfs.bind("/vendor/build.prop", copy, true, true);
             }
         }
+        // Waydroid's audio HAL (libpulse) tries to spawn a PulseAudio server ~20 times a second when
+        // none answers (fork + exec, each one a burst of traced syscalls): no autospawn.
+        std::string pulseDir;
+        if (cfg.vfs.resolve("/vendor/etc/pulse", "/", true, pulseDir)) {
+            mkdir(pulseDir.c_str(), 0755);
+            if (FILE* f = fopen((pulseDir + "/client.conf").c_str(), "we")) {
+                fputs("# Matryoshka Nest: no PulseAudio server in the VM yet\nautospawn = no\n", f);
+                fclose(f);
+            }
+        }
         // Speed: shorter UI animations once booted (software rendering draws every animation frame).
         std::string initDir;
         if (cfg.vfs.resolve("/vendor/etc/init", "/", true, initDir)) {

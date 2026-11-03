@@ -884,6 +884,16 @@ int hSetresgid(gid_t r, gid_t e, gid_t s) { return static_cast<int>(setIds(SYS_s
 int hSetfsuid(uid_t u) { return static_cast<int>(setIds(SYS_setfsuid, u, 0, 0)); }
 int hSetfsgid(gid_t g) { return static_cast<int>(setIds(SYS_setfsgid, g, 0, 0)); }
 
+int fastSetpriority(int which, id_t who, int prio) {
+    long r = taggedSyscall(SYS_setpriority, which, static_cast<long>(who), prio);
+    if (r == -EACCES || r == -EPERM) return 0;
+    if (r < 0) {
+        errno = static_cast<int>(-r);
+        return -1;
+    }
+    return 0;
+}
+
 // Overwrites a bionic syscall stub ("mov x8, #nr; svc #0; ...") with "ldr x16, #8; br x16; .quad to".
 bool redirectStub(void* fn, long nr, void* to) {
     auto* code = static_cast<uint32_t*>(fn);
@@ -918,6 +928,9 @@ __attribute__((constructor)) void installIdFastPath() {
     };
     for (auto& h : hooks)
         if (!redirectStub(dlsym(libc, h.name), h.nr, h.to)) return;  // a setter we cannot see: no cache
+    // thread priorities: straight to the kernel (no tracer stop); a host refusal is hidden, as the
+    // tracer would (Android raises priorities the app's host process may not)
+    redirectStub(dlsym(libc, "setpriority"), SYS_setpriority, reinterpret_cast<void*>(fastSetpriority));
     redirectStub(dlsym(libc, "getuid"), SYS_getuid, reinterpret_cast<void*>(fastGetuid));
     redirectStub(dlsym(libc, "geteuid"), SYS_geteuid, reinterpret_cast<void*>(fastGeteuid));
     redirectStub(dlsym(libc, "getgid"), SYS_getgid, reinterpret_cast<void*>(fastGetgid));

@@ -241,11 +241,13 @@ private fun NestBootPanel() {
                 if (showScreen) {
                     val waiting = stringResource(R.string.nest_boot_screen_waiting)
                     // The guest's display (frames from its composer; touches go back to it).
-                    androidx.compose.ui.viewinterop.AndroidView(
-                        factory = { NestDisplayView(it, NestGuest.stateDir(it.applicationContext), waiting) },
-                        modifier = Modifier.padding(top = 8.dp).height(520.dp)
-                            .aspectRatio(NestGuest.displayAspect, matchHeightConstraintsFirst = true),
-                    )
+                    androidx.compose.foundation.layout.Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
+                        androidx.compose.ui.viewinterop.AndroidView(
+                            factory = { NestDisplayView(it, NestGuest.stateDir(it.applicationContext), waiting) },
+                            modifier = Modifier.height(520.dp)
+                                .aspectRatio(NestGuest.displayAspect, matchHeightConstraintsFirst = true),
+                        )
+                    }
                 }
             }
             if (lines.isNotEmpty()) {

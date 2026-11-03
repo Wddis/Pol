@@ -189,3 +189,76 @@ TEST(wayland_server_presents_shm_frames_and_sends_touch) {
     close(w.fd);
     server.stop();
 }
+
+TEST(wayland_server_hands_frames_to_a_direct_viewer) {
+    char dir[] = "/tmp/nest-wlv-XXXXXX";
+    EXPECT_TRUE(mkdtemp(dir) != nullptr);
+    std::string sock = std::string(dir) + "/wayland-0", fbPath = std::string(dir) + "/display.fb";
+    nest::DisplayConfig cfg;
+    cfg.width = 16;
+    cfg.height = 8;
+    nest::WaylandServer server(sock, fbPath, cfg);
+    EXPECT_TRUE(server.start());
+    // the viewer connects first
+    int v = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+    sockaddr_un vaddr{};
+    vaddr.sun_family = AF_UNIX;
+    std::string vpath = std::string(dir) + "/display.sock";
+    memcpy(vaddr.sun_path, vpath.c_str(), vpath.size() + 1);
+    EXPECT_EQ(connect(v, reinterpret_cast<sockaddr*>(&vaddr), sizeof(vaddr)), 0);
+    usleep(100000);
+
+    Wire w;
+    w.fd = socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
+    sockaddr_un sa{};
+    sa.sun_family = AF_UNIX;
+    memcpy(sa.sun_path, sock.c_str(), sock.size() + 1);
+    EXPECT_EQ(connect(w.fd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)), 0);
+    w.send(1, 1, {2});
+    std::map<std::string, uint32_t> globals;
+    w.until([&](uint32_t id, uint16_t op, const std::vector<uint8_t>& b) {
+        if (id == 2 && op == 0) {
+            uint32_t len = word(b, 1);
+            globals[std::string(reinterpret_cast<const char*>(b.data() + 8), len ? len - 1 : 0)] = word(b, 0);
+        }
+        return globals.size() >= 6;
+    });
+    w.send(2, 0, {globals["wl_compositor"], 4, 3}, -1, "wl_compositor", 1);
+    w.send(2, 0, {globals["wl_shm"], 1, 4}, -1, "wl_shm", 1);
+    w.send(3, 0, {8});  // surface (full-size buffers are the screen)
+    int mfd = static_cast<int>(syscall(SYS_memfd_create, "wl-v", 0));
+    size_t size = 16 * 8 * 4;
+    EXPECT_EQ(ftruncate(mfd, static_cast<off_t>(size)), 0);
+    auto* px = static_cast<uint32_t*>(mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, mfd, 0));
+    for (int i = 0; i < 16 * 8; i++) px[i] = 0x11223344u + static_cast<uint32_t>(i);
+    w.send(4, 0, {11, static_cast<uint32_t>(size)}, mfd);
+    w.send(11, 0, {12, 0, 16, 8, 16 * 4, 0});
+    w.send(8, 1, {12, 0, 0});
+    w.send(8, 6, {});
+    // the viewer gets the frame and the pool fd, and sees the client's pixels through it
+    nest::ViewerFrame f{};
+    char cbuf[CMSG_SPACE(sizeof(int))];
+    iovec iov{&f, sizeof(f)};
+    msghdr m{};
+    m.msg_iov = &iov;
+    m.msg_iovlen = 1;
+    m.msg_control = cbuf;
+    m.msg_controllen = sizeof(cbuf);
+    pollfd p{v, POLLIN, 0};
+    EXPECT_TRUE(poll(&p, 1, 3000) == 1);
+    EXPECT_EQ(recvmsg(v, &m, 0), static_cast<ssize_t>(sizeof(f)));
+    EXPECT_EQ(f.magic, nest::kViewerMagic);
+    EXPECT_EQ(f.width, 16u);
+    int pfd = -1;
+    for (cmsghdr* c = CMSG_FIRSTHDR(&m); c; c = CMSG_NXTHDR(&m, c)) memcpy(&pfd, CMSG_DATA(c), sizeof(int));
+    EXPECT_TRUE(pfd >= 0);
+    auto* vm = static_cast<const uint32_t*>(mmap(nullptr, f.poolSize, PROT_READ, MAP_SHARED, pfd, 0));
+    EXPECT_EQ(vm[f.offset / 4 + 5], 0x11223344u + 5);
+    munmap(const_cast<uint32_t*>(vm), f.poolSize);
+    close(pfd);
+    close(v);
+    munmap(px, size);
+    close(mfd);
+    close(w.fd);
+    server.stop();
+}

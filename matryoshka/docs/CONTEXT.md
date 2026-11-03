@@ -514,8 +514,22 @@ getuid 174 ~300–540/с от system_server, prctl 167, setpriority 140, getsock
   поток: copyPixelsFromBuffer → lockCanvas/drawBitmap 1:1 → масштабирует композитор телефона;
   aspectRatio экрана гостя (NestGuest.displayAspect).
 
+### 0.9.1 — скорость, шаг 3: прямой просмотрщик
+0.9.0: +2–3 FPS; окно гостя прижато влево (aspectRatio без центрирования); SystemUI ANR
+(«executing service SystemUIService») при перегрузке. ANR-дамп CPU: **nest_run 103 % (83 % kernel,
+153k minor faults за 6 с)** — копирование кадров (shm hwc → display.fb), приложение 63 %. getuid-стопы ушли.
+- Прямой просмотрщик: STATE/display.sock (SEQPACKET), на каждый кадр ViewerFrame {poolId, poolSize,
+  offset, w, h, stride, format, seq} + fd пула (SCM_RIGHTS) при первом использовании/resize; при
+  подключённом зрителе display.fb не пишется. Приложение: libnest_view.so (src/view_jni.cpp,
+  NestNativeView) mmap пулов, ANativeWindow BGRA (5) — без перестановки байтов (иначе RGBA + swap),
+  один memcpy на кадр, пропуск устаревших кадров. Без JNI — старый Java-путь. Тест
+  wayland_server_hands_frames_to_a_direct_viewer.
+- Окно гостя центрировано (Box contentAlignment Center).
+- /vendor/etc/pulse/client.conf: autospawn = no (audio HAL Waydroid ~20 fork+exec pulseaudio/с).
+- setpriority: заглушка libc → fast path (tagged), отказ хоста скрыт (как Sched в трассировщике).
+
 ### Ждём от владельца
-Тест **0.9.0-nest**: с флажком GPU, оценка плавности + лог. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.9.1-nest**: с флажком GPU. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

@@ -53,9 +53,21 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
         holder.setFormat(PixelFormat.RGBA_8888)
     }
 
+    private var native = 0L
+
     override fun surfaceCreated(h: SurfaceHolder) {
         surfaceReady = true
         lastSeq = -1L  // repaint the current frame into the new surface
+        // Preferred: the native viewer maps the composer's buffers itself (one copy per frame);
+        // the framebuffer file (Java path) is the fallback.
+        if (NestNativeView.available) {
+            native = runCatching { NestNativeView.start(h.surface, File(stateDir, "display.sock").absolutePath) }.getOrDefault(0L)
+            if (native != 0L) {
+                fbW = NestGuest.displayWidth
+                fbH = NestGuest.displayHeight
+                return
+            }
+        }
         running = true
         reader = Thread({ loop() }, "nest-display").apply { isDaemon = true; start() }
     }
@@ -66,6 +78,10 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
 
     override fun surfaceDestroyed(h: SurfaceHolder) {
         surfaceReady = false
+        if (native != 0L) {
+            NestNativeView.stop(native)
+            native = 0L
+        }
         running = false
         reader?.interrupt()
         runCatching { reader?.join(500) }

@@ -75,6 +75,8 @@ object NestGuest {
     @Volatile var useGpu = true
     /** Width / height of the guest's display (the viewer keeps it). */
     @Volatile var displayAspect = 0.5f
+    @Volatile var displayWidth = 540
+    @Volatile var displayHeight = 1080
     private val json = Json { ignoreUnknownKeys = true }
 
     private fun base(c: Context) = File(c.dataDir, "n")
@@ -150,6 +152,8 @@ object NestGuest {
         val gh = (540L * ph / pw.coerceAtLeast(1)).toInt() and 1.inv()
         args += listOf("--display", "540x${gh}@240")
         displayAspect = 540f / gh.coerceAtLeast(1)
+        displayWidth = 540
+        displayHeight = gh
         if (useGpu) args += "--gpu"  // the phone's GPU driver for the guest (falls back to software)
         args += listOf("-B", File(st, "b.sock").absolutePath, "-v", "-s", "--", "/system/bin/init", "second_stage")
         val pb = ProcessBuilder(args)

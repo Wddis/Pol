@@ -28,6 +28,20 @@ struct FbHeader {
 };
 constexpr uint32_t kFbMagic = 0x3142464e;  // "NFB1"
 
+// Direct viewer (STATE/display.sock next to the framebuffer file, SOCK_SEQPACKET): one message
+// per presented frame, the client's shared-memory pool attached (SCM_RIGHTS) the first time it is
+// used. The viewer maps the pool itself and copies the frame straight into its window, so neither
+// the engine nor the framebuffer file touch the pixels. Without a viewer: the framebuffer file.
+struct ViewerFrame {
+    uint32_t magic;      // kViewerMagic
+    uint32_t poolId;     // stable per pool; fd attached when new to this viewer
+    uint64_t poolSize;
+    uint32_t offset, width, height, stride;
+    uint32_t format;     // wl_shm format (0 ARGB8888 / 1 XRGB8888: bytes B,G,R,A; ABGR/XBGR: R,G,B,A)
+    uint64_t seq;
+};
+constexpr uint32_t kViewerMagic = 0x3152464e;  // "NFR1"
+
 struct DisplayConfig {
     int width = 720, height = 1440, dpi = 320, refreshHz = 60;
 };
