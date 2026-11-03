@@ -111,6 +111,7 @@ constexpr long sched_setscheduler = 156;
 constexpr long sched_setattr = 380;
 constexpr long socket = 281;
 constexpr long fstat64 = 197;
+constexpr long fchmod = 94;
 }  // namespace arm
 
 namespace i386 {
@@ -220,5 +221,6 @@ constexpr long sched_setscheduler = 156;
 constexpr long sched_setattr = 351;
 constexpr long socket = 359;
 constexpr long fstat64 = 197;
+constexpr long fchmod = 94;
 }  // namespace i386
 }  // namespace nest::sys32

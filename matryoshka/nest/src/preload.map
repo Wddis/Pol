@@ -6,7 +6,7 @@
     stat; stat64; lstat; lstat64; fstatat; fstatat64; fstat; fstat64;
     access; faccessat; readlink; readlinkat;
     mkdir; mkdirat; unlink; unlinkat; rmdir;
-    chmod; fchmodat; rename; renameat;
+    chmod; fchmodat; fchmod; rename; renameat;
     ioctl; mmap; mmap64; close; syscall;
   local: *;
 };

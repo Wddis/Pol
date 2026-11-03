@@ -147,9 +147,16 @@ long envId(const char* name) {
 long hostUid() { static long v = envId("NEST_HOST_UID"); return v; }
 long hostGid() { static long v = envId("NEST_HOST_GID"); return v; }
 
-// xattr lookup: path (already a host path) or fd.
-bool recordedOwner(const char* hostPath, int fd, bool follow, unsigned& uid, unsigned& gid) {
-    char buf[40];
+// Virtual attributes of a guest file: xattr user.nest.owner = "uid:gid" or "uid:gid:mode" (octal),
+// written on chown/chmod (by these wrappers or the tracer).
+struct Attr {
+    unsigned uid = 0, gid = 0;
+    int mode = -1;  // -1: the host mode is the guest's
+    bool have = false;
+};
+
+bool readAttr(const char* hostPath, int fd, bool follow, Attr& a) {
+    char buf[48];
     long n;
     if (hostPath)
         n = nest::taggedSyscall(follow ? SYS_getxattr : SYS_lgetxattr, reinterpret_cast<long>(hostPath),
@@ -158,19 +165,53 @@ bool recordedOwner(const char* hostPath, int fd, bool follow, unsigned& uid, uns
         n = syscall(SYS_fgetxattr, fd, nest::kOwnerXattr, buf, sizeof(buf) - 1);
     if (n <= 0) return false;
     buf[n] = 0;
-    return sscanf(buf, "%u:%u", &uid, &gid) == 2;
+    unsigned m = 0;
+    int k = sscanf(buf, "%u:%u:%o", &a.uid, &a.gid, &m);
+    if (k < 2) return false;
+    a.mode = k == 3 ? static_cast<int>(m & 07777) : -1;
+    a.have = true;
+    return true;
 }
+
+void writeAttr(const char* hostPath, int fd, bool follow, const Attr& a) {
+    char buf[48];
+    long n;
+    if (a.uid == 0 && a.gid == 0 && a.mode < 0) {  // the default: no record
+        if (hostPath)
+            n = nest::taggedSyscall(follow ? SYS_removexattr : SYS_lremovexattr, reinterpret_cast<long>(hostPath),
+                                    reinterpret_cast<long>(nest::kOwnerXattr));
+        else
+            n = syscall(SYS_fremovexattr, fd, nest::kOwnerXattr);
+        (void)n;
+        return;
+    }
+    int len = a.mode >= 0 ? snprintf(buf, sizeof(buf), "%u:%u:%o", a.uid, a.gid, a.mode)
+                          : snprintf(buf, sizeof(buf), "%u:%u", a.uid, a.gid);
+    if (hostPath)
+        n = nest::taggedSyscall(follow ? SYS_setxattr : SYS_lsetxattr, reinterpret_cast<long>(hostPath),
+                                reinterpret_cast<long>(nest::kOwnerXattr), reinterpret_cast<long>(buf), len, 0);
+    else
+        n = nest::taggedSyscall(SYS_fsetxattr, fd, reinterpret_cast<long>(nest::kOwnerXattr), reinterpret_cast<long>(buf),
+                                len, 0);
+    (void)n;
+}
+
+// The host keeps owner access whatever the guest sets (the app *is* the owner on the host): the
+// guest's mode lives in the record and is what stat() reports.
+unsigned hostModeFor(unsigned mode, bool dir) { return (mode & 07777) | (dir ? 0700u : 0600u); }
 
 template <typename St>
 void virtualOwner(St* st, const char* hostPath, int fd, bool follow) {
     if (hostUid() < 0 || !st) return;
-    unsigned u, g;
-    if (static_cast<long>(st->st_uid) == hostUid() && recordedOwner(hostPath, fd, follow, u, g)) {
-        st->st_uid = u;
-        st->st_gid = g;
+    if (static_cast<long>(st->st_uid) != hostUid()) return;
+    Attr a;
+    if (readAttr(hostPath, fd, follow, a)) {
+        st->st_uid = a.uid;
+        st->st_gid = a.gid;
+        if (a.mode >= 0) st->st_mode = (st->st_mode & S_IFMT) | static_cast<unsigned>(a.mode);
         return;
     }
-    if (static_cast<long>(st->st_uid) == hostUid()) st->st_uid = 0;
+    st->st_uid = 0;
     if (static_cast<long>(st->st_gid) == hostGid() || static_cast<long>(st->st_gid) == hostUid()) st->st_gid = 0;
 }
 }  // namespace
@@ -312,7 +353,43 @@ NEST_EXPORT int unlink(const char* path) { return unlinkat(AT_FDCWD, path, 0); }
 NEST_EXPORT int rmdir(const char* path) { return unlinkat(AT_FDCWD, path, AT_REMOVEDIR); }
 
 NEST_EXPORT int fchmodat(int dirfd, const char* path, mode_t mode, int flags) {
-    return static_cast<int>(pathCall(SYS_fchmodat, dirfd, path, mode, 0, 0, true));
+    bool follow = !(flags & AT_SYMLINK_NOFOLLOW);
+    std::string host;
+    if (hostUid() < 0 || !translate(path, follow, host))
+        return static_cast<int>(syscall(SYS_fchmodat, dirfd, path, mode));  // traced: the tracer does the same
+    struct stat st;
+    if (ret(taggedSyscall(nest::kSysFstatat, AT_FDCWD, reinterpret_cast<long>(host.c_str()), reinterpret_cast<long>(&st),
+                          follow ? 0 : AT_SYMLINK_NOFOLLOW)) != 0)
+        return -1;
+    unsigned hm = hostModeFor(mode, S_ISDIR(st.st_mode));
+    long r = ret(taggedSyscall(SYS_fchmodat, AT_FDCWD, reinterpret_cast<long>(host.c_str()), hm));
+    if (r == 0) {
+        Attr a;
+        readAttr(host.c_str(), -1, follow, a);
+        a.mode = hm == (mode & 07777) ? -1 : static_cast<int>(mode & 07777);
+        writeAttr(host.c_str(), -1, follow, a);
+    }
+    return static_cast<int>(r);
+}
+NEST_EXPORT int fchmod(int fd, mode_t mode) {
+    struct stat st;
+#if defined(SYS_fstat64)
+    long sr = ret(taggedSyscall(SYS_fstat64, fd, reinterpret_cast<long>(&st)));
+#else
+    long sr = ret(taggedSyscall(SYS_fstat, fd, reinterpret_cast<long>(&st)));
+#endif
+    if (sr != 0) return -1;
+    if (hostUid() < 0 || static_cast<long>(st.st_uid) != hostUid())
+        return static_cast<int>(ret(taggedSyscall(SYS_fchmod, fd, mode)));
+    unsigned hm = hostModeFor(mode, S_ISDIR(st.st_mode));
+    long r = ret(taggedSyscall(SYS_fchmod, fd, hm));
+    if (r == 0) {
+        Attr a;
+        readAttr(nullptr, fd, true, a);
+        a.mode = hm == (mode & 07777) ? -1 : static_cast<int>(mode & 07777);
+        writeAttr(nullptr, fd, true, a);
+    }
+    return static_cast<int>(r);
 }
 NEST_EXPORT int chmod(const char* path, mode_t mode) { return fchmodat(AT_FDCWD, path, mode, 0); }
 

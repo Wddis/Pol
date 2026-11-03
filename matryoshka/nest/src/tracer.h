@@ -137,6 +137,7 @@ private:
     long handleBpf(pid_t tid, struct Regs& r, int& openObject);
     bool securityXattr(pid_t tid, struct Regs& r);
     void recordOwner(const std::string& hostPath, bool follow, uint64_t uidArg, uint64_t gidArg);
+    unsigned recordMode(const std::string& hostPath, bool follow, unsigned mode);
     bool openBpfObject(pid_t tid, struct Regs& r, uint64_t& scratch, int id, bool restart);
     int bpfObjectOfFd(pid_t tid, int fd);
     bool rewritePath(pid_t tid, struct Regs& r, int dirfdArg, int pathArg, bool followLast,

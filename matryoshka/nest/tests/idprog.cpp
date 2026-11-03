@@ -50,6 +50,21 @@ int main(int argc, char** argv) {
             int g = atoi(argv[++i]);
             printRes(fchown(fd, static_cast<uid_t>(u), static_cast<gid_t>(g)));
             close(fd);
+        } else if (!strcmp(c, "mode")) {
+            const char* p = argv[++i];
+            struct stat a{}, b{};
+            int fd = open(p, O_RDONLY | O_CLOEXEC);
+            int r1 = stat(p, &a), r2 = fd >= 0 ? fstat(fd, &b) : -1;
+            if (fd >= 0) close(fd);
+            if (r1 || r2) printf("mode-failed %s\n", strerror(errno));
+            else printf("%o %o\n", a.st_mode & 07777, b.st_mode & 07777);
+        } else if (!strcmp(c, "chmod")) {
+            const char* p = argv[++i];
+            printRes(chmod(p, static_cast<mode_t>(strtoul(argv[++i], nullptr, 8))));
+        } else if (!strcmp(c, "fchmod")) {
+            int fd = open(argv[++i], O_RDONLY | O_CLOEXEC);
+            printRes(fchmod(fd, static_cast<mode_t>(strtoul(argv[++i], nullptr, 8))));
+            close(fd);
         } else if (!strcmp(c, "nodump")) {
             // like many Android daemons: not dumpable any more (then only root may read our memory)
             int a = prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);

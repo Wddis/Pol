@@ -625,6 +625,25 @@ TEST(non_dumpable_guest_still_readable_by_tracer) {
     EXPECT_EQ(r.out, "0 0\n0\nc0 c0 0 amb00\n");
 }
 
+TEST(virtual_file_mode_like_the_phone) {
+    // init: chmod 0040 /dev/memcg/memory.pressure_level, then lmkd (guest root) reads it. On the
+    // phone the app owns the host file: a real mode 0040 would lock its owner out (EACCES).
+    std::vector<std::string> drop{"/usr/bin/setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"};
+    auto with = [&](std::vector<std::string> v) { v.insert(v.begin(), drop.begin(), drop.end()); return v; };
+    if (run(with({"/bin/true"})).status != 0) {
+        fprintf(stderr, "  skipped: cannot run unprivileged here\n");
+        return;
+    }
+    std::string dir = mktmp();
+    chmod(dir.c_str(), 0777);
+    for (const char* prog : {NEST_IDPROG_PATH, NEST_IDPROG_STATIC_PATH}) {
+        std::string f = dir + "/pressure_level" + (prog == std::string(NEST_IDPROG_PATH) ? "" : "-static");
+        auto r = run(with({NEST_RUN_PATH, "-b", "/=/", "-P", NEST_PRELOAD_PATH, "--", prog, "write", f, "x", "chmod", f,
+                           "40", "mode", f, "cat", f, "fchmod", f, "640", "mode", f}));
+        EXPECT_EQ(r.out, "0\n40 40\nx\n0\n640 640\n");
+    }
+}
+
 TEST(mount_requires_root_identity) {
     auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
     EXPECT_EQ(r.out, "-1 EPERM\n");

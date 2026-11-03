@@ -74,6 +74,7 @@ enum class Kind {
     Sched,      // setpriority/ioprio_set/sched_set*: a host refusal is hidden from guests entitled to it
     Socket,     // socket(): the kernel-uevent netlink socket an app may not open is faked (black hole)
     StatFix,    // untagged fstat (static binaries, raw syscalls): virtual owner patched in at exit
+    Fchmod,     // untagged fchmod: virtual mode (see recordMode)
 };
 
 constexpr int NONE = -1;
@@ -162,6 +163,7 @@ std::vector<Spec> buildSpecs() {
     s.push_back({SYS_getcwd, Kind::GetCwd});
     s.push_back({SYS_socket, Kind::Socket});
     s.push_back({SYS_fstat, Kind::StatFix});
+    s.push_back({SYS_fchmod, Kind::Fchmod});
     s.push_back({SYS_connect, Kind::Sock});
     s.push_back({SYS_bind, Kind::Sock});
     for (long nr : {SYS_getsockname, SYS_getpeername, SYS_accept, SYS_accept4}) s.push_back({nr, Kind::SockName});
@@ -306,6 +308,7 @@ std::vector<Spec> buildCompatSpecs() {
     add(C::getcwd, SYS_getcwd, Kind::GetCwd);
     add(C::socket, SYS_socket, Kind::Socket);
     add(C::fstat64, SYS_fstat, Kind::StatFix);
+    add(C::fchmod, SYS_fchmod, Kind::Fchmod);
     add(C::connect, SYS_connect, Kind::Sock);
     add(C::bind, SYS_bind, Kind::Sock);
     add(C::getsockname, SYS_getsockname, Kind::SockName);
@@ -1591,26 +1594,63 @@ bool Tracer::securityXattr(pid_t tid, Regs& r) {
 
 // Virtual file ownership (see preload.cpp): chown() by the guest is recorded as an xattr on the
 // host file; uid/gid -1 keep the current virtual value.
-void Tracer::recordOwner(const std::string& hostPath, bool follow, uint64_t uidArg, uint64_t gidArg) {
-    uint32_t u = static_cast<uint32_t>(uidArg), g = static_cast<uint32_t>(gidArg);
-    unsigned cu = 0, cg = 0;
-    char buf[40];
+namespace {
+// Virtual attributes record (shared format with the preload): "uid:gid" or "uid:gid:mode".
+struct VAttr {
+    unsigned uid = 0, gid = 0;
+    int mode = -1;
+    bool have = false;
+};
+
+VAttr readVAttr(const std::string& hostPath, bool follow) {
+    VAttr a;
+    char buf[48];
     ssize_t n = follow ? getxattr(hostPath.c_str(), kOwnerXattr, buf, sizeof(buf) - 1)
                        : lgetxattr(hostPath.c_str(), kOwnerXattr, buf, sizeof(buf) - 1);
-    if (n > 0) {
-        buf[n] = 0;
-        if (sscanf(buf, "%u:%u", &cu, &cg) != 2) cu = cg = 0;
+    if (n <= 0) return a;
+    buf[n] = 0;
+    unsigned m = 0;
+    int k = sscanf(buf, "%u:%u:%o", &a.uid, &a.gid, &m);
+    if (k < 2) return VAttr{};
+    a.mode = k == 3 ? static_cast<int>(m & 07777) : -1;
+    a.have = true;
+    return a;
+}
+
+bool writeVAttr(const std::string& hostPath, bool follow, const VAttr& a) {
+    if (a.uid == 0 && a.gid == 0 && a.mode < 0) {  // the default needs no record
+        (follow ? removexattr : lremovexattr)(hostPath.c_str(), kOwnerXattr);
+        return true;
     }
-    if (u != 0xffffffffu) cu = u;
-    if (g != 0xffffffffu) cg = g;
-    if (cu == 0 && cg == 0) {  // root is what unrecorded files show anyway
-        if (n > 0) (follow ? removexattr : lremovexattr)(hostPath.c_str(), kOwnerXattr);
-        return;
-    }
-    snprintf(buf, sizeof(buf), "%u:%u", cu, cg);
-    int rc = follow ? setxattr(hostPath.c_str(), kOwnerXattr, buf, strlen(buf), 0)
-                    : lsetxattr(hostPath.c_str(), kOwnerXattr, buf, strlen(buf), 0);
-    if (rc != 0) logf(1, "owner of %s not recorded: %s", hostPath.c_str(), strerror(errno));
+    char buf[48];
+    if (a.mode >= 0) snprintf(buf, sizeof(buf), "%u:%u:%o", a.uid, a.gid, a.mode);
+    else snprintf(buf, sizeof(buf), "%u:%u", a.uid, a.gid);
+    return (follow ? setxattr(hostPath.c_str(), kOwnerXattr, buf, strlen(buf), 0)
+                   : lsetxattr(hostPath.c_str(), kOwnerXattr, buf, strlen(buf), 0)) == 0;
+}
+}  // namespace
+
+// Virtual file ownership (see preload.cpp): chown() by the guest is recorded as an xattr on the
+// host file; uid/gid -1 keep the current virtual value. A recorded mode is kept.
+void Tracer::recordOwner(const std::string& hostPath, bool follow, uint64_t uidArg, uint64_t gidArg) {
+    VAttr a = readVAttr(hostPath, follow);
+    uint32_t u = static_cast<uint32_t>(uidArg), g = static_cast<uint32_t>(gidArg);
+    if (u != 0xffffffffu) a.uid = u;
+    if (g != 0xffffffffu) a.gid = g;
+    if (!writeVAttr(hostPath, follow, a)) logf(1, "owner of %s not recorded: %s", hostPath.c_str(), strerror(errno));
+}
+
+// chmod by the guest: the host keeps owner access (the app owns every guest file), the guest's
+// mode is recorded and reported by stat. Returns the mode to give the host.
+unsigned Tracer::recordMode(const std::string& hostPath, bool follow, unsigned mode) {
+    struct stat st;
+    if ((follow ? stat(hostPath.c_str(), &st) : lstat(hostPath.c_str(), &st)) != 0) return mode;
+    if (st.st_uid != getuid()) return mode;  // not the app's file: the kernel decides
+    unsigned hm = (mode & 07777) | (S_ISDIR(st.st_mode) ? 0700u : 0600u);
+    VAttr a = readVAttr(hostPath, follow);
+    a.mode = hm == (mode & 07777) ? -1 : static_cast<int>(mode & 07777);
+    if (!writeVAttr(hostPath, follow, a)) logf(1, "mode of %s not recorded: %s", hostPath.c_str(), strerror(errno));
+    return hm;
 }
 
 // True when (bind/connect) targets a faked uevent socket with a netlink address. The fd set is
@@ -1631,38 +1671,38 @@ bool Tracer::isFakeNetlinkBind(pid_t tid, Regs& r) {
 // Virtual owner in a stat result the kernel wrote (same rules as the preload's wrappers):
 // the owner the guest's chown() recorded, root for the app's own unrecorded files.
 void Tracer::fixStatOwner(pid_t tid, Regs& r, const Pending& p) {
-    size_t uidOff, gidOff;
-    if (p.statKind == 2) { uidOff = 20; gidOff = 24; }          // struct statx
-    else if (r.compat) { uidOff = 24; gidOff = 28; }            // struct stat64 (arm32, i386)
+    size_t uidOff, gidOff, modeOff, modeSize = 4;
+    if (p.statKind == 2) { uidOff = 20; gidOff = 24; modeOff = 28; modeSize = 2; }  // struct statx
+    else if (r.compat) { uidOff = 24; gidOff = 28; modeOff = 16; }                  // struct stat64
     else {
 #if defined(__x86_64__)
-        uidOff = 28; gidOff = 32;
+        uidOff = 28; gidOff = 32; modeOff = 24;
 #else
-        uidOff = 24; gidOff = 28;                                // asm-generic struct stat
+        uidOff = 24; gidOff = 28; modeOff = 16;                                      // asm-generic
 #endif
     }
     uint32_t ids[2];
     if (!readMem(tid, p.buf + uidOff, &ids[0], 4) || !readMem(tid, p.buf + gidOff, &ids[1], 4)) return;
     const uint32_t hostUid = static_cast<uint32_t>(getuid()), hostGid = static_cast<uint32_t>(getgid());
-    if (ids[0] != hostUid && ids[1] != hostGid) return;
-    uint32_t u = ids[0], g = ids[1];
-    bool recorded = false;
-    if (ids[0] == hostUid && !p.guestPath.empty()) {
-        char buf[40];
-        ssize_t n = p.follow ? getxattr(p.guestPath.c_str(), kOwnerXattr, buf, sizeof(buf) - 1)
-                             : lgetxattr(p.guestPath.c_str(), kOwnerXattr, buf, sizeof(buf) - 1);
-        unsigned ru, rg;
-        if (n > 0) {
-            buf[n] = 0;
-            if (sscanf(buf, "%u:%u", &ru, &rg) == 2) { u = ru; g = rg; recorded = true; }
+    if (ids[0] != hostUid) {
+        if (ids[1] == hostGid) {  // unusual, but keep the guest view consistent
+            uint32_t z = 0;
+            writeMem(tid, p.buf + gidOff, &z, 4);
         }
+        return;
     }
-    if (!recorded) {
-        if (u == hostUid) u = 0;
-        if (g == hostGid || g == hostUid) g = 0;
-    }
+    VAttr a = p.guestPath.empty() ? VAttr{} : readVAttr(p.guestPath, p.follow);
+    uint32_t u = a.have ? a.uid : 0;
+    uint32_t g = a.have ? a.gid : ((ids[1] == hostGid || ids[1] == hostUid) ? 0 : ids[1]);
     if (u != ids[0]) writeMem(tid, p.buf + uidOff, &u, 4);
     if (g != ids[1]) writeMem(tid, p.buf + gidOff, &g, 4);
+    if (a.mode >= 0) {
+        uint32_t m = 0;
+        if (readMem(tid, p.buf + modeOff, &m, modeSize)) {
+            m = (m & S_IFMT) | static_cast<uint32_t>(a.mode);
+            writeMem(tid, p.buf + modeOff, &m, modeSize);
+        }
+    }
 }
 
 void Tracer::publishVfs() {
@@ -1911,6 +1951,20 @@ void Tracer::handleSeccomp(pid_t tid) {
                     changed = true;
                 }
                 if (s->path2 >= 0) changed |= rewritePath(tid, r, s->dirfd2, s->path2, false, scratch);
+                {
+                    bool isChmod = s->logical == SYS_fchmodat || (r.compat && s->nr == C::chmod);
+#if defined(__x86_64__)
+                    isChmod |= !r.compat && s->logical == SYS_chmod;
+#endif
+                    if (cfg_.fakeRoot && isChmod && !lastHost_.empty()) {  // virtual mode
+                        int modeArg = s->logical == SYS_fchmodat ? 2 : 1;
+                        unsigned hm = recordMode(lastHost_, true, static_cast<unsigned>(r.arg[modeArg]));
+                        if (hm != static_cast<unsigned>(r.arg[modeArg])) {
+                            r.arg[modeArg] = hm;
+                            changed = true;
+                        }
+                    }
+                }
                 if (changed) setArgs(tid, r);
                 if (cfg_.fakeRoot) {
                     // stat family on the slow path (relative paths, static binaries): show the
@@ -1938,6 +1992,16 @@ void Tracer::handleSeccomp(pid_t tid) {
                 }
                 break;
             }
+            case Kind::Fchmod:
+                if (cfg_.fakeRoot) {
+                    std::string fdPath = "/proc/" + std::to_string(tid) + "/fd/" + std::to_string(static_cast<int>(r.arg[0]));
+                    unsigned hm = recordMode(fdPath, true, static_cast<unsigned>(r.arg[1]));
+                    if (hm != static_cast<unsigned>(r.arg[1])) {
+                        r.arg[1] = hm;
+                        setArgs(tid, r);
+                    }
+                }
+                break;
             case Kind::StatFix:
                 if (cfg_.fakeRoot && r.arg[1]) {
                     Pending p;
