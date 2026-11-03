@@ -29,6 +29,9 @@ struct GpuSetup {
 // are resolved through cfg.vfs. Nothing is changed when a requirement is missing (ok == false).
 GpuSetup setupHostGpu(TracerConfig& cfg, const std::string& hostVendor = "/vendor");
 
+// Removes empty placeholder libraries left by earlier GPU runs.
+void cleanGpuPlaceholders(TracerConfig& cfg);
+
 // DT_NEEDED entries of an ELF shared object (32- or 64-bit).
 std::vector<std::string> elfNeeded(const std::string& path);
 

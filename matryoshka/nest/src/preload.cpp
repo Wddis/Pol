@@ -750,7 +750,16 @@ struct Gralloc1Device {
 struct NativeHandle {
     int version, numFds, numInts;
 };
-constexpr int32_t kValidateBufferSize = 23, kGetTransportSize = 24;
+constexpr int32_t kRetain = 15, kValidateBufferSize = 23, kGetTransportSize = 24, kImportBuffer = 25;
+
+// A system library's own function. RTLD_NEXT does not reach it from vendor processes (it lives in
+// another linker namespace there), a handle to the library does.
+void* realLib(const char* lib, const char* sym) {
+    void* h = dlopen(lib, RTLD_NOW | RTLD_NOLOAD);
+    if (!h) h = dlopen(lib, RTLD_NOW);
+    void* f = h ? dlsym(h, sym) : nullptr;
+    return f ? f : dlsym(RTLD_NEXT, sym);
+}
 
 GrallocFn (*g_realGetFunction)(Gralloc1Device*, int32_t) = nullptr;
 int (*g_realOpen)(const HwModule*, const char*, HwDevice**) = nullptr;
@@ -763,11 +772,34 @@ int32_t getTransportSize(Gralloc1Device*, const NativeHandle* h, uint32_t* fds, 
     *ints = static_cast<uint32_t>(h->numInts);
     return 0;
 }
+// IMPORT_BUFFER: a private copy of the handle (fds duplicated), registered with the vendor
+// gralloc through RETAIN, which imports handles it has not seen (what importBuffer means).
+int32_t importBuffer(Gralloc1Device* d, const NativeHandle* raw, const NativeHandle** out) {
+    if (!raw || !out) return 2;  // BAD_HANDLE
+    static auto clone = reinterpret_cast<NativeHandle* (*)(const NativeHandle*)>(realLib("libcutils.so", "native_handle_clone"));
+    static auto close_ = reinterpret_cast<int (*)(const NativeHandle*)>(realLib("libcutils.so", "native_handle_close"));
+    static auto del = reinterpret_cast<int (*)(NativeHandle*)>(realLib("libcutils.so", "native_handle_delete"));
+    auto retain = reinterpret_cast<int32_t (*)(Gralloc1Device*, const NativeHandle*)>(
+        g_realGetFunction ? g_realGetFunction(d, kRetain) : nullptr);
+    if (!clone || !retain) return 7;  // UNSUPPORTED
+    NativeHandle* h = clone(raw);
+    if (!h) return 6;  // NO_RESOURCES
+    int32_t r = retain(d, h);
+    if (r != 0) {
+        if (close_) close_(h);
+        if (del) del(h);
+        return r;
+    }
+    *out = h;
+    return 0;
+}
+
 GrallocFn getFunction(Gralloc1Device* d, int32_t desc) {
     GrallocFn f = g_realGetFunction ? g_realGetFunction(d, desc) : nullptr;
     if (f) return f;
     if (desc == kValidateBufferSize) return reinterpret_cast<GrallocFn>(validateBufferSize);
     if (desc == kGetTransportSize) return reinterpret_cast<GrallocFn>(getTransportSize);
+    if (desc == kImportBuffer) return reinterpret_cast<GrallocFn>(importBuffer);
     return nullptr;
 }
 int openWrapped(const HwModule* m, const char* name, HwDevice** out) {
@@ -798,14 +830,7 @@ void wrapGralloc(const HwModule* m) {
 }
 }  // namespace
 
-// libhardware's own functions. RTLD_NEXT does not reach it from vendor processes (it lives in
-// another linker namespace there), a handle to the library does.
-void* realHardware(const char* sym) {
-    void* h = dlopen("libhardware.so", RTLD_NOW | RTLD_NOLOAD);
-    if (!h) h = dlopen("libhardware.so", RTLD_NOW);
-    void* f = h ? dlsym(h, sym) : nullptr;
-    return f ? f : dlsym(RTLD_NEXT, sym);
-}
+void* realHardware(const char* sym) { return realLib("libhardware.so", sym); }
 
 extern "C" NEST_EXPORT int hw_get_module(const char* id, const HwModule** module) {
     static auto real = reinterpret_cast<int (*)(const char*, const HwModule**)>(realHardware("hw_get_module"));

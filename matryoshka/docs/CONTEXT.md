@@ -490,8 +490,15 @@ gralloc.<platform>.so хоста; недостающие gralloc1-функции
 его не видит (другой namespace); preload при этом виден вызывающим во всех namespace'ах linkerconfig.
 (Первая версия сломала allocator-2.0 на стенде — «failed to get gralloc module»; стенд поймал.)
 
+### 0.8.3 — GPU: IMPORT_BUFFER, чистка заглушек
+0.8.2: 23/24 заработали, теперь «failed to get gralloc1 function 25» (IMPORT_BUFFER) → mapper 2.1 не
+поднимается; плюс пустые заглушки mapper@3.0/4.0-impl-qti от 0.8.1 в гостевом /vendor/lib64/hw
+(«dlopen failed: file offset»). Фикс: importBuffer = native_handle_clone (libcutils через dlopen) +
+RETAIN (15) вендорного gralloc (qti RETAIN импортирует незнакомый handle); cleanGpuPlaceholders()
+удаляет пустые *.so в гостевых /vendor/lib*/{,egl,hw} перед каждым запуском (и без GPU).
+
 ### Ждём от владельца
-Тест **0.8.2-nest**: с флажком GPU. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.8.3-nest**: с флажком GPU. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

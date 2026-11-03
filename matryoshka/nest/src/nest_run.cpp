@@ -155,6 +155,7 @@ int main(int argc, char** argv) {
             fprintf(stderr, "nest: gpu: %s\n", gpu.ok ? "host GPU driver in use" : "software rendering (SwiftShader)");
         }
         if (!gpu.ok) {  // leftovers of a GPU run must not reach a software run
+            nest::cleanGpuPlaceholders(cfg);
             std::string frag;
             if (cfg.vfs.resolve("/vendor/etc/vintf/manifest/nest-gpu.xml", "/", false, frag)) unlink(frag.c_str());
             if (cfg.vfs.resolve("/vendor/etc/init/nest-gpu-allocator.rc", "/", false, frag)) unlink(frag.c_str());

@@ -79,8 +79,29 @@ std::vector<std::string> elfNeeded(const std::string& path) {
     return neededOf<Elf32_Ehdr, Elf32_Phdr, Elf32_Dyn>(f);
 }
 
+void cleanGpuPlaceholders(TracerConfig& cfg) {
+    // Empty files left in the guest's vendor dirs by earlier GPU runs (mount points of binds that
+    // no longer exist): loaders would try them ("file offset" errors) instead of skipping.
+    for (const char* dir : {"/vendor/lib64", "/vendor/lib", "/vendor/lib64/egl", "/vendor/lib/egl", "/vendor/lib64/hw",
+                            "/vendor/lib/hw"}) {
+        std::string host;
+        if (!cfg.vfs.resolve(dir, "/", true, host)) continue;
+        DIR* d = opendir(host.c_str());
+        if (!d) continue;
+        while (dirent* e = readdir(d)) {
+            std::string n = e->d_name;
+            if (n.size() < 4 || n.compare(n.size() - 3, 3, ".so") != 0) continue;
+            struct stat st;
+            std::string p = host + "/" + n;
+            if (lstat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode) && st.st_size == 0) unlink(p.c_str());
+        }
+        closedir(d);
+    }
+}
+
 GpuSetup setupHostGpu(TracerConfig& cfg, const std::string& hostVendor) {
     GpuSetup g;
+    cleanGpuPlaceholders(cfg);
     g.platform = hostProp("ro.board.platform");
     std::string egl = hostProp("ro.hardware.egl");
     if (egl.empty()) egl = "adreno";
