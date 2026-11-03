@@ -117,6 +117,9 @@ GpuSetup setupHostGpu(TracerConfig& cfg, const std::string& hostVendor) {
 
     // The vendor's buffer allocator service (IAllocator 3.0/4.0): found through the vendor's init
     // scripts; its binary is copied into the engine's state (an app may run files it owns).
+    // Apps may not read /vendor/bin/hw (seen on MIUI), so this usually finds nothing to copy; the
+    // guest then keeps its own allocator 2.0 + mapper 2.1 over the vendor's gralloc1 module, whose
+    // two missing functions the preload supplies (gralloc1Fixups in preload.cpp).
     std::string allocatorBin, allocatorRc;
     if (DIR* d = opendir((hostVendor + "/etc/init").c_str())) {
         while (dirent* e = readdir(d)) {
@@ -203,6 +206,10 @@ GpuSetup setupHostGpu(TracerConfig& cfg, const std::string& hostVendor) {
             closedir(d);
         }
         std::string fragDir;
+        // Only with the vendor's allocator service: declared mappers 3.0/4.0 would otherwise wait
+        // forever for an allocator 4.0 that never starts.
+        if (allocatorBin.empty()) hals.clear();
+        if (guestHost("/vendor/etc/vintf/manifest", fragDir)) unlink((fragDir + "/nest-gpu.xml").c_str());
         if (!hals.empty() && guestHost("/vendor/etc/vintf/manifest", fragDir)) {
             mkdir(fragDir.c_str(), 0755);
             if (FILE* f = fopen((fragDir + "/nest-gpu.xml").c_str(), "we")) {
@@ -234,19 +241,6 @@ GpuSetup setupHostGpu(TracerConfig& cfg, const std::string& hostVendor) {
         if (readable(gralloc)) {
             bindFile(gv + "/hw/gralloc." + g.platform + ".so", gralloc);
             todo.push_back(gralloc);
-        }
-        // The vendor's own mapper implementations (IMapper 3.0/4.0, passthrough): the guest's
-        // mapper 2.1 cannot drive a modern gralloc1 module (missing functions).
-        if (DIR* d = opendir((hv + "/hw").c_str())) {
-            while (dirent* e = readdir(d)) {
-                std::string n = e->d_name;
-                bool mapper = (n.rfind("android.hardware.graphics.mapper@", 0) == 0 && n.find("@2.") == std::string::npos) ||
-                              n.rfind("vendor.qti.hardware.display.mapper", 0) == 0;
-                if (!mapper || n.find(".so") == std::string::npos || !readable(hv + "/hw/" + n)) continue;
-                bindFile(gv + "/hw/" + n, hv + "/hw/" + n);
-                todo.push_back(hv + "/hw/" + n);
-            }
-            closedir(d);
         }
         if (std::string(lib) == "lib64" && !allocatorBin.empty()) todo.push_back(allocatorBin);
         // whatever those need from the host's vendor that the guest does not provide

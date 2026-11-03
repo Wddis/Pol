@@ -154,6 +154,11 @@ int main(int argc, char** argv) {
             for (auto& n : gpu.notes) fprintf(stderr, "nest: gpu: %s\n", n.c_str());
             fprintf(stderr, "nest: gpu: %s\n", gpu.ok ? "host GPU driver in use" : "software rendering (SwiftShader)");
         }
+        if (!gpu.ok) {  // leftovers of a GPU run must not reach a software run
+            std::string frag;
+            if (cfg.vfs.resolve("/vendor/etc/vintf/manifest/nest-gpu.xml", "/", false, frag)) unlink(frag.c_str());
+            if (cfg.vfs.resolve("/vendor/etc/init/nest-gpu-allocator.rc", "/", false, frag)) unlink(frag.c_str());
+        }
         // Properties the display needs, appended to the vendor's build.prop (a private copy).
         std::string vendorProp;
         if (cfg.vfs.resolve("/vendor/build.prop", "/", true, vendorProp)) {

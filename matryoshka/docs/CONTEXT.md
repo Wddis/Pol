@@ -477,8 +477,21 @@ hwc берёт create_buffer_generic (wl_shm) + update_shm_buffer_generic = egl_
 <hal> блоки graphics/display allocator/mapper (кроме 2.x) из host /vendor/etc/vintf/manifest*.xml →
 гостевой /vendor/etc/vintf/manifest/nest-gpu.xml. GraphicBufferMapper/Allocator берут 4.0 первыми.
 
+### 0.8.2 — GPU: свой «ремонт» gralloc1 вместо чужого аллокатора
+0.8.1: `allocator unreadable: /vendor/bin/hw/vendor.qti.hardware.display.allocator-service` (MIUI:
+приложению нельзя читать /vendor/bin/hw), mapper 4.0 qti ждал IAllocator 4.0 вечно (lazy HAL).
+Теперь: mapper 3/4 и VINTF-фрагмент — только если аллокатор хоста скопирован (иначе фрагмент и rc
+удаляются, и в режиме без GPU тоже). Гость использует свой allocator 2.0 + mapper 2.1 над
+gralloc.<platform>.so хоста; недостающие gralloc1-функции 23 (VALIDATE_BUFFER_SIZE) и 24
+(GET_TRANSPORT_SIZE) даёт preload: обёртка hw_get_module/_by_class → подмена module->methods->open
+(mprotect страницы) → у устройства gralloc1 подменяется getFunction (запасные реализации только
+если вендор вернул null). Только gralloc1 (api>=1.0) модули "gralloc".
+Урок: реальный hw_get_module брать через dlopen("libhardware.so") — RTLD_NEXT в вендорных процессах
+его не видит (другой namespace); preload при этом виден вызывающим во всех namespace'ах linkerconfig.
+(Первая версия сломала allocator-2.0 на стенде — «failed to get gralloc module»; стенд поймал.)
+
 ### Ждём от владельца
-Тест **0.8.1-nest** (было 0.8.0 … 0.5.1): с флажком GPU. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.8.2-nest**: с флажком GPU. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

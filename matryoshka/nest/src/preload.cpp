@@ -714,6 +714,112 @@ NEST_EXPORT int close(int fd) {
     return static_cast<int>(r);
 }
 
+// ---- gralloc1 fix-ups (GPU passthrough): the guest's mapper 2.1 requires two gralloc1 functions
+// that a modern vendor gralloc1 module (Qualcomm's qdgralloc) does not offer: VALIDATE_BUFFER_SIZE
+// (23) and GET_TRANSPORT_SIZE (24). Both are bookkeeping; they are supplied here by wrapping the
+// module's open() and the device's getFunction(). Only "gralloc" modules are touched.
+namespace {
+struct HwModule;
+struct HwDevice;
+struct HwModuleMethods {
+    int (*open)(const HwModule*, const char*, HwDevice**);
+};
+struct HwModule {
+    uint32_t tag;
+    uint16_t moduleApiVersion, halApiVersion;
+    const char* id;
+    const char* name;
+    const char* author;
+    HwModuleMethods* methods;
+    void* dso;
+    uintptr_t reserved[32 - 7];
+};
+struct HwDevice {
+    uint32_t tag;
+    uint32_t version;
+    HwModule* module;
+    uintptr_t reserved[12];
+    int (*close)(HwDevice*);
+};
+using GrallocFn = void (*)();
+struct Gralloc1Device {
+    HwDevice common;
+    void (*getCapabilities)(Gralloc1Device*, uint32_t*, int32_t*);
+    GrallocFn (*getFunction)(Gralloc1Device*, int32_t);
+};
+struct NativeHandle {
+    int version, numFds, numInts;
+};
+constexpr int32_t kValidateBufferSize = 23, kGetTransportSize = 24;
+
+GrallocFn (*g_realGetFunction)(Gralloc1Device*, int32_t) = nullptr;
+int (*g_realOpen)(const HwModule*, const char*, HwDevice**) = nullptr;
+HwModuleMethods g_methods;
+
+int32_t validateBufferSize(Gralloc1Device*, const NativeHandle*, const void*, uint32_t) { return 0; }
+int32_t getTransportSize(Gralloc1Device*, const NativeHandle* h, uint32_t* fds, uint32_t* ints) {
+    if (!h) return 2;  // GRALLOC1_ERROR_BAD_HANDLE
+    *fds = static_cast<uint32_t>(h->numFds);
+    *ints = static_cast<uint32_t>(h->numInts);
+    return 0;
+}
+GrallocFn getFunction(Gralloc1Device* d, int32_t desc) {
+    GrallocFn f = g_realGetFunction ? g_realGetFunction(d, desc) : nullptr;
+    if (f) return f;
+    if (desc == kValidateBufferSize) return reinterpret_cast<GrallocFn>(validateBufferSize);
+    if (desc == kGetTransportSize) return reinterpret_cast<GrallocFn>(getTransportSize);
+    return nullptr;
+}
+int openWrapped(const HwModule* m, const char* name, HwDevice** out) {
+    int r = g_realOpen(m, name, out);
+    if (r == 0 && out && *out && (m->moduleApiVersion >> 8) >= 1) {  // gralloc1 device
+        auto* dev = reinterpret_cast<Gralloc1Device*>(*out);
+        if (dev->getFunction != getFunction) {
+            if (!g_realGetFunction) g_realGetFunction = dev->getFunction;
+            if (dev->getFunction == g_realGetFunction) dev->getFunction = getFunction;
+        }
+    }
+    return r;
+}
+void wrapGralloc(const HwModule* m) {
+    if (!m || !m->id || strcmp(m->id, "gralloc") != 0 || !m->methods || m->methods->open == openWrapped) return;
+    if ((m->moduleApiVersion >> 8) < 1) return;  // gralloc0: nothing missing
+    static std::mutex mu;
+    std::lock_guard<std::mutex> g(mu);
+    if (m->methods->open == openWrapped) return;
+    g_realOpen = m->methods->open;
+    g_methods.open = openWrapped;
+    // the module descriptor is the HAL's global; make its page writable for the swap
+    long page = sysconf(_SC_PAGESIZE);
+    auto* field = const_cast<HwModuleMethods**>(&m->methods);
+    uintptr_t start = reinterpret_cast<uintptr_t>(field) & ~static_cast<uintptr_t>(page - 1);
+    mprotect(reinterpret_cast<void*>(start), static_cast<size_t>(page), PROT_READ | PROT_WRITE);
+    *field = &g_methods;
+}
+}  // namespace
+
+// libhardware's own functions. RTLD_NEXT does not reach it from vendor processes (it lives in
+// another linker namespace there), a handle to the library does.
+void* realHardware(const char* sym) {
+    void* h = dlopen("libhardware.so", RTLD_NOW | RTLD_NOLOAD);
+    if (!h) h = dlopen("libhardware.so", RTLD_NOW);
+    void* f = h ? dlsym(h, sym) : nullptr;
+    return f ? f : dlsym(RTLD_NEXT, sym);
+}
+
+extern "C" NEST_EXPORT int hw_get_module(const char* id, const HwModule** module) {
+    static auto real = reinterpret_cast<int (*)(const char*, const HwModule**)>(realHardware("hw_get_module"));
+    int r = real ? real(id, module) : -ENOENT;
+    if (r == 0 && module) wrapGralloc(*module);
+    return r;
+}
+extern "C" NEST_EXPORT int hw_get_module_by_class(const char* cls, const char* inst, const HwModule** module) {
+    static auto real =
+        reinterpret_cast<int (*)(const char*, const char*, const HwModule**)>(realHardware("hw_get_module_by_class"));
+    int r = real ? real(cls, inst, module) : -ENOENT;
+    if (r == 0 && module) wrapGralloc(*module);
+    return r;
+}
 }  // extern "C"
 
 // ---- bench only (NEST_HIDE_EMU_THREADS=1, set when a CPU emulator stands in for the phone):
