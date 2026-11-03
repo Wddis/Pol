@@ -1203,8 +1203,14 @@ void Tracer::handleCaps(pid_t tid, Regs& r, long nr) {
         }
         eff &= allCaps(); prm &= allCaps(); inh &= allCaps();
         uint64_t inhLimit = c.hasCap(kCapSetpcap) ? (c.capInh | c.capBnd) : (c.capInh | c.capPrm);
-        if ((inh & ~inhLimit) || (inh & ~(c.capInh | c.capBnd)) || (prm & ~c.capPrm) || (eff & ~prm))
+        if ((inh & ~inhLimit) || (inh & ~(c.capInh | c.capBnd)) || (prm & ~c.capPrm) || (eff & ~prm)) {
+            // Diagnostics for the phone log (logd's capset failed there, not on the bench).
+            logf(1, "[%d] capset refused: uid=%u old eff=%llx prm=%llx inh=%llx bnd=%llx amb=%llx new eff=%llx prm=%llx inh=%llx",
+                 tid, c.euid, (unsigned long long)c.capEff, (unsigned long long)c.capPrm, (unsigned long long)c.capInh,
+                 (unsigned long long)c.capBnd, (unsigned long long)c.capAmb, (unsigned long long)eff,
+                 (unsigned long long)prm, (unsigned long long)inh);
             return finish(-EPERM);
+        }
         c.capEff = eff; c.capPrm = prm; c.capInh = inh;
         c.capAmb &= prm & inh;
     } else {  // prctl
@@ -1240,8 +1246,13 @@ void Tracer::handleCaps(pid_t tid, Regs& r, long nr) {
                 else if (a1 == PR_CAP_AMBIENT_IS_SET) ret = (c.capAmb >> a2) & 1;
                 else if (a1 == PR_CAP_AMBIENT_LOWER) c.capAmb &= ~bit(a2);
                 else if (a1 == PR_CAP_AMBIENT_RAISE) {
-                    if (!(c.capPrm & c.capInh & bit(a2)) || (c.securebits & kSecNoAmbientRaise)) ret = -EPERM;
-                    else c.capAmb |= bit(a2);
+                    if (!(c.capPrm & c.capInh & bit(a2)) || (c.securebits & kSecNoAmbientRaise)) {
+                        ret = -EPERM;
+                        logf(1, "[%d] ambient raise of cap %llu refused: prm=%llx inh=%llx", tid,
+                             (unsigned long long)a2, (unsigned long long)c.capPrm, (unsigned long long)c.capInh);
+                    } else {
+                        c.capAmb |= bit(a2);
+                    }
                 } else ret = -EINVAL;
                 break;
             default: ret = -EINVAL;
@@ -1740,7 +1751,7 @@ long Tracer::doMount(pid_t tid, Regs& r) {
     else if (fs == "selinuxfs") return 0;  // stays hidden: the guest sees SELinux as disabled
     else if (fs == "tmpfs" || fs == "ramfs" || fs == "cgroup" || fs == "cgroup2" || fs == "cpuset" || fs == "bpf" ||
              fs == "tracefs" || fs == "debugfs" || fs == "pstore" || fs == "configfs" || fs == "functionfs" ||
-             fs == "binder") {
+             fs == "binder" || fs == "fusectl") {
         // A fresh, empty, writable directory behind the target.
         host = cfg_.stateDir + "/mnt/" + std::to_string(++tmpfsCount_);
         std::string cur;

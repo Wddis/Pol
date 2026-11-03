@@ -604,6 +604,14 @@ TEST(rlimit_raise_succeeds_as_unprivileged_host_user) {
     EXPECT_EQ(app.out, "-1 EPERM\n");
 }
 
+TEST(fusectl_mount_is_a_readable_empty_dir) {
+    // vold lists /sys/fs/fuse/connections and aborts if it cannot; the host's is unreadable to apps.
+    std::string state = mktmp();
+    auto r = runInState(mountCmd(false, "", {"mount-fs", "fusectl", "/tmp", "", "write", "/tmp/probe", "ok", "cat", "/tmp/probe"}),
+                        state);
+    EXPECT_EQ(r.out, "0\nok\n");
+}
+
 TEST(mount_requires_root_identity) {
     auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
     EXPECT_EQ(r.out, "-1 EPERM\n");
