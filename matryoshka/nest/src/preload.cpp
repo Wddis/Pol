@@ -380,14 +380,9 @@ void noteProcOpen(const char* path, long r) {
     syscall(SYS_close, f);
 }
 
-NEST_EXPORT int openat(int dirfd, const char* path, int flags, ...) {
-    mode_t mode = 0;
-    if (flags & (O_CREAT | O_TMPFILE)) {
-        va_list ap;
-        va_start(ap, flags);
-        mode = static_cast<mode_t>(va_arg(ap, int));
-        va_end(ap);
-    }
+// One implementation for every open entry point. Never call the libc names from here: with
+// FORTIFY, bionic's headers turn a 3-argument openat() into __openat_2(), which is ours.
+int openImpl(int dirfd, const char* path, int flags, mode_t mode) {
     long v = virtualStatus(dirfd, path, flags);
     if (v != kNotStatus) {
         if (v < 0) { errno = static_cast<int>(-v); return -1; }
@@ -398,6 +393,17 @@ NEST_EXPORT int openat(int dirfd, const char* path, int flags, ...) {
     return static_cast<int>(r);
 }
 
+NEST_EXPORT int openat(int dirfd, const char* path, int flags, ...) {
+    mode_t mode = 0;
+    if (flags & (O_CREAT | O_TMPFILE)) {
+        va_list ap;
+        va_start(ap, flags);
+        mode = static_cast<mode_t>(va_arg(ap, int));
+        va_end(ap);
+    }
+    return openImpl(dirfd, path, flags, mode);
+}
+
 NEST_EXPORT int open(const char* path, int flags, ...) {
     mode_t mode = 0;
     if (flags & (O_CREAT | O_TMPFILE)) {
@@ -406,14 +412,7 @@ NEST_EXPORT int open(const char* path, int flags, ...) {
         mode = static_cast<mode_t>(va_arg(ap, int));
         va_end(ap);
     }
-    long v = virtualStatus(AT_FDCWD, path, flags);
-    if (v != kNotStatus) {
-        if (v < 0) { errno = static_cast<int>(-v); return -1; }
-        return static_cast<int>(v);
-    }
-    long r = pathCall(SYS_openat, AT_FDCWD, path, flags, mode, 0, openFlagsFollow(flags));
-    if (r < 0) noteProcOpen(path, -errno);
-    return static_cast<int>(r);
+    return openImpl(AT_FDCWD, path, flags, mode);
 }
 
 NEST_EXPORT int open64(const char* path, int flags, ...) {
@@ -424,14 +423,7 @@ NEST_EXPORT int open64(const char* path, int flags, ...) {
         mode = static_cast<mode_t>(va_arg(ap, int));
         va_end(ap);
     }
-    long v = virtualStatus(AT_FDCWD, path, flags);
-    if (v != kNotStatus) {
-        if (v < 0) { errno = static_cast<int>(-v); return -1; }
-        return static_cast<int>(v);
-    }
-    long r = pathCall(SYS_openat, AT_FDCWD, path, flags, mode, 0, openFlagsFollow(flags));
-    if (r < 0) noteProcOpen(path, -errno);
-    return static_cast<int>(r);
+    return openImpl(AT_FDCWD, path, flags, mode);
 }
 
 NEST_EXPORT int openat64(int dirfd, const char* path, int flags, ...) {
@@ -442,13 +434,13 @@ NEST_EXPORT int openat64(int dirfd, const char* path, int flags, ...) {
         mode = static_cast<mode_t>(va_arg(ap, int));
         va_end(ap);
     }
-    return static_cast<int>(pathCall(SYS_openat, dirfd, path, flags, mode, 0, openFlagsFollow(flags)));
+    return openImpl(dirfd, path, flags, mode);
 }
 
 // Bionic's FORTIFY entry points.
 // Fortified open (bionic's 2-argument open() in code built with FORTIFY: most of Android).
-NEST_EXPORT int __open_2(const char* path, int flags) { return openat(AT_FDCWD, path, flags); }
-NEST_EXPORT int __openat_2(int dirfd, const char* path, int flags) { return openat(dirfd, path, flags); }
+NEST_EXPORT int __open_2(const char* path, int flags) { return openImpl(AT_FDCWD, path, flags, 0); }
+NEST_EXPORT int __openat_2(int dirfd, const char* path, int flags) { return openImpl(dirfd, path, flags, 0); }
 
 // The *64 variants receive the kernel's stat layout on every ABI.
 
