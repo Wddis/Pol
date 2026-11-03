@@ -289,6 +289,24 @@ struct WaylandServer::Impl {
 
     void request(Client& c, uint32_t id, uint16_t op, Args& a) {
         auto it = c.objs.find(id);
+        static FILE* trace = [] {
+            const char* p = getenv("NEST_WAYLAND_LOG");
+            return p ? fopen(p, "we") : nullptr;
+        }();
+        if (trace) {
+            static const char* names[] = {"display", "registry", "callback", "compositor", "surface", "region", "shm",
+                                          "shm_pool", "buffer", "subcompositor", "subsurface", "seat", "pointer",
+                                          "keyboard", "touch", "output", "xdg_wm_base", "xdg_positioner",
+                                          "xdg_surface", "xdg_toplevel"};
+            fprintf(trace, "%u %s.%u", id, it == c.objs.end() ? "?" : names[static_cast<int>(it->second.type)], op);
+            for (size_t k = 0; k < a.n / 4 && k < 6; k++) {
+                uint32_t v;
+                memcpy(&v, a.p + k * 4, 4);
+                fprintf(trace, " %u", v);
+            }
+            fprintf(trace, "\n");
+            fflush(trace);
+        }
         if (it == c.objs.end()) return;
         T type = it->second.type;
         switch (type) {

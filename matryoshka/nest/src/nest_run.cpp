@@ -160,6 +160,11 @@ int main(int argc, char** argv) {
             // Waydroid's vendor HALs: the sensors HAL registers its stub only when asked (it exits
             // otherwise, and system_server's watchdog then kills it waiting for sensors); one window.
             text += "waydroid.stub_sensors_hal=1\nwaydroid.multi_windows=false\n";
+            // What Waydroid's host side normally sets: buffer type for the composer HAL (without it
+            // hwcomposer.waydroid presents nothing), software EGL.
+            text += "ro.hardware.gralloc=default\nro.hardware.egl=swiftshader\n";
+            // the whole Android screen in one window (default "none": hwcomposer shows nothing)
+            text += "waydroid.active_apps=Waydroid\n";
             if (FILE* f = fopen(copy.c_str(), "we")) {
                 fwrite(text.data(), 1, text.size(), f);
                 fclose(f);

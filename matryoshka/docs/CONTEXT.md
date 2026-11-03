@@ -341,8 +341,23 @@ preload — с FORTIFY (NDK/bionic) 3-аргументный openat() сам п�
 Теперь все open-обёртки → `openImpl`. Стенд: init → zygote → system_server, creds-файлы есть.
 Устройство гостя сейчас: ro.product.* = Waydroid / «WayDroid arm64 Device» (из образа).
 
+### 0.6.0 — Android загрузился, экран ожил
+Телефон 0.5.10: **«Boot is finished (79 с)», BOOT_COMPLETED, лаунчер и приложения запущены.**
+«is crashing» исчез. Остались: media.swcodec abort «decWeak … too many times» (refcount
+через vbinder/HIDL), SIGSEGV surfaceflinger (1 раз), Watchdog «Blocked in monitor
+StorageManagerService on android.fg» (vold?), «closed its binder device» у живого pid в D.
+Экран: frames=1 — это калибровочный 1x1 буфер hwcomposer. Исходники Waydroid hwc
+(Apache-2.0, ref в scratchpad) → `select_mode`: `waydroid.active_apps` по умолчанию "none" =
+closed_mode (окон нет). Добавлено `waydroid.active_apps=Waydroid` (+ ro.hardware.gralloc=default,
+ro.hardware.egl=swiftshader). Стенд: frames растут (~5/с), кадр = загрузочная анимация LineageOS
+(docs/first-guest-frame.png). Формат кадров ARGB8888 (0). `NEST_WAYLAND_LOG=файл` — трасса
+Wayland-запросов.
+Планы владельца (после загрузки): приложения не должны «триггериться» на VM (антиэмуляторные
+проверки — убрать следы Waydroid/движка), профиль «сильного устройства» в ro.product.* (выбор
+профиля в настройках VM). Ограничение: не обходим Play Integrity/банковскую аттестацию.
+
 ### Ждём от владельца
-Тест **0.5.10-nest** (было 0.5.9 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.6.0-nest** (было 0.5.10 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14
