@@ -85,22 +85,29 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
         val bmp = bitmap?.takeIf { it.width == w && it.height == h }
             ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bitmap = it }
         fbW = w; fbH = h
-        val row = IntArray(w)
-        val px = IntArray(w * h)
-        val b = m.duplicate().order(ByteOrder.LITTLE_ENDIAN)
-        for (y in 0 until h) {
-            b.position(HEADER + y * stride)
-            b.asIntBuffer().get(row)
-            val o = y * w
-            for (x in 0 until w) {
-                val v = row[x]
-                // wl_shm ARGB/XRGB words are 0xAARRGGBB (= Android's ColorInt); ABGR/XBGR are 0xAABBGGRR.
-                val argb = if (format == FMT_ARGB || format == FMT_XRGB) v
-                else (v and 0xff00ff00.toInt()) or ((v and 0xff) shl 16) or ((v ushr 16) and 0xff)
-                px[o + x] = if (format == FMT_XRGB || format == FMT_XBGR) argb or 0xff000000.toInt() else argb
+        if (format == FMT_ABGR && stride == w * 4) {
+            // The engine always writes R,G,B,A bytes: the bitmap's own memory layout, one copy.
+            val b = m.duplicate()
+            b.position(HEADER)
+            b.limit(HEADER + stride * h)
+            bmp.copyPixelsFromBuffer(b)
+        } else {
+            val row = IntArray(w)
+            val px = IntArray(w * h)
+            val b = m.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+            for (y in 0 until h) {
+                b.position(HEADER + y * stride)
+                b.asIntBuffer().get(row)
+                val o = y * w
+                for (x in 0 until w) {
+                    val v = row[x]
+                    val argb = if (format == FMT_ARGB || format == FMT_XRGB) v
+                    else (v and 0xff00ff00.toInt()) or ((v and 0xff) shl 16) or ((v ushr 16) and 0xff)
+                    px[o + x] = if (format == FMT_XRGB || format == FMT_XBGR) argb or 0xff000000.toInt() else argb
+                }
             }
+            bmp.setPixels(px, 0, w, 0, 0, w, h)
         }
-        bmp.setPixels(px, 0, w, 0, 0, w, h)
         lastSeq = seq
         return true
     }

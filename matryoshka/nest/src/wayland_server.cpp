@@ -218,11 +218,26 @@ struct WaylandServer::Impl {
                     d[x * 4 + 3] = 255;
                 }
             } else {
-                memcpy(dst + static_cast<size_t>(y) * h->stride, src + static_cast<size_t>(y) * buf.stride,
-                       static_cast<size_t>(w) * 4);
+                // Always out as ABGR8888 (bytes R,G,B,A = Android's ARGB_8888 bitmap memory), opaque
+                // for the X formats: the app then copies the frame into its bitmap in one call.
+                const uint32_t* s = reinterpret_cast<const uint32_t*>(src + static_cast<size_t>(y) * buf.stride);
+                uint32_t* d = reinterpret_cast<uint32_t*>(dst + static_cast<size_t>(y) * h->stride);
+                bool swap = buf.format == 0 || buf.format == 1;                       // ARGB/XRGB: bytes B,G,R,A
+                bool opaque = buf.format == 1 || buf.format == 0x34324258;            // XRGB / XBGR
+                uint32_t a = opaque ? 0xff000000u : 0;
+                if (!swap && !opaque) {
+                    memcpy(d, s, static_cast<size_t>(w) * 4);
+                } else if (!swap) {
+                    for (int x = 0; x < w; x++) d[x] = s[x] | a;
+                } else {
+                    for (int x = 0; x < w; x++) {
+                        uint32_t v = s[x];
+                        d[x] = (v & 0xff00ff00u) | ((v & 0xffu) << 16) | ((v >> 16) & 0xffu) | a;
+                    }
+                }
             }
         }
-        h->format = rgb565 ? 0x34324241 : buf.format;
+        h->format = 0x34324241;  // ABGR8888
         h->seq.fetch_add(1, std::memory_order_release);
         frameCount++;
     }
