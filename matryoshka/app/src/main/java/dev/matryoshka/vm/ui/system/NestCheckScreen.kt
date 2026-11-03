@@ -159,6 +159,7 @@ private fun NestBootPanel() {
     var showLogcat by remember { mutableStateOf(false) }
     var showScreen by remember { mutableStateOf(true) }
     var binderTrace by remember { mutableStateOf(NestGuest.verboseBinder) }
+    var gpu by remember { mutableStateOf(NestGuest.useGpu) }
     LaunchedEffect(Unit) { NestGuest.refresh(context) }
     androidx.compose.runtime.DisposableEffect(state) {
         view.keepScreenOn = state is NestGuest.State.Running  // MIUI may freeze a backgrounded boot
@@ -226,6 +227,10 @@ private fun NestBootPanel() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material3.Checkbox(checked = binderTrace, onCheckedChange = { binderTrace = it })
                     Text(stringResource(R.string.nest_boot_binder_trace), style = MaterialTheme.typography.bodySmall)
+                }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    androidx.compose.material3.Checkbox(checked = gpu, onCheckedChange = { gpu = it; NestGuest.useGpu = it })
+                    Text(stringResource(R.string.nest_boot_gpu), style = MaterialTheme.typography.bodySmall)
                 }
             }
             if (s is NestGuest.State.Running) {

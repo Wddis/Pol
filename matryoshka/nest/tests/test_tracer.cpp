@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "test.h"
+#include "gpu_passthrough.h"
 
 #ifndef NEST_RUN_PATH
 #error "NEST_RUN_PATH must point to the nest_run binary"
@@ -748,3 +749,11 @@ TEST(compat32_fast_path) {
     fprintf(stderr, "  compat32: 2000 stat() slow path %ld stops, fast path %ld stops\n", s, f);
 }
 #endif
+
+TEST(elf_needed_lists_dependencies) {
+    // GPU passthrough follows the host driver's DT_NEEDED chain to bind what the guest lacks.
+    auto n = nest::elfNeeded(NEST_PRELOAD_PATH);
+    bool libc = false;
+    for (auto& s : n) libc |= s.rfind("libc.so", 0) == 0;
+    EXPECT_TRUE(libc);
+}

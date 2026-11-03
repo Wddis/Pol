@@ -181,4 +181,5 @@
     <string name="nest_boot_show_screen">📺 Show guest screen</string>
     <string name="nest_boot_hide_screen">Hide guest screen</string>
     <string name="nest_boot_screen_waiting">The screen appears when Android starts drawing</string>
+    <string name="nest_boot_gpu">Phone GPU for the guest (experimental; untick if the screen stays black)</string>
 </resources>

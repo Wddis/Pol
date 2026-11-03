@@ -450,8 +450,24 @@ vbinder (threadSlot проверял pid на каждом ioctl, untagged → �
 Дальше: (a) аудио-HAL (дать сокет pulse или заглушку), (b) GPU passthrough (adreno + gralloc хоста;
 читать waydroid gralloc_handler для «default» — как hwc берёт метаданные буфера).
 
+### 0.8.0 — графика, шаг 2: GPU телефона (эксперимент, флажок, по умолчанию вкл.)
+0.7.2: getpid-стопы ушли, но FPS ~9 (рендер SwiftShader — главный тормоз). Профиль: движок 50–85 %
+ядра (остановки: getuid 174, fstat 79, openat 56, setpriority 140, prctl 167…), приложение ~51 %,
+SF/hwc ~60 %, 32-бит audio HAL ~6k стопов/30 с (цикл подключения к pulse).
+Решение — `--gpu` (gpu_passthrough.{h,cpp}): /dev/kgsl-3d0 → гость; host /vendor/lib{64,}/egl/*
+и /vendor/lib*/hw/gralloc.<ro.board.platform>.so → те же пути гостя + замыкание DT_NEEDED по
+host /vendor/lib* (только то, чего нет в гостевых /vendor, /system, vndk.current, runtime/bionic);
+плейсхолдеры в rootfs (видны в листинге). Пропы: ro.hardware.egl=<host egl>,
+ro.hardware.gralloc=<platform>, отключение UBWC (vendor.gralloc.disable_ubwc=1 и др.).
+Почему работает с Waydroid hwc: для неизвестного gralloc (GRALLOC_ANDROID без android_wlegl)
+hwc берёт create_buffer_generic (wl_shm) + update_shm_buffer_generic = egl_render_to_pixels
+(читает кадр через EGL GPU в shm) — наш wl_shm путь уже это показывает. Исходники waydroid hwc
+(Apache-2.0) — scratchpad/ref/whwc (wayland-hwc.cpp, hwcomposer.cpp, gralloc_handler.cpp).
+Без GPU (стенд) — `nest: gpu: software rendering (SwiftShader)`. Тест elf_needed_lists_dependencies.
+Флажок в приложении «Видеочип телефона для гостя», NestGuest.useGpu.
+
 ### Ждём от владельца
-Тест **0.7.2-nest** (было 0.7.1 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.8.0-nest** (было 0.7.2 … 0.5.1): с флажком GPU; если чёрный экран — без него. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

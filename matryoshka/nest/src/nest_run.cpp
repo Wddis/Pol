@@ -37,6 +37,7 @@
 #include <thread>
 
 #include "android_profile.h"
+#include "gpu_passthrough.h"
 #include "guest_log.h"
 #include "probe.h"
 #include "vbinder.h"
@@ -59,6 +60,7 @@ int main(int argc, char** argv) {
     bool stats = false, clean = false;
     std::string preload, binderSock, androidState;
     nest::DisplayConfig display;
+    bool useGpu = false;  // --gpu: the phone's GPU driver for the guest (graphics, step 2)
     std::vector<std::string> extraEnv;
     int i = 1;
     for (; i < argc; i++) {
@@ -87,6 +89,8 @@ int main(int argc, char** argv) {
             cfg.preload32Host = argv[++i];
         } else if (a == "--android" && i + 1 < argc) {
             androidState = argv[++i];
+        } else if (a == "--gpu") {
+            useGpu = true;
         } else if (a == "--display" && i + 1 < argc) {
             // WIDTHxHEIGHT[@DPI]: the guest's screen (Wayland output + framebuffer size)
             if (sscanf(argv[++i], "%dx%d@%d", &display.width, &display.height, &display.dpi) < 2) {
@@ -143,6 +147,13 @@ int main(int argc, char** argv) {
         // Display (graphics, step 1): the guest's composer connects to /run/user/1000/wayland-0.
         mkdir((androidState + "/run").c_str(), 0755);
         cfg.vfs.bind("/run/user/1000", androidState + "/run", false, true);
+        // Graphics step 2: the phone's own GPU driver (--gpu), else the guest's SwiftShader.
+        nest::GpuSetup gpu;
+        if (useGpu) {
+            gpu = nest::setupHostGpu(cfg);
+            for (auto& n : gpu.notes) fprintf(stderr, "nest: gpu: %s\n", n.c_str());
+            fprintf(stderr, "nest: gpu: %s\n", gpu.ok ? "host GPU driver in use" : "software rendering (SwiftShader)");
+        }
         // Properties the display needs, appended to the vendor's build.prop (a private copy).
         std::string vendorProp;
         if (cfg.vfs.resolve("/vendor/build.prop", "/", true, vendorProp)) {
@@ -164,7 +175,11 @@ int main(int argc, char** argv) {
             text += "waydroid.stub_sensors_hal=1\nwaydroid.multi_windows=false\n";
             // What Waydroid's host side normally sets: buffer type for the composer HAL (without it
             // hwcomposer.waydroid presents nothing), software EGL.
-            text += "ro.hardware.gralloc=default\nro.hardware.egl=swiftshader\n";
+            if (gpu.ok) {
+                for (auto& pl : gpu.props) text += pl + "\n";
+            } else {
+                text += "ro.hardware.gralloc=default\nro.hardware.egl=swiftshader\n";
+            }
             // the whole Android screen in one window (default "none": hwcomposer shows nothing)
             text += "waydroid.active_apps=Waydroid\n";
             // No A/B checkpoints in a VM: vold's key storage otherwise waits for the checkpoint
