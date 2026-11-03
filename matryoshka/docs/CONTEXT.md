@@ -4,7 +4,7 @@
 текущее состояние, порядок сборки и проверки, найденные подводные камни и следующие шаги.
 Подробное исследование и план: [RESEARCH.md](RESEARCH.md). Движок: [../nest/README.md](../nest/README.md).
 
-Обновлено: 2026-11-03, версия приложения **0.4.9-nest** (versionCode 14), ветка `ccr-d540c321-ahwwm2`.
+Обновлено: 2026-11-03, версия приложения **0.5.1-nest** (versionCode 16), ветка `ccr-d540c321-ahwwm2`.
 
 ---
 
@@ -229,8 +229,23 @@ NETLINK_SOCK_DIAG=4) — **qemu-user отклоняет его сам, до си
 socket() настоящий → движок подменит → netd не должен падать здесь. **Стенд эту ветку проверить
 не может — проверяем 0.5.0 на телефоне.** Остаток цикла перезапусков на стенде — qemu-артефакты.
 
+### Виртуальная сеть, шаг 2 (0.5.1) — netd больше не падает
+Лог 0.5.0 с телефона: сокеты открываются, но netd завершался (нет ответов на запросы, закрыты
+`/proc/sys/net`, `/sys/class/net`). Шаг 2:
+- `netlink_emu.{h,cpp}` + обёртки preload (socket/bind/connect/getsockname/setsockopt/send/sendto/
+  sendmsg/write/writev/recvfrom/recvmsg/close): netlink-сокет гостя = один конец socketpair
+  (AF_UNIX DGRAM), «ядро» (preload) отвечает на каждый запрос: dump → NLMSG_DONE, прочее → ACK
+  (error 0), genl GETFAMILY → -ENOENT; адрес отправителя ответов — ядро (pid 0). qemu на стенде
+  AF_NETLINK больше не видит. Статические программы — по-прежнему чёрная дыра трассировщика.
+- профиль Android: виртуальные `/proc/sys/net` (create-on-write, conf/neigh для all/default/lo)
+  и `/sys/class/net/lo`.
+Стенд: netd больше не падает сам (только SIGKILL из цепочки перезапусков). **Цикл теперь
+держится на графике:** vendor.hwcomposer (Waydroid, ищет Wayland) exit 1 → onrestart
+surfaceflinger → zygote → audioserver/netd/... Следующий этап — графика (свой composer/
+Wayland-сервер). `nest/tools/bench/setup-binfmt.sh` — перерегистрация qemu после смены контейнера.
+
 ### Ждём от владельца
-Тест **0.5.0-nest** на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.5.1-nest** на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14
@@ -241,7 +256,7 @@ Android 11»: скачать образ → «Загрузить Android 11» �
 ## 4. Карта репозитория (`matryoshka/`)
 
 - `nest/` — движок (C++17, CMake). `src/` — модули из таблицы выше, `tests/` — тесты
-  (68 на сейчас; `test_vfs.cpp`, `test_tracer.cpp`, `test_vbinder.cpp`; вспомогательные `idprog.cpp` — набор
+  (72 на сейчас; `test_vfs.cpp`, `test_tracer.cpp`, `test_vbinder.cpp`; вспомогательные `idprog.cpp` — набор
   команд для проверки поведения, `binderprog.cpp` — сырой протокол binder: manager/poll-manager/server/client).
   `tools/gen_compat_syscalls.py` генерирует `src/syscalls_compat.h` (номера 32-битных вызовов из
   UAPI NDK и хоста; список имён — в скрипте, при добавлении вызова перегенерировать).

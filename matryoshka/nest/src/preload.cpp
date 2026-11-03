@@ -17,11 +17,14 @@
 #include <fcntl.h>
 #include <string>
 #include <sys/mman.h>
+#include <sys/socket.h>
+#include <sys/uio.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
 
 #include "fastpath.h"
+#include "netlink_emu.h"
 #include "vbinder_client.h"
 #include "vfs.h"
 #include "vfs_share.h"
@@ -213,6 +216,50 @@ void virtualOwner(St* st, const char* hostPath, int fd, bool follow) {
     }
     st->st_uid = 0;
     if (static_cast<long>(st->st_gid) == hostGid() || static_cast<long>(st->st_gid) == hostUid()) st->st_gid = 0;
+}
+}  // namespace
+
+
+// ---- virtual netlink (netlink_emu.h)
+// A guest netlink socket is one end of a datagram socketpair; the engine keeps the other end and
+// writes the "kernel's" replies into it, so the guest's recv() gets them.
+namespace {
+constexpr int kNlMaxFd = 65536;
+constexpr int kAfNetlink = 16;
+struct NlFd {
+    int peer = -1;
+    int proto = 0;
+};
+NlFd g_nl[kNlMaxFd];
+int g_nlCount = 0;
+
+inline NlFd* nlOf(int fd) {
+    if (__atomic_load_n(&g_nlCount, __ATOMIC_RELAXED) == 0 || fd < 0 || fd >= kNlMaxFd) return nullptr;
+    return g_nl[fd].peer >= 0 ? &g_nl[fd] : nullptr;
+}
+
+ssize_t nlSend(NlFd* n, const void* buf, size_t len) {
+    std::vector<uint8_t> rep = nest::netlinkReplies(n->proto, static_cast<const uint8_t*>(buf), len);
+    if (!rep.empty()) syscall(SYS_sendto, n->peer, rep.data(), rep.size(), MSG_DONTWAIT, nullptr, 0);
+    return static_cast<ssize_t>(len);
+}
+
+ssize_t nlSendIov(NlFd* n, const struct iovec* iov, int cnt) {
+    std::vector<uint8_t> all;
+    for (int i = 0; i < cnt; i++) {
+        const auto* b = static_cast<const uint8_t*>(iov[i].iov_base);
+        all.insert(all.end(), b, b + iov[i].iov_len);
+    }
+    return nlSend(n, all.data(), all.size());
+}
+
+void nlKernelAddr(void* addr, socklen_t* alen) {  // replies come from the kernel: pid 0
+    if (!addr || !alen) return;
+    unsigned char sa[12] = {};
+    uint16_t fam = kAfNetlink;
+    memcpy(sa, &fam, 2);
+    memcpy(addr, sa, *alen < sizeof(sa) ? *alen : sizeof(sa));
+    *alen = sizeof(sa);
 }
 }  // namespace
 
@@ -438,8 +485,103 @@ NEST_EXPORT void* mmap64(void* addr, size_t len, int prot, int flags, int fd, of
 #endif
 }
 
+
+NEST_EXPORT int socket(int domain, int type, int protocol) {
+    if (domain != kAfNetlink || hostUid() < 0)
+        return static_cast<int>(syscall(SYS_socket, domain, type, protocol));
+    int sv[2];
+    int flags = type & (SOCK_CLOEXEC | SOCK_NONBLOCK);
+    if (syscall(SYS_socketpair, AF_UNIX, SOCK_DGRAM | flags, 0, sv) != 0) return -1;
+    if (sv[0] >= kNlMaxFd) {
+        syscall(SYS_close, sv[0]);
+        syscall(SYS_close, sv[1]);
+        errno = EMFILE;
+        return -1;
+    }
+    g_nl[sv[0]].proto = protocol;
+    g_nl[sv[0]].peer = sv[1];
+    __atomic_add_fetch(&g_nlCount, 1, __ATOMIC_RELAXED);
+    return sv[0];
+}
+NEST_EXPORT int bind(int fd, const struct sockaddr* a, socklen_t l) {
+    if (nlOf(fd)) return 0;
+    return static_cast<int>(syscall(SYS_bind, fd, a, l));
+}
+NEST_EXPORT int connect(int fd, const struct sockaddr* a, socklen_t l) {
+    if (nlOf(fd)) return 0;
+    return static_cast<int>(syscall(SYS_connect, fd, a, l));
+}
+NEST_EXPORT int getsockname(int fd, struct sockaddr* a, socklen_t* l) {
+    if (nlOf(fd)) {
+        if (!a || !l) { errno = EFAULT; return -1; }
+        unsigned char sa[12] = {};
+        uint16_t fam = kAfNetlink;
+        uint32_t pid = static_cast<uint32_t>(syscall(SYS_getpid));
+        memcpy(sa, &fam, 2);
+        memcpy(sa + 4, &pid, 4);
+        memcpy(a, sa, *l < sizeof(sa) ? *l : sizeof(sa));
+        *l = sizeof(sa);
+        return 0;
+    }
+    return static_cast<int>(syscall(SYS_getsockname, fd, a, l));
+}
+NEST_EXPORT int setsockopt(int fd, int level, int name, const void* v, socklen_t l) {
+    if (nlOf(fd)) {
+        if (level == SOL_SOCKET) syscall(SYS_setsockopt, fd, level, name, v, l);  // best effort
+        return 0;  // SOL_NETLINK options (memberships, ext ack...) are accepted
+    }
+    return static_cast<int>(syscall(SYS_setsockopt, fd, level, name, v, l));
+}
+NEST_EXPORT ssize_t send(int fd, const void* b, size_t n, int f) {
+    if (NlFd* x = nlOf(fd)) return nlSend(x, b, n);
+    return syscall(SYS_sendto, fd, b, n, f, nullptr, 0);
+}
+NEST_EXPORT ssize_t sendto(int fd, const void* b, size_t n, int f, const struct sockaddr* a, socklen_t l) {
+    if (NlFd* x = nlOf(fd)) return nlSend(x, b, n);
+    return syscall(SYS_sendto, fd, b, n, f, a, l);
+}
+NEST_EXPORT ssize_t sendmsg(int fd, const struct msghdr* m, int f) {
+    if (NlFd* x = nlOf(fd)) return m ? nlSendIov(x, m->msg_iov, static_cast<int>(m->msg_iovlen)) : 0;
+    return syscall(SYS_sendmsg, fd, m, f);
+}
+NEST_EXPORT ssize_t write(int fd, const void* b, size_t n) {
+    if (NlFd* x = nlOf(fd)) return nlSend(x, b, n);
+    return syscall(SYS_write, fd, b, n);
+}
+NEST_EXPORT ssize_t writev(int fd, const struct iovec* iov, int cnt) {
+    if (NlFd* x = nlOf(fd)) return nlSendIov(x, iov, cnt);
+    return syscall(SYS_writev, fd, iov, cnt);
+}
+NEST_EXPORT ssize_t recvfrom(int fd, void* b, size_t n, int f, struct sockaddr* a, socklen_t* l) {
+    if (nlOf(fd)) {
+        ssize_t r = syscall(SYS_recvfrom, fd, b, n, f, nullptr, nullptr);
+        if (r >= 0) nlKernelAddr(a, l);
+        return r;
+    }
+    return syscall(SYS_recvfrom, fd, b, n, f, a, l);
+}
+NEST_EXPORT ssize_t recvmsg(int fd, struct msghdr* m, int f) {
+    if (nlOf(fd) && m) {
+        void* name = m->msg_name;
+        socklen_t nl = m->msg_namelen;
+        m->msg_name = nullptr;
+        m->msg_namelen = 0;
+        ssize_t r = syscall(SYS_recvmsg, fd, m, f);
+        m->msg_name = name;
+        m->msg_namelen = nl;
+        if (r >= 0 && name) nlKernelAddr(name, &m->msg_namelen);
+        return r;
+    }
+    return syscall(SYS_recvmsg, fd, m, f);
+}
+
 NEST_EXPORT int close(int fd) {
     if (nest::vbinder::clientIsBinderFd(fd)) nest::vbinder::clientClose(fd);
+    if (NlFd* x = nlOf(fd)) {
+        syscall(SYS_close, x->peer);
+        x->peer = -1;
+        __atomic_sub_fetch(&g_nlCount, 1, __ATOMIC_RELAXED);
+    }
     long r = syscall(SYS_close, fd);
     if (r == -1 && errno == EINTR) return 0;  // the fd is gone either way (bionic semantics)
     return static_cast<int>(r);

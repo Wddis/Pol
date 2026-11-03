@@ -248,3 +248,23 @@ TEST(bpf_store_map_semantics) {
     bad.type = nest::bpfc::ARRAY; bad.keySize = 8; bad.valueSize = 4; bad.maxEntries = 1;
     EXPECT_EQ(st.create(bad), -EINVAL);
 }
+
+#include "netlink_emu.h"
+TEST(netlink_emu_acks_and_ends_dumps) {
+    struct H { uint32_t len; uint16_t type, flags; uint32_t seq, pid; };
+    H msgs[2] = {{16, 32, 1 | 4, 5, 0}, {16, 18, 1 | 0x300, 6, 0}};
+    auto out = nest::netlinkReplies(0, reinterpret_cast<const uint8_t*>(msgs), sizeof(msgs));
+    EXPECT_EQ(out.size(), 36u + 20u);
+    H a, d;
+    memcpy(&a, out.data(), 16);
+    memcpy(&d, out.data() + 36, 16);
+    EXPECT_EQ(a.type, 2);
+    EXPECT_EQ(a.seq, 5u);
+    EXPECT_EQ(d.type, 3);
+    EXPECT_EQ(d.seq, 6u);
+    H g = {16, 0x10, 1, 9, 0};  // generic netlink family lookup: not found
+    auto ge = nest::netlinkReplies(16, reinterpret_cast<const uint8_t*>(&g), sizeof(g));
+    int err;
+    memcpy(&err, ge.data() + 16, 4);
+    EXPECT_EQ(err, -ENOENT);
+}

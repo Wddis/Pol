@@ -6,6 +6,8 @@
 #include <sys/stat.h>
 #include <sys/utsname.h>
 #include <unistd.h>
+#include <utility>
+#include <vector>
 
 namespace nest {
 
@@ -59,6 +61,29 @@ bool applyAndroidProfile(TracerConfig& cfg, const std::string& state, const std:
     // The engine's state dir is visible at its own path: files the tracer substitutes for guest
     // ones (virtual /proc entries, bpf objects, preload copies) are host paths inside it.
     cfg.vfs.bind(state, state, false, true);
+
+    // Virtual network configuration (virtual network, step 2): the host's /proc/sys/net and
+    // /sys/class/net are closed to apps. The guest gets a loopback-only view; sysctl files appear
+    // when written (netd sets dozens), like cgroup control files.
+    for (const char* fam : {"ipv4", "ipv6"})
+        for (const char* kind : {"conf", "neigh"})
+            for (const char* dev : {"all", "default", "lo"})
+                mkdirs(state + "/proc/sys/net/" + fam + "/" + kind + "/" + dev);
+    mkdirs(state + "/proc/sys/net/core");
+    mkdirs(state + "/proc/sys/net/unix");
+    ok &= writeFile(state + "/proc/sys/net/ipv4/ip_forward", "0\n");
+    ok &= writeFile(state + "/proc/sys/net/ipv6/conf/all/forwarding", "0\n");
+    ok &= writeFile(state + "/proc/sys/net/ipv6/conf/default/disable_ipv6", "0\n");
+    cfg.vfs.bind("/proc/sys/net", state + "/proc/sys/net", false, true);
+    cfg.vfs.setCgroup("/proc/sys/net");
+    std::string lo = state + "/sys/class/net/lo";
+    mkdirs(lo);
+    for (const auto& kv : std::vector<std::pair<const char*, const char*>>{
+             {"ifindex", "1\n"}, {"iflink", "1\n"}, {"mtu", "65536\n"}, {"flags", "0x9\n"},
+             {"operstate", "unknown\n"}, {"carrier", "1\n"}, {"address", "00:00:00:00:00:00\n"},
+             {"type", "772\n"}, {"tx_queue_len", "1000\n"}})
+        ok &= writeFile(lo + "/" + kv.first, kv.second);
+    cfg.vfs.bind("/sys/class/net", state + "/sys/class/net", false, true);
     cfg.vfs.bind("/dev", state + "/dev");
     for (const char* d : {"null", "zero", "full", "random", "urandom", "tty", "ptmx", "ashmem", "tun"}) {
         std::string host = std::string("/dev/") + d;

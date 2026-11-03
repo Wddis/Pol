@@ -657,6 +657,21 @@ TEST(guest_seccomp_filter_is_accepted_not_installed) {
     EXPECT_EQ(r.out, "0 0 alive\n");
 }
 
+TEST(netlink_requests_get_kernel_like_answers) {
+    // netd waits for the kernel's ACK on every rule/route request and reads dumps to NLMSG_DONE.
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "-P", NEST_PRELOAD_PATH, "--", NEST_IDPROG_PATH, "nlack"});
+    EXPECT_EQ(r.out, "connect 0 send 32 reply type 2 seq 7 err 0\ndump reply type 3\n");
+}
+
+TEST(android_virtual_network_config) {
+    // netd writes sysctls under /proc/sys/net and lists /sys/class/net; both are closed to apps.
+    std::string state = mktmp();
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "--android", state, "-P", NEST_PRELOAD_PATH, "--", NEST_IDPROG_PATH,
+                  "write-existing", "/proc/sys/net/ipv6/conf/lo/accept_ra", "0", "cat", "/proc/sys/net/ipv6/conf/lo/accept_ra",
+                  "cat", "/sys/class/net/lo/ifindex"});
+    EXPECT_EQ(r.out, "0\n0\n1\n\n");
+}
+
 TEST(mount_requires_root_identity) {
     auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
     EXPECT_EQ(r.out, "-1 EPERM\n");

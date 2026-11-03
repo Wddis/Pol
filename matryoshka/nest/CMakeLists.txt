@@ -10,7 +10,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 add_compile_options(-Wall -Wextra -Wno-unused-parameter -Wno-missing-field-initializers -O2 -fno-exceptions)
 
 if(NEST_PRELOAD_ONLY)
-  add_library(nest_preload SHARED src/preload.cpp src/vfs.cpp src/vfs_share.cpp src/vbinder_client.cpp)
+  add_library(nest_preload SHARED src/preload.cpp src/vfs.cpp src/vfs_share.cpp src/vbinder_client.cpp src/netlink_emu.cpp)
   target_include_directories(nest_preload PRIVATE src)
   set_target_properties(nest_preload PROPERTIES CXX_VISIBILITY_PRESET hidden)
   target_compile_options(nest_preload PRIVATE $<$<STREQUAL:${ANDROID_ABI},armeabi-v7a>:-marm>)
@@ -19,13 +19,13 @@ if(NEST_PRELOAD_ONLY)
   return()
 endif()
 
-add_library(nest_core STATIC src/vfs.cpp src/arch.cpp src/tracer.cpp src/probe.cpp src/vbinder.cpp src/vfs_share.cpp src/android_profile.cpp src/guest_log.cpp src/bpf_emu.cpp)
+add_library(nest_core STATIC src/vfs.cpp src/arch.cpp src/tracer.cpp src/probe.cpp src/vbinder.cpp src/vfs_share.cpp src/android_profile.cpp src/guest_log.cpp src/bpf_emu.cpp src/netlink_emu.cpp)
 target_include_directories(nest_core PUBLIC src)
 set_target_properties(nest_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 # In-process fast path, LD_PRELOADed into guest processes. Self-contained (static C++ runtime) so
 # it loads in any guest regardless of the guest's own C++ libraries.
-add_library(nest_preload SHARED src/preload.cpp src/vfs.cpp src/vfs_share.cpp src/vbinder_client.cpp)
+add_library(nest_preload SHARED src/preload.cpp src/vfs.cpp src/vfs_share.cpp src/vbinder_client.cpp src/netlink_emu.cpp)
 target_include_directories(nest_preload PRIVATE src)
 set_target_properties(nest_preload PROPERTIES CXX_VISIBILITY_PRESET hidden
                                               LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/preload.map)
@@ -73,7 +73,7 @@ else()
   check_cxx_source_compiles("int main(){return 0;}" NEST_HAVE_M32)
   unset(CMAKE_REQUIRED_FLAGS)
   if(NEST_HAVE_M32)
-    add_library(nest_preload32 SHARED src/preload.cpp src/vfs.cpp src/vfs_share.cpp src/vbinder_client.cpp)
+    add_library(nest_preload32 SHARED src/preload.cpp src/vfs.cpp src/vfs_share.cpp src/vbinder_client.cpp src/netlink_emu.cpp)
     target_include_directories(nest_preload32 PRIVATE src)
     set_target_properties(nest_preload32 PROPERTIES CXX_VISIBILITY_PRESET hidden)
     target_compile_options(nest_preload32 PRIVATE -m32)

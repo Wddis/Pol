@@ -85,6 +85,32 @@ int main(int argc, char** argv) {
             // like many Android daemons: not dumpable any more (then only root may read our memory)
             int a = prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
             printf("%d %d\n", a, prctl(PR_GET_DUMPABLE, 0, 0, 0, 0));
+        } else if (!strcmp(c, "nlack")) {
+            // like netd's RouteController: send a request with NLM_F_ACK, read the kernel's answer;
+            // then a dump, which must end with NLMSG_DONE
+            int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, 0 /*NETLINK_ROUTE*/);
+            struct sockaddr_nl k = {};
+            k.nl_family = AF_NETLINK;
+            int c1 = connect(fd, reinterpret_cast<sockaddr*>(&k), sizeof(k));
+            struct { nlmsghdr h; unsigned char body[16]; } req = {};
+            req.h.nlmsg_len = sizeof(req);
+            req.h.nlmsg_type = 32 /*RTM_NEWRULE*/;
+            req.h.nlmsg_flags = NLM_F_REQUEST | NLM_F_ACK;
+            req.h.nlmsg_seq = 7;
+            ssize_t w = send(fd, &req, sizeof(req), 0);
+            unsigned char buf[256];
+            ssize_t n = recv(fd, buf, sizeof(buf), 0);
+            nlmsghdr* rh = reinterpret_cast<nlmsghdr*>(buf);
+            int err = n >= 20 ? *reinterpret_cast<int*>(buf + 16) : -999;
+            printf("connect %d send %zd reply type %d seq %u err %d\n", c1, w, n > 0 ? rh->nlmsg_type : -1,
+                   n > 0 ? rh->nlmsg_seq : 0, err);
+            req.h.nlmsg_type = 18 /*RTM_GETLINK*/;
+            req.h.nlmsg_flags = NLM_F_REQUEST | NLM_F_DUMP;
+            req.h.nlmsg_seq = 8;
+            send(fd, &req, sizeof(req), 0);
+            n = recv(fd, buf, sizeof(buf), 0);
+            printf("dump reply type %d\n", n > 0 ? rh->nlmsg_type : -1);
+            close(fd);
         } else if (!strcmp(c, "netlink")) {
             int proto = atoi(argv[++i]);
             int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, proto);

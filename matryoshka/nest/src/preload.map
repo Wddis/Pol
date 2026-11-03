@@ -8,5 +8,6 @@
     mkdir; mkdirat; unlink; unlinkat; rmdir;
     chmod; fchmodat; fchmod; rename; renameat;
     ioctl; mmap; mmap64; close; syscall;
+    socket; bind; connect; getsockname; setsockopt; send; sendto; sendmsg; write; writev; recvfrom; recvmsg;
   local: *;
 };
