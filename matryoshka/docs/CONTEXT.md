@@ -356,8 +356,18 @@ Wayland-запросов.
 проверки — убрать следы Waydroid/движка), профиль «сильного устройства» в ro.product.* (выбор
 профиля в настройках VM). Ограничение: не обходим Play Integrity/банковскую аттестацию.
 
+### 0.6.1 — экран на телефоне работает
+Телефон 0.6.0: видна загрузочная анимация и логотип LineageOS (кадры идут), Boot is finished 98 с.
+Потом чёрный экран и перезапуск: Watchdog «Blocked in handler on android.fg» — `IVold.monitor()`
+ждёт vold, а vold держит crypt-lock в `prepareUserStorage` (UserController.finishUserUnlocking →
+UserDataPreparer, CE-хранилище при разблокировке пользователя). Без разблокировки лаунчер не
+рисуется. Где висит vold — неизвестно: добавлены `nest: threads <pid> (<cmdline>): tid[wchan
+syscall args]` для vold/vdc/sgdisk каждые 60 с и раздел лога «guest storage log» (vold, vdc,
+StorageManager, UserController). Кандидаты: SetDefaultAcl (system.posix_acl_default),
+vold_prepare_subdirs (fork/exec + restorecon), квоты проектов (FS_IOC_FSSETXATTR).
+
 ### Ждём от владельца
-Тест **0.6.0-nest** (было 0.5.10 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.6.1-nest** (было 0.6.0, 0.5.10 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

@@ -309,6 +309,45 @@ int main(int argc, char** argv) {
                         closedir(d);
                     }
                     fprintf(stderr, "nest: ps total=%d not-running/sleeping:%s\n", total, odd.empty() ? " none" : odd.c_str());
+                    // Storage daemon and its helpers: system_server's watchdog kills everything when
+                    // vold stops answering, so show where each of their threads waits.
+                    if (DIR* d = opendir("/proc")) {
+                        while (dirent* e = readdir(d)) {
+                            if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+                            char path[96], cmd[1024] = {};
+                            snprintf(path, sizeof(path), "/proc/%s/cmdline", e->d_name);
+                            int fd = open(path, O_RDONLY | O_CLOEXEC);
+                            if (fd < 0) continue;
+                            ssize_t n = read(fd, cmd, sizeof(cmd) - 1);
+                            close(fd);
+                            if (n <= 0) continue;
+                            for (ssize_t k = 0; k < n; k++) if (!cmd[k]) cmd[k] = ' ';
+                            if (!strstr(cmd, "/system/bin/vold") && !strstr(cmd, "/system/bin/sgdisk") &&
+                                !strstr(cmd, "/system/bin/vdc"))
+                                continue;
+                            std::string line = std::string("nest: threads ") + e->d_name + " (" + cmd + "):";
+                            snprintf(path, sizeof(path), "/proc/%s/task", e->d_name);
+                            if (DIR* td = opendir(path)) {
+                                while (dirent* t = readdir(td)) {
+                                    if (t->d_name[0] < '0' || t->d_name[0] > '9') continue;
+                                    char f[160], wchan[64] = {}, sc[96] = {};
+                                    snprintf(f, sizeof(f), "/proc/%s/task/%s/wchan", e->d_name, t->d_name);
+                                    if ((fd = open(f, O_RDONLY | O_CLOEXEC)) >= 0) { ssize_t r = read(fd, wchan, sizeof(wchan) - 1); (void)r; close(fd); }
+                                    snprintf(f, sizeof(f), "/proc/%s/task/%s/syscall", e->d_name, t->d_name);
+                                    if ((fd = open(f, O_RDONLY | O_CLOEXEC)) >= 0) {
+                                        ssize_t r = read(fd, sc, sizeof(sc) - 1);
+                                        close(fd);
+                                        if (r > 0 && sc[r - 1] == '\n') sc[r - 1] = 0;
+                                        if (char* sp = strchr(sc, ' ')) if ((sp = strchr(sp + 1, ' '))) if ((sp = strchr(sp + 1, ' '))) *sp = 0;
+                                    }
+                                    line += std::string(" ") + t->d_name + "[" + wchan + " " + sc + "]";
+                                }
+                                closedir(td);
+                            }
+                            fprintf(stderr, "%s\n", line.c_str());
+                        }
+                        closedir(d);
+                    }
                 }
                 fprintf(stderr, "nest: t=%ds mem_avail=%ldMB swap_free=%ldMB frames=%llu\n", t, availKb / 1024,
                         swapFreeKb / 1024, static_cast<unsigned long long>(wayland ? wayland->frames() : 0));

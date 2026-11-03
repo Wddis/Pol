@@ -73,6 +73,14 @@ object TesterLog {
                 w.appendLine("-- guest logcat errors, whole boot (E/F, crashes, watchdog; repeats folded)")
                 GuestLogDigest.errors(f, 5000).forEach { w.appendLine(it) }
             }
+            // Storage: vold / StorageManager / user unlock (the watchdog kills the system when vold hangs).
+            NestGuest.logcat(context).takeIf { it.exists() }?.let { f ->
+                w.appendLine("-- guest storage log, whole boot (vold, vdc, StorageManager, UserController)")
+                GuestLogDigest.grep(f, 600) {
+                    it.contains("/vold(") || it.contains("vdc(") || it.contains("StorageManager") ||
+                        it.contains("UserController(") || it.contains("UserDataPreparer")
+                }.forEach { w.appendLine(it) }
+            }
             GuestLogDigest.guestReports(NestGuest.dataDir(context)).forEach { w.appendLine(it) }
             w.appendLine()
 
