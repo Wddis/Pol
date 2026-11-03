@@ -42,8 +42,10 @@ std::mutex g_mu;
 BinderFd* g_fds[kMaxTrackedFd];  // fd -> state (only binder fds are non-null)
 std::atomic<int> g_count{0};
 
-pid_t myPid() { return static_cast<pid_t>(syscall(SYS_getpid)); }
-pid_t myTid() { return static_cast<pid_t>(syscall(SYS_gettid)); }
+// Fast path (tagged): checked on every binder call, a tracer stop each time cost ~500 stops/s.
+// Real ids on purpose (the guest's init sees itself as pid 1, the broker wants the host's).
+pid_t myPid() { return static_cast<pid_t>(taggedSyscall(SYS_getpid)); }
+pid_t myTid() { return static_cast<pid_t>(taggedSyscall(SYS_gettid)); }
 
 // The engine's own descriptors live in the guest's fd table. Guest code that dup2()s onto fixed
 // numbers or closes descriptors it did not open must not hit them: move them high, far from where

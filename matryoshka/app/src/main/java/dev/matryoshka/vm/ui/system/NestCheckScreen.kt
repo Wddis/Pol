@@ -170,7 +170,7 @@ private fun NestBootPanel() {
             lines = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { NestGuest.tail(f, 30) }
             stage = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { NestGuest.bootStage(context) }
             if (state is NestGuest.State.Stopped) break
-            kotlinx.coroutines.delay(2000)
+            kotlinx.coroutines.delay(if (showScreen) 6000 else 2000)  // the guest's screen needs the CPU more
         }
     }
     Panel {

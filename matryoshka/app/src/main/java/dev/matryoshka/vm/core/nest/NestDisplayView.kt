@@ -41,20 +41,28 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
     private val input = Executors.newSingleThreadExecutor()
     private var sock: LocalSocket? = null
 
-    private val tick = object : Runnable {
-        override fun run() {
-            if (poll()) invalidate()
-            postOnAnimation(this)
-        }
-    }
+    // Frames are copied on a background thread into a spare bitmap, then swapped in: the UI thread
+    // only draws (it also has to deliver touches without delay).
+    @Volatile private var running = false
+    private var spare: Bitmap? = null
+    private val frameLock = Any()
+    private var reader: Thread? = null
 
     override fun onAttachedToWindow() {
         super.onAttachedToWindow()
-        postOnAnimation(tick)
+        running = true
+        reader = Thread({
+            while (running) {
+                val fresh = runCatching { poll() }.getOrDefault(false)
+                if (fresh) postInvalidateOnAnimation()
+                Thread.sleep(if (fresh) 4L else 8L)
+            }
+        }, "nest-display").apply { isDaemon = true; start() }
     }
 
     override fun onDetachedFromWindow() {
-        removeCallbacks(tick)
+        running = false
+        reader?.interrupt()
         input.execute { runCatching { sock?.close() }; sock = null }
         super.onDetachedFromWindow()
     }
@@ -82,9 +90,8 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
         val stride = m.getInt(12)
         val format = m.getInt(16)
         if (w <= 0 || h <= 0 || HEADER + stride.toLong() * h > mappedSize) return false
-        val bmp = bitmap?.takeIf { it.width == w && it.height == h }
-            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bitmap = it }
-        fbW = w; fbH = h
+        val bmp = spare?.takeIf { it.width == w && it.height == h }
+            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
         if (format == FMT_ABGR && stride == w * 4) {
             // The engine always writes R,G,B,A bytes: the bitmap's own memory layout, one copy.
             val b = m.duplicate()
@@ -109,11 +116,20 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
             bmp.setPixels(px, 0, w, 0, 0, w, h)
         }
         lastSeq = seq
+        synchronized(frameLock) {
+            spare = bitmap?.takeIf { it.width == w && it.height == h }
+            bitmap = bmp
+            fbW = w; fbH = h
+        }
         return true
     }
 
     override fun onDraw(canvas: Canvas) {
         canvas.drawColor(Color.BLACK)
+        synchronized(frameLock) { drawFrame(canvas) }
+    }
+
+    private fun drawFrame(canvas: Canvas) {
         val bmp = bitmap ?: run {
             canvas.drawText(waitingText, width / 2f, height / 2f, textPaint)
             return

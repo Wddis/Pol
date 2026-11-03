@@ -16,8 +16,8 @@ android {
         // and the Nest engine runs the guest system's own binaries from there (like Termux).
         // Consequence: the APK is distributed outside Google Play.
         targetSdk = 28
-        versionCode = 32
-        versionName = "0.7.1-nest"
+        versionCode = 33
+        versionName = "0.7.2-nest"
 
         // Phones only: the Nest engine and the guest image are arm64.
         ndk { abiFilters += listOf("arm64-v8a") }

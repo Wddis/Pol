@@ -388,7 +388,7 @@ void noteProcOpen(const char* path, long r) {
     int f = static_cast<int>(syscall(SYS_openat, AT_FDCWD, logPath, O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644));
     if (f < 0) return;
     char line[600];
-    int n = snprintf(line, sizeof(line), "pid %d: open %s failed: %s\n", static_cast<int>(syscall(SYS_getpid)),
+    int n = snprintf(line, sizeof(line), "pid %d: open %s failed: %s\n", static_cast<int>(taggedSyscall(SYS_getpid)),
                      path, strerror(static_cast<int>(-r)));
     syscall(SYS_write, f, line, n);
     syscall(SYS_close, f);
@@ -643,7 +643,7 @@ NEST_EXPORT int getsockname(int fd, struct sockaddr* a, socklen_t* l) {
         if (!a || !l) { errno = EFAULT; return -1; }
         unsigned char sa[12] = {};
         uint16_t fam = kAfNetlink;
-        uint32_t pid = static_cast<uint32_t>(syscall(SYS_getpid));
+        uint32_t pid = static_cast<uint32_t>(taggedSyscall(SYS_getpid));
         memcpy(sa, &fam, 2);
         memcpy(sa + 4, &pid, 4);
         memcpy(a, sa, *l < sizeof(sa) ? *l : sizeof(sa));
