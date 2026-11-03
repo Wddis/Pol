@@ -115,6 +115,106 @@ GpuSetup setupHostGpu(TracerConfig& cfg, const std::string& hostVendor) {
         bound++;
     };
 
+    // The vendor's buffer allocator service (IAllocator 3.0/4.0): found through the vendor's init
+    // scripts; its binary is copied into the engine's state (an app may run files it owns).
+    std::string allocatorBin, allocatorRc;
+    if (DIR* d = opendir((hostVendor + "/etc/init").c_str())) {
+        while (dirent* e = readdir(d)) {
+            std::string rc = hostVendor + "/etc/init/" + e->d_name;
+            FILE* f = fopen(rc.c_str(), "re");
+            if (!f) continue;
+            std::string text;
+            char buf[4096];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+            fclose(f);
+            // "service <name> /vendor/bin/hw/<...allocator...>" and its option lines
+            size_t at = 0;
+            while ((at = text.find("service ", at)) != std::string::npos) {
+                size_t eol = text.find('\n', at);
+                std::string head = text.substr(at, eol == std::string::npos ? std::string::npos : eol - at);
+                char name[128] = {}, path[256] = {};
+                if (sscanf(head.c_str(), "service %127s %255s", name, path) == 2 && strstr(path, "allocator") &&
+                    strstr(path, "/vendor/bin/hw/") == path && allocatorBin.empty()) {
+                    size_t end = text.find("\nservice ", at + 1);
+                    allocatorRc = text.substr(at, end == std::string::npos ? std::string::npos : end + 1 - at);
+                    allocatorBin = hostVendor + std::string(path).substr(7);  // "/vendor" -> hostVendor
+                }
+                at += 8;
+            }
+        }
+        closedir(d);
+    }
+    if (!allocatorBin.empty() && readable(allocatorBin)) {
+        std::string guestPath = "/vendor" + allocatorBin.substr(hostVendor.size());
+        std::string copy = cfg.stateDir + "/gpu-" + allocatorBin.substr(allocatorBin.rfind('/') + 1);
+        int in = open(allocatorBin.c_str(), O_RDONLY | O_CLOEXEC);
+        int out = open(copy.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0755);
+        bool copied = in >= 0 && out >= 0;
+        char buf[65536];
+        ssize_t n;
+        while (copied && (n = read(in, buf, sizeof(buf))) > 0) copied = write(out, buf, static_cast<size_t>(n)) == n;
+        if (in >= 0) close(in);
+        if (out >= 0) close(out);
+        if (copied) {
+            bindFile(guestPath, copy);
+            std::string initDir;
+            if (guestHost("/vendor/etc/init", initDir))
+                if (FILE* f = fopen((initDir + "/nest-gpu-allocator.rc").c_str(), "we")) {
+                    fputs(allocatorRc.c_str(), f);
+                    fclose(f);
+                }
+            g.notes.push_back("allocator service " + guestPath);
+        } else {
+            g.notes.push_back("cannot copy " + allocatorBin);
+            allocatorBin.clear();
+        }
+    } else {
+        g.notes.push_back(allocatorBin.empty() ? "no allocator service in host init scripts" : "allocator unreadable: " + allocatorBin);
+        allocatorBin.clear();
+    }
+    // Declare the vendor's graphics HALs in the guest's VINTF manifest (copied from the host's).
+    {
+        std::string hals;
+        auto scanManifest = [&](const std::string& file) {
+            FILE* f = fopen(file.c_str(), "re");
+            if (!f) return;
+            std::string text;
+            char buf[4096];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+            fclose(f);
+            size_t at = 0;
+            while ((at = text.find("<hal", at)) != std::string::npos) {
+                size_t end = text.find("</hal>", at);
+                if (end == std::string::npos) break;
+                std::string block = text.substr(at, end + 6 - at);
+                at = end + 6;
+                bool gfx = block.find("graphics.allocator") != std::string::npos || block.find("graphics.mapper") != std::string::npos ||
+                           block.find("display.allocator") != std::string::npos || block.find("display.mapper") != std::string::npos;
+                bool v2 = block.find("<version>2.") != std::string::npos;  // the guest has its own 2.x
+                if (gfx && !v2) hals += "    " + block + "\n";
+            }
+        };
+        scanManifest(hostVendor + "/etc/vintf/manifest.xml");
+        if (DIR* d = opendir((hostVendor + "/etc/vintf/manifest").c_str())) {
+            while (dirent* e = readdir(d))
+                if (strstr(e->d_name, ".xml")) scanManifest(hostVendor + "/etc/vintf/manifest/" + e->d_name);
+            closedir(d);
+        }
+        std::string fragDir;
+        if (!hals.empty() && guestHost("/vendor/etc/vintf/manifest", fragDir)) {
+            mkdir(fragDir.c_str(), 0755);
+            if (FILE* f = fopen((fragDir + "/nest-gpu.xml").c_str(), "we")) {
+                fprintf(f, "<manifest version=\"2.0\" type=\"device\">\n%s</manifest>\n", hals.c_str());
+                fclose(f);
+            }
+            g.notes.push_back("VINTF: host graphics HALs declared");
+        } else {
+            g.notes.push_back("VINTF: no host graphics HAL entries found");
+        }
+    }
+
     for (const char* lib : {"lib64", "lib"}) {
         const std::string hv = hostVendor + "/" + lib;
         const std::string gv = std::string("/vendor/") + lib;
@@ -135,6 +235,20 @@ GpuSetup setupHostGpu(TracerConfig& cfg, const std::string& hostVendor) {
             bindFile(gv + "/hw/gralloc." + g.platform + ".so", gralloc);
             todo.push_back(gralloc);
         }
+        // The vendor's own mapper implementations (IMapper 3.0/4.0, passthrough): the guest's
+        // mapper 2.1 cannot drive a modern gralloc1 module (missing functions).
+        if (DIR* d = opendir((hv + "/hw").c_str())) {
+            while (dirent* e = readdir(d)) {
+                std::string n = e->d_name;
+                bool mapper = (n.rfind("android.hardware.graphics.mapper@", 0) == 0 && n.find("@2.") == std::string::npos) ||
+                              n.rfind("vendor.qti.hardware.display.mapper", 0) == 0;
+                if (!mapper || n.find(".so") == std::string::npos || !readable(hv + "/hw/" + n)) continue;
+                bindFile(gv + "/hw/" + n, hv + "/hw/" + n);
+                todo.push_back(hv + "/hw/" + n);
+            }
+            closedir(d);
+        }
+        if (std::string(lib) == "lib64" && !allocatorBin.empty()) todo.push_back(allocatorBin);
         // whatever those need from the host's vendor that the guest does not provide
         while (!todo.empty()) {
             std::string f = todo.back();

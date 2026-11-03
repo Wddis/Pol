@@ -466,8 +466,19 @@ hwc берёт create_buffer_generic (wl_shm) + update_shm_buffer_generic = egl_
 Без GPU (стенд) — `nest: gpu: software rendering (SwiftShader)`. Тест elf_needed_lists_dependencies.
 Флажок в приложении «Видеочип телефона для гостя», NestGuest.useGpu.
 
+### 0.8.1 — GPU: аллокатор и mapper телефона
+0.8.0 на телефоне: Adreno в госте ЗАГРУЗИЛСЯ (AdrenoGLES, Driver Path /vendor/lib64/egl/...), 40 файлов.
+Падение: «gralloc-mapper is missing» — гостевой mapper 2.1 (passthrough над gralloc1 модулем)
+требует gralloc1 function 23 (VALIDATE_BUFFER_SIZE), qdgralloc её не даёт. Без флажка — всё как раньше.
+Фикс: (1) служба-аллокатор хоста ищется в host /vendor/etc/init/*.rc («service X /vendor/bin/hw/*allocator*»),
+бинарь копируется в state (exec из данных приложения разрешён при targetSdk 28), bind на тот же
+гостевой путь, блок service → гостевой /vendor/etc/init/nest-gpu-allocator.rc; (2) host mapper
+3.0/4.0 qti и vendor.qti.hardware.display.mapper* из /vendor/lib*/hw + их DT_NEEDED; (3) VINTF:
+<hal> блоки graphics/display allocator/mapper (кроме 2.x) из host /vendor/etc/vintf/manifest*.xml →
+гостевой /vendor/etc/vintf/manifest/nest-gpu.xml. GraphicBufferMapper/Allocator берут 4.0 первыми.
+
 ### Ждём от владельца
-Тест **0.8.0-nest** (было 0.7.2 … 0.5.1): с флажком GPU; если чёрный экран — без него. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.8.1-nest** (было 0.8.0 … 0.5.1): с флажком GPU. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14
