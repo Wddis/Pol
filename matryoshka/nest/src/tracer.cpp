@@ -2520,6 +2520,21 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
         } else if (sig == SIGTRAP) {
             ptrace(PTRACE_CONT, tid, nullptr, nullptr);  // plain exec trap
         } else {
+            if (sig == SIGPIPE && cfg_.verbose) {
+                // Which descriptor broke: SIGPIPE ends most daemons, and the culprit is often a peer of ours.
+                siginfo_t si{};
+                ptrace(PTRACE_GETSIGINFO, tid, nullptr, &si);
+                Regs r;
+                char target[160] = "?";
+                if (getRegs(tid, r)) {
+                    char link[64];
+                    snprintf(link, sizeof(link), "/proc/%d/fd/%d", tid, static_cast<int>(r.arg[0]));
+                    ssize_t n = readlink(link, target, sizeof(target) - 1);
+                    target[n > 0 ? n : 0] = 0;
+                    fprintf(stderr, "[%d] SIGPIPE (code %d): syscall %ld on fd %d -> %s\n", tid, si.si_code,
+                            static_cast<long>(r.nr), static_cast<int>(r.arg[0]), target);
+                }
+            }
             ptrace(PTRACE_CONT, tid, nullptr, reinterpret_cast<void*>(static_cast<long>(sig)));
         }
     }

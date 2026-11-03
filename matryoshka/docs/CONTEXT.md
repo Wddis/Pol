@@ -244,8 +244,30 @@ socket() настоящий → движок подменит → netd не до
 surfaceflinger → zygote → audioserver/netd/... Следующий этап — графика (свой composer/
 Wayland-сервер). `nest/tools/bench/setup-binfmt.sh` — перерегистрация qemu после смены контейнера.
 
+### Графика, шаг 1 + system_server (0.5.2)
+- `wayland_server.{h,cpp}`: свой Wayland-сервер для `hwcomposer.waydroid.so` (wl_shm), кадры →
+  `STATE/display.fb` (заголовок NFB1 64 байта + пиксели), касания ← `STATE/input.sock`
+  (датаграммы `d|u|m ID X Y`). Приложение: `NestDisplayView.kt` (кнопка «Показать экран гостя»),
+  `--display 720xH@320` по пропорциям телефона.
+- vbinder: экземпляр на каждый open (`Hello::inst`), сокеты потоков на высоких fd + переподключение.
+- **Утечка pipe движка (guest_log, без O_CLOEXEC) в init** → zygote: «Unsupported st_mode for FD 5:
+  FIFO» при fork system_server. Исправлено (pipe2 O_CLOEXEC). Касалось и телефона.
+- `sys.use_memfd=true` в копии vendor build.prop: libcutils берёт memfd, если ядро умеет
+  F_SEAL_FUTURE_WRITE (5.1+), иначе сам откатывается на /dev/ashmem (телефон 4.14).
+- Стенд-only (`NEST_HIDE_EMU_THREADS=1`, ставить только на qemu): трассировщик прячет поток qemu
+  (comm linker/linker64) из getdents64 `/proc/N/task` (иначе zygote вечно ждёт «1 поток» перед
+  fork); preload подменяет `set_*_seccomp_filter` / `install_setuidgid_seccomp_filter`
+  (C++-символы libandroid_runtime) и `minijail_use_seccomp_filter` — qemu сам отвергает фильтры.
+  `NEST_BENCH_ENV="QEMU_STRACE=1;QEMU_LOG_FILENAME=/ql/q-%d"` — strace qemu по процессам
+  (каталог `$R/ql`, chmod 777). ART-код (libopenjdk) preload-обёртки НЕ видит (другой namespace).
+- Стенд: **system_server стартует** («Entered the Android system server!»), доходит до
+  StartWindowManagerService, bootanimation запускается. Цикл: vendor.gralloc-2-0 / audio-hal /
+  omx получают SIGPIPE (на qemu место не видно) → onrestart surfaceflinger → zygote.
+  wificond падает в цикле. Трассировщик пишет `SIGPIPE: syscall … fd …` при `-v` (точно на arm64?
+  arg0 = x0 уже перезаписан — смотреть с осторожностью).
+
 ### Ждём от владельца
-Тест **0.5.1-nest** на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.5.2-nest** (было 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

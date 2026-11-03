@@ -389,7 +389,9 @@ TEST(preload_exports_only_wrappers) {
         std::string s = trim(line);
         if (s.empty()) continue;
         total++;
-        if (s.rfind("_Z", 0) == 0 || s.rfind("__cxa", 0) == 0 || s.rfind("__gxx", 0) == 0) {
+        // Android's own C++ seccomp helpers are wrapped on purpose (bench overrides, see preload.cpp).
+        bool seccompHelper = s.find("seccomp_filter") != std::string::npos;
+        if (!seccompHelper && (s.rfind("_Z", 0) == 0 || s.rfind("__cxa", 0) == 0 || s.rfind("__gxx", 0) == 0)) {
             unexpected++;
             fprintf(stderr, "  unexpected export: %s\n", s.c_str());
         }

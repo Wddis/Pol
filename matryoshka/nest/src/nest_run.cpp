@@ -152,6 +152,9 @@ int main(int argc, char** argv) {
             }
             if (!text.empty() && text.back() != '\n') text += '\n';
             text += "# Matryoshka Nest display\nro.sf.lcd_density=" + std::to_string(display.dpi) + "\n";
+            // Shared memory: memfd where the kernel has sealing for it (5.1+; libcutils checks and
+            // falls back to /dev/ashmem otherwise, e.g. on a 4.14 phone kernel).
+            text += "sys.use_memfd=true\n";
             if (FILE* f = fopen(copy.c_str(), "we")) {
                 fwrite(text.data(), 1, text.size(), f);
                 fclose(f);
@@ -185,6 +188,16 @@ int main(int argc, char** argv) {
     // Host identity of every guest file (virtual ownership in the preload's stat wrappers).
     cfg.injectEnv.push_back("NEST_HOST_UID=" + std::to_string(getuid()));
     if (getenv("NEST_HIDE_EMU_THREADS")) cfg.injectEnv.push_back("NEST_HIDE_EMU_THREADS=1");  // bench (qemu-user)
+    // bench: extra variables for every guest program, ';'-separated (e.g. QEMU_STRACE=1;QEMU_LOG_FILENAME=/tmp/q-%d)
+    if (const char* extra = getenv("NEST_BENCH_ENV")) {
+        std::string all = extra;
+        for (size_t at = 0; at < all.size();) {
+            size_t end = all.find(';', at);
+            if (end == std::string::npos) end = all.size();
+            if (end > at) cfg.injectEnv.push_back(all.substr(at, end - at));
+            at = end + 1;
+        }
+    }
     cfg.injectEnv.push_back("NEST_HOST_GID=" + std::to_string(getgid()));
     // Guest logcat tee: liblog's connect to /dev/socket/logdw reaches the tee, which keeps a copy
     // in STATE/logcat.txt and forwards to the guest logd's socket (created by guest init's bind).

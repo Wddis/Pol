@@ -241,7 +241,7 @@ inline NlFd* nlOf(int fd) {
 
 ssize_t nlSend(NlFd* n, const void* buf, size_t len) {
     std::vector<uint8_t> rep = nest::netlinkReplies(n->proto, static_cast<const uint8_t*>(buf), len);
-    if (!rep.empty()) syscall(SYS_sendto, n->peer, rep.data(), rep.size(), MSG_DONTWAIT, nullptr, 0);
+    if (!rep.empty()) syscall(SYS_sendto, n->peer, rep.data(), rep.size(), MSG_DONTWAIT | MSG_NOSIGNAL, nullptr, 0);
     return static_cast<ssize_t>(len);
 }
 
@@ -615,4 +615,9 @@ __attribute__((visibility("default"))) bool install_setuidgid_seccomp_filter(uin
     if (emulatedCpu()) return true;
     auto real = reinterpret_cast<bool (*)(uint32_t, uint32_t)>(dlsym(RTLD_NEXT, "_Z32install_setuidgid_seccomp_filterjj"));
     return real && real(lo, hi);
+}
+// minijail (media and HAL services): same, its filter would be refused by the emulator.
+extern "C" __attribute__((visibility("default"))) void minijail_use_seccomp_filter(struct minijail* j) {
+    if (emulatedCpu()) return;
+    if (auto real = reinterpret_cast<void (*)(struct minijail*)>(dlsym(RTLD_NEXT, "minijail_use_seccomp_filter"))) real(j);
 }
