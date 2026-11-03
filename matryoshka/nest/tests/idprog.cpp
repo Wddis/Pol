@@ -349,6 +349,15 @@ int main(int argc, char** argv) {
             if (!f) { printf("write-failed %s\n", strerror(errno)); ++i; continue; }
             fputs(argv[++i], f);
             fclose(f);
+        } else if (!strcmp(c, "peercred")) {  // what a daemon sees of its peer (here: itself)
+            int sv[2];
+            socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, sv);
+            struct ucred uc{};
+            socklen_t l = sizeof(uc);
+            getsockopt(sv[0], SOL_SOCKET, SO_PEERCRED, &uc, &l);
+            printf("pid %s uid %u gid %u\n", uc.pid == getpid() ? "self" : "other", uc.uid, uc.gid);
+            close(sv[0]);
+            close(sv[1]);
         } else if (!strcmp(c, "nl-stale")) {  // netlink fd closed behind the preload, number reused
             int nl = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, 0);
             syscall(SYS_close, nl);  // like bionic's fdsan: not through close()

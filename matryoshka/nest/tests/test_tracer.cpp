@@ -674,6 +674,13 @@ TEST(android_virtual_network_config) {
     EXPECT_EQ(r.out, "0\n0\n1\n\n");
 }
 
+TEST(peer_credentials_are_virtual) {
+    // init's property service tells its own requests apart by SO_PEERCRED's pid (1), daemons
+    // authorize clients by its uid: both must be the guest's view, not the host's.
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "--pid1", "-u", "1000", "--", NEST_IDPROG_PATH, "peercred"});
+    EXPECT_EQ(r.out, "pid self uid 1000 gid 1000\n");
+}
+
 TEST(stale_netlink_fd_does_not_swallow_a_reused_number) {
     // A netlink fd closed behind the preload (bionic fdsan) must not capture the socket that
     // gets its number next (it swallowed binder hellos: wificond stopped serving calls).

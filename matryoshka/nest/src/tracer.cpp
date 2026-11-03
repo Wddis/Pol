@@ -76,6 +76,7 @@ enum class Kind {
     StatFix,    // untagged fstat (static binaries, raw syscalls): virtual owner patched in at exit
     Fchmod,     // untagged fchmod: virtual mode (see recordMode)
     GuestSeccomp,  // seccomp(): guest filters (minijail) would block the engine's own calls (binder)
+    PeerCred,   // getsockopt(SO_PEERCRED): the virtual init's peer pid reads 1 (init tells its own requests apart by it)
     TaskDir,    // bench only (NEST_HIDE_EMU_THREADS): getdents64 of /proc/N/task without the CPU emulator's threads
 };
 
@@ -167,6 +168,7 @@ std::vector<Spec> buildSpecs() {
     s.push_back({SYS_fstat, Kind::StatFix});
     s.push_back({SYS_fchmod, Kind::Fchmod});
     s.push_back({SYS_seccomp, Kind::GuestSeccomp});
+    s.push_back({SYS_getsockopt, Kind::PeerCred});
     s.push_back({SYS_connect, Kind::Sock});
     s.push_back({SYS_bind, Kind::Sock});
     for (long nr : {SYS_getsockname, SYS_getpeername, SYS_accept, SYS_accept4}) s.push_back({nr, Kind::SockName});
@@ -2108,6 +2110,15 @@ void Tracer::handleSeccomp(pid_t tid) {
                     }
                 }
                 break;
+            case Kind::PeerCred:
+                if (cfg_.fakeRoot && r.arg[1] == SOL_SOCKET && r.arg[2] == SO_PEERCRED && r.arg[3]) {
+                    Pending p;
+                    p.nr = -6;
+                    p.buf = r.arg[3];
+                    pending_[tid] = p;
+                    wantExit = true;
+                }
+                break;
             case Kind::TaskDir: {
                 char link[64], target[128] = {};
                 snprintf(link, sizeof(link), "/proc/%d/fd/%d", tid, static_cast<int>(r.arg[0]));
@@ -2345,6 +2356,31 @@ void Tracer::handleSyscallExit(pid_t tid) {
     }
     long ret = static_cast<long>(r.ret);
     if (r.compat) ret = static_cast<int32_t>(static_cast<uint32_t>(ret));
+    if (p.nr == -6) {  // SO_PEERCRED: the real pid of the virtual init is 1 to the guest
+        // and the peer's virtual uid/gid: daemons authorize their clients by them (init's
+        // property service, logd, lmkd...), the host would say "the app" for everybody.
+        struct ucred uc;
+        if (ret == 0 && readMem(tid, p.buf, &uc, sizeof(uc)) && uc.pid > 0) {
+            bool known = false;
+            Creds c;
+            {
+                std::lock_guard<std::mutex> g(credsMu_);
+                auto it = creds_.find(uc.pid);
+                if (it != creds_.end()) {
+                    c = it->second;
+                    known = true;
+                }
+            }
+            if (known) {
+                uc.uid = c.euid;
+                uc.gid = c.egid;
+            }
+            if (cfg_.virtualInitPid && uc.pid == initTgid_) uc.pid = 1;
+            if (known || uc.pid == 1) writeMem(tid, p.buf, &uc, sizeof(uc));
+        }
+        ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+        return;
+    }
     if (p.nr == -5) {  // bench: /proc/N/task listing without the emulator's threads
         if (ret > 0) {
             std::vector<uint8_t> b(static_cast<size_t>(ret)), out;
