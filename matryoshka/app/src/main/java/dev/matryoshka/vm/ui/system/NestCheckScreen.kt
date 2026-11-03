@@ -199,8 +199,10 @@ private fun NestBootPanel() {
                     progress = { s.done.toFloat() / s.total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
                 is NestGuest.State.Extracting -> LinearProgressIndicator(
                     progress = { s.done.toFloat() / s.total.coerceAtLeast(1) }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp))
-                NestGuest.State.Verifying, is NestGuest.State.Running ->
-                    LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                // (not while the guest's screen is shown: an endless animation redraws the whole window)
+                NestGuest.State.Verifying -> LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
+                is NestGuest.State.Running ->
+                    if (!showScreen) LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 8.dp))
                 else -> Unit
             }
             Spacer(Modifier.height(10.dp))

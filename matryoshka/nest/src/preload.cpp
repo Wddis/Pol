@@ -20,6 +20,7 @@
 #include <sys/mman.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
+#include <sys/un.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -636,7 +637,20 @@ NEST_EXPORT int bind(int fd, const struct sockaddr* a, socklen_t l) {
 }
 NEST_EXPORT int connect(int fd, const struct sockaddr* a, socklen_t l) {
     if (nlOf(fd)) return 0;
-    return static_cast<int>(syscall(SYS_connect, fd, a, l));
+    int r = static_cast<int>(syscall(SYS_connect, fd, a, l));
+    // Waydroid's audio HAL retries a PulseAudio server that the VM does not have yet, dozens of
+    // times a second (each attempt a burst of traced syscalls): failed attempts are slowed down.
+    if (r != 0 && a && a->sa_family == AF_UNIX && l > sizeof(sa_family_t)) {
+        const char* path = reinterpret_cast<const sockaddr_un*>(a)->sun_path;
+        size_t n = strnlen(path, l - sizeof(sa_family_t));
+        static const char kPulse[] = "/pulse/native";
+        if (n >= sizeof(kPulse) - 1 && memcmp(path + n - (sizeof(kPulse) - 1), kPulse, sizeof(kPulse) - 1) == 0) {
+            int e = errno;
+            usleep(300000);
+            errno = e;
+        }
+    }
+    return r;
 }
 NEST_EXPORT int getsockname(int fd, struct sockaddr* a, socklen_t* l) {
     if (nlOf(fd)) {

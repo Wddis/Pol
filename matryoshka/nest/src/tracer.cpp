@@ -2016,6 +2016,7 @@ void Tracer::handleSeccomp(pid_t tid) {
     }
     if (r.nr < TracerProfile::kSlots) profile_.bySyscall[r.compat ? 1 : 0][r.nr].fetch_add(1, std::memory_order_relaxed);
     profile_.byPid[tgidOf(tid) & 0xffff].fetch_add(1, std::memory_order_relaxed);
+    if (!r.compat && r.nr == SYS_prctl && r.arg[0] < 64) profile_.prctlOption[r.arg[0]].fetch_add(1, std::memory_order_relaxed);
     const Spec* s = findSpec(static_cast<long>(r.nr), r.compat);
     bool wantExit = false;
     if (s) {

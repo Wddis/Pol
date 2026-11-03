@@ -439,6 +439,20 @@ int main(int argc, char** argv) {
                     };
                     scan("/proc", "");
                     scan("/proc/self/task", "engine-thread ");
+                    // the app's own threads (its UI and the screen viewer)
+                    if (DIR* d = opendir("/proc")) {
+                        while (dirent* e = readdir(d)) {
+                            if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+                            char cp[64], comm[64] = {};
+                            snprintf(cp, sizeof(cp), "/proc/%s/comm", e->d_name);
+                            int cf = open(cp, O_RDONLY | O_CLOEXEC);
+                            if (cf < 0) continue;
+                            ssize_t cn = read(cf, comm, sizeof(comm) - 1);
+                            close(cf);
+                            if (cn > 0 && strstr(comm, "matryoshka")) scan(std::string("/proc/") + e->d_name + "/task", "app-thread ");
+                        }
+                        closedir(d);
+                    }
                     std::sort(cpu.rbegin(), cpu.rend());
                     long hz = sysconf(_SC_CLK_TCK);
                     std::string line;
@@ -490,6 +504,18 @@ int main(int argc, char** argv) {
                         line += b;
                     }
                     fprintf(stderr, "nest: slow-path stops by process:%s\n", line.c_str());
+                    static uint32_t lastPr[64];
+                    line.clear();
+                    for (int k = 0; k < 64; k++) {
+                        uint32_t v = prof.prctlOption[k].load(std::memory_order_relaxed);
+                        if (v > lastPr[k]) {
+                            char b[32];
+                            snprintf(b, sizeof(b), " %d=%u", k, v - lastPr[k]);
+                            line += b;
+                        }
+                        lastPr[k] = v;
+                    }
+                    fprintf(stderr, "nest: slow-path prctl options (30s):%s\n", line.empty() ? " none" : line.c_str());
                 }
                 fprintf(stderr, "nest: t=%ds mem_avail=%ldMB swap_free=%ldMB frames=%llu\n", t, availKb / 1024,
                         swapFreeKb / 1024, static_cast<unsigned long long>(wayland ? wayland->frames() : 0));

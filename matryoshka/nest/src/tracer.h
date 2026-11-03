@@ -88,6 +88,7 @@ struct TracerProfile {
     static constexpr int kSlots = 512;
     std::atomic<uint32_t> bySyscall[2][kSlots] = {};  // [compat][nr]: seccomp stops
     std::atomic<uint32_t> byPid[65536] = {};          // tgid & 0xffff: seccomp stops
+    std::atomic<uint32_t> prctlOption[64] = {};       // native prctl stops by option
 };
 
 class Tracer {
