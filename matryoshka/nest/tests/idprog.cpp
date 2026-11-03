@@ -12,6 +12,7 @@
 #include <sys/mount.h>
 #include <sys/xattr.h>
 #include <sys/resource.h>
+#include <linux/netlink.h>
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/prctl.h>
@@ -48,6 +49,19 @@ int main(int argc, char** argv) {
             int u = atoi(argv[++i]);
             int g = atoi(argv[++i]);
             printRes(fchown(fd, static_cast<uid_t>(u), static_cast<gid_t>(g)));
+            close(fd);
+        } else if (!strcmp(c, "uevent")) {
+            // like ueventd: open the kernel-uevent netlink socket, set rcvbuf, bind to all groups
+            int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, 15 /*NETLINK_KOBJECT_UEVENT*/);
+            if (fd < 0) { printf("socket %s\n", strerror(errno)); continue; }
+            int sz = 256 * 1024;
+            setsockopt(fd, SOL_SOCKET, SO_RCVBUF, &sz, sizeof(sz));
+            struct sockaddr_nl addr = {};
+            addr.nl_family = AF_NETLINK;
+            addr.nl_pid = static_cast<unsigned>(getpid());
+            addr.nl_groups = 0xffffffff;
+            int b = bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof(addr));
+            printf("socket ok bind %s\n", b == 0 ? "ok" : strerror(errno));
             close(fd);
         } else if (!strcmp(c, "nice")) {
             // like init's `priority -20` for zygote

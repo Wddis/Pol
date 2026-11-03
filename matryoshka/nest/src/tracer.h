@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <functional>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -138,6 +139,7 @@ private:
                      uint64_t& scratch, std::string* guestOut = nullptr);
     bool rewriteExec(pid_t tid, struct Regs& r, uint64_t& scratch);
     bool rewriteSockaddr(pid_t tid, struct Regs& r, uint64_t& scratch, bool isConnect);
+    bool isFakeNetlinkBind(pid_t tid, struct Regs& r);
     std::string guestCwdOf(pid_t tid);
     std::string guestFdPath(pid_t tid, int fd);
     uint64_t pushBytes(pid_t tid, uint64_t& scratch, const void* data, size_t len);
@@ -148,6 +150,7 @@ private:
     std::map<pid_t, Pending> pending_;
     std::map<pid_t, pid_t> tgid_;     // thread id -> process id
     std::map<pid_t, Creds> creds_;    // process id -> virtual credentials
+    std::map<pid_t, std::set<int>> netlinkFds_;  // tgid -> faked kernel-uevent socket fds
     std::map<pid_t, std::string> exe_;      // process id -> guest program (it may run via the loader)
     std::map<pid_t, std::string> pendingExe_;  // tid -> program of an in-flight execve
     std::string preloadEntryFor(const std::string& guestProgram, bool is32);

@@ -109,6 +109,7 @@ constexpr long setpriority = 97;
 constexpr long ioprio_set = 314;
 constexpr long sched_setscheduler = 156;
 constexpr long sched_setattr = 380;
+constexpr long socket = 281;
 }  // namespace arm
 
 namespace i386 {
@@ -216,5 +217,6 @@ constexpr long setpriority = 97;
 constexpr long ioprio_set = 289;
 constexpr long sched_setscheduler = 156;
 constexpr long sched_setattr = 351;
+constexpr long socket = 359;
 }  // namespace i386
 }  // namespace nest::sys32

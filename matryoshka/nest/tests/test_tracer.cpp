@@ -577,6 +577,13 @@ TEST(virtual_file_owner_like_the_phone) {
     EXPECT_TRUE(stat(f.c_str(), &st) == 0 && st.st_uid == 65534);  // the host file never changed owner
 }
 
+TEST(kernel_uevent_socket_is_faked) {
+    // ueventd aborts if it cannot open the NETLINK_KOBJECT_UEVENT socket, which an untrusted app
+    // may not. The engine must hand it a harmless socket that binds and never delivers events.
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "--android", mktmp(), "--", NEST_IDPROG_PATH, "uevent"});
+    EXPECT_EQ(r.out, "socket ok bind ok\n");
+}
+
 TEST(mount_requires_root_identity) {
     auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
     EXPECT_EQ(r.out, "-1 EPERM\n");

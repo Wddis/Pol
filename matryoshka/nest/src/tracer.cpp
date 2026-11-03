@@ -72,6 +72,7 @@ enum class Kind {
     Bpf,        // bpf(): maps and programs emulated in userspace (bpf_emu.h)
     Xattr,      // fsetxattr/fremovexattr: security.* labels are virtual (see securityXattr)
     Sched,      // setpriority/ioprio_set/sched_set*: a host refusal is hidden from guests entitled to it
+    Socket,     // socket(): the kernel-uevent netlink socket an app may not open is faked (black hole)
 };
 
 constexpr int NONE = -1;
@@ -157,6 +158,7 @@ std::vector<Spec> buildSpecs() {
     s.back().followDefault = false;
     s.push_back({SYS_execve, Kind::Exec, CWD, 0});
     s.push_back({SYS_getcwd, Kind::GetCwd});
+    s.push_back({SYS_socket, Kind::Socket});
     s.push_back({SYS_connect, Kind::Sock});
     s.push_back({SYS_bind, Kind::Sock});
     for (long nr : {SYS_getsockname, SYS_getpeername, SYS_accept, SYS_accept4}) s.push_back({nr, Kind::SockName});
@@ -299,6 +301,7 @@ std::vector<Spec> buildCompatSpecs() {
     s.back().followDefault = false;
     add(C::execve, SYS_execve, Kind::Exec, CWD, 0);
     add(C::getcwd, SYS_getcwd, Kind::GetCwd);
+    add(C::socket, SYS_socket, Kind::Socket);
     add(C::connect, SYS_connect, Kind::Sock);
     add(C::bind, SYS_bind, Kind::Sock);
     add(C::getsockname, SYS_getsockname, Kind::SockName);
@@ -1585,6 +1588,21 @@ void Tracer::recordOwner(const std::string& hostPath, bool follow, uint64_t uidA
     if (rc != 0) logf(1, "owner of %s not recorded: %s", hostPath.c_str(), strerror(errno));
 }
 
+// True when (bind/connect) targets a faked uevent socket with a netlink address. The fd set is
+// per thread-group and cleared on exec; a guest opens at most a handful of these.
+bool Tracer::isFakeNetlinkBind(pid_t tid, Regs& r) {
+    int fd = static_cast<int>(r.arg[0]);
+    {
+        std::lock_guard<std::mutex> g(credsMu_);
+        auto it = netlinkFds_.find(tgidOf(tid));
+        if (it == netlinkFds_.end() || it->second.count(fd) == 0) return false;
+    }
+    if (!r.arg[1]) return true;
+    uint16_t family = 0;
+    if (readMem(tid, r.arg[1], &family, sizeof(family)) && family != AF_NETLINK && family != 0) return false;
+    return true;
+}
+
 void Tracer::publishVfs() {
     if (share_) share_->publish(cfg_.vfs.serialize());
 }
@@ -1862,9 +1880,33 @@ void Tracer::handleSeccomp(pid_t tid) {
                 wantExit = true;
                 break;
             }
-            case Kind::Sock:
+            case Kind::Socket: {
+                // socket(AF_NETLINK, type, NETLINK_KOBJECT_UEVENT): an untrusted app may not open
+                // it, and a VM has no hardware uevents. Create a harmless AF_UNIX datagram socket
+                // instead (a black hole: it binds, never delivers), and remember the fd.
+                constexpr int kAfNetlink = 16, kNetlinkKobjectUevent = 15;
+                if (cfg_.fakeRoot && static_cast<int>(r.arg[0]) == kAfNetlink &&
+                    static_cast<int>(r.arg[2]) == kNetlinkKobjectUevent) {
+                    r.arg[0] = AF_UNIX;
+                    r.arg[2] = 0;
+                    setArgs(tid, r);
+                    Pending p;
+                    p.nr = -2;  // marker: record the returned fd as a fake netlink socket
+                    pending_[tid] = p;
+                    wantExit = true;
+                }
+                break;
+            }
+            case Kind::Sock: {
+                // bind()/connect() on a faked uevent socket (netlink address): just succeed.
+                if (cfg_.fakeRoot && isFakeNetlinkBind(tid, r)) {
+                    setSyscall(tid, r, -1);
+                    setReturn(tid, r, 0);
+                    break;
+                }
                 if (rewriteSockaddr(tid, r, scratch, s->logical == SYS_connect)) setArgs(tid, r);
                 break;
+            }
             case Kind::Xattr:
                 securityXattr(tid, r);
                 break;
@@ -2011,6 +2053,14 @@ void Tracer::handleSyscallExit(pid_t tid) {
     }
     long ret = static_cast<long>(r.ret);
     if (r.compat) ret = static_cast<int32_t>(static_cast<uint32_t>(ret));
+    if (p.nr == -2) {  // faked uevent socket: remember the fd (per thread-group)
+        if (ret >= 0) {
+            std::lock_guard<std::mutex> g(credsMu_);
+            netlinkFds_[tgidOf(tid)].insert(static_cast<int>(ret));
+        }
+        ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+        return;
+    }
     if (p.nr == SYS_setpriority || p.nr == SYS_ioprio_set || p.nr == SYS_sched_setscheduler || p.nr == SYS_sched_setattr) {
         // Guest init sets `nice 40` for everyone (Android's init.rc), so lower nice values and I/O
         // classes are allowed in the guest; real-time scheduling needs CAP_SYS_NICE as usual.
@@ -2162,6 +2212,7 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
                 if (tgidOf(tid) == tid) {
                     creds_.erase(tid);
                     exe_.erase(tid);
+                    netlinkFds_.erase(tid);
                 }
                 pendingExe_.erase(tid);
                 tgid_.erase(tid);
@@ -2194,6 +2245,7 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
                     exe_[tid] = it->second;
                     pendingExe_.erase(it);
                 }
+                netlinkFds_.erase(tid);  // a fresh program does not inherit the faked sockets' meaning
             }
             if (cfg_.fakeRoot) applyExecCaps(tid);
             ptrace(PTRACE_CONT, tid, nullptr, nullptr);
