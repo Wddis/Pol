@@ -38,7 +38,7 @@ object GuestLogDigest {
                 if (!m.groupValues[3].startsWith("status 0")) engineDeaths.merge("${m.groupValues[2]}: ${m.groupValues[3]}", 1, Int::plus)
             }
             ENGINE_KILL.find(line)?.let { m -> kills.merge("${m.groupValues[1]} -> ${m.groupValues[3]}: signal ${m.groupValues[2]}", 1, Int::plus) }
-            if (line.startsWith("nest: t=") || line.startsWith("nest: ps") || line.startsWith("nest: threads")) memory += line
+            if (line.startsWith("nest: t=") || line.startsWith("nest: ps") || line.startsWith("nest: threads") || line.startsWith("nest: cpu") || line.startsWith("nest: slow-path")) memory += line
         }
         val milestones = linkedMapOf<String, String>()
         val lastTiming = arrayOf("")

@@ -423,8 +423,21 @@ binder-поток ждёт мьютекс vold. Свойство ставитс�
 Дальше по скорости: где тормозит трассировщик (статистика остановок по syscall), GPU (gfxstream/
 ANGLE — большой этап), zram/память.
 
+### 0.7.1 — замеры скорости
+Владелец: 0.7.0 — по ощущению без изменений, 9–15 FPS; VMOS/VPhoneGaga плавнее (они рисуют
+GPU телефона и не стопорят процессы ptrace'ом). Решение: (1) замерить, (2) GPU passthrough.
+- Каждые 30 с: `nest: cpu (30s, % of one core): pid:comm=%` (гость + потоки движка `engine-thread`),
+  `nest: slow-path stops (30s) total=N by syscall: nr=count` (c = compat), `by process`.
+  (TracerProfile в tracer.h, счётчики в handleSeccomp.)
+- Проба: `info.gpu_dev /dev/kgsl-3d0` (rw?), `info.gpu_egl` (/vendor/lib64/egl), `info.gpu_hal_libs`,
+  `info.gpu_hal_bins` (mapper/allocator/composer), `info.gpu_props` (egl/platform/vndk) — для
+  плана: гость использует драйвер Adreno хоста (тот же Android 11/VNDK 30): /dev/kgsl-3d0 + libs из
+  /vendor/lib64/egl хоста + gralloc/mapper хоста (qti) без UBWC; hwcomposer читает кадр через mmap.
+Подозрения (по стенду, x86): fstat (StatFix, ART мимо preload), getpid/gettid (Kind::Pid ловится во
+всех процессах ради виртуального pid 1 init) — проверить по профилю телефона.
+
 ### Ждём от владельца
-Тест **0.7.0-nest** (было 0.6.4 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.7.1-nest** (было 0.7.0 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

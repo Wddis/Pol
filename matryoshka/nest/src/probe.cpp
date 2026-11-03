@@ -14,6 +14,7 @@
 #include <sys/wait.h>
 #include <time.h>
 #include <unistd.h>
+#include <dirent.h>
 
 #include "tracer.h"
 #include "vbinder.h"
@@ -324,6 +325,49 @@ std::string runProbe(const std::string& workDir) {
     line("info.uid", std::to_string(getuid()));
     line("info.binder_device", exists("/dev/binder") ? "present" : "absent");
     line("info.ashmem_device", exists("/dev/ashmem") ? "present" : "absent");
+    // GPU passthrough feasibility: the host's GPU device and vendor graphics libraries.
+    for (const char* dev : {"/dev/kgsl-3d0", "/dev/mali0", "/dev/dri/renderD128", "/dev/dma_heap/system", "/dev/ion"}) {
+        if (!exists(dev)) continue;
+        int fd = open(dev, O_RDWR | O_CLOEXEC);
+        line(std::string("info.gpu_dev ") + dev, fd >= 0 ? "rw" : std::string("no: ") + strerror(errno));
+        if (fd >= 0) close(fd);
+    }
+    auto listDir = [&](const char* key, const char* dir, const char* const* needles) {
+        std::string found;
+        if (DIR* d = opendir(dir)) {
+            while (dirent* e = readdir(d)) {
+                for (const char* const* nd = needles; *nd; nd++)
+                    if (strstr(e->d_name, *nd)) {
+                        std::string path = std::string(dir) + "/" + e->d_name;
+                        found += std::string(e->d_name) + (access(path.c_str(), R_OK) == 0 ? "" : "(unreadable)") + " ";
+                        break;
+                    }
+            }
+            closedir(d);
+        } else {
+            found = std::string("cannot list: ") + strerror(errno);
+        }
+        line(key, found.empty() ? "-" : found);
+    };
+    static const char* const kEgl[] = {"lib", nullptr};
+    static const char* const kGfxHal[] = {"graphics.mapper", "graphics.allocator", "gralloc", "composer", nullptr};
+    listDir("info.gpu_egl", "/vendor/lib64/egl", kEgl);
+    listDir("info.gpu_hal_libs", "/vendor/lib64/hw", kGfxHal);
+    listDir("info.gpu_hal_bins", "/vendor/bin/hw", kGfxHal);
+    {
+        char prop[96] = {};
+        FILE* f = popen("getprop ro.hardware.egl; getprop ro.board.platform; getprop ro.vndk.version", "r");
+        std::string v;
+        if (f) {
+            while (fgets(prop, sizeof(prop), f)) {
+                std::string t(prop);
+                while (!t.empty() && (t.back() == '\n' || t.back() == '\r')) t.pop_back();
+                v += t + " ";
+            }
+            pclose(f);
+        }
+        line("info.gpu_props egl/platform/vndk", v);
+    }
     {
         FILE* f = fopen("/proc/sys/kernel/yama/ptrace_scope", "r");
         int v = -1;

@@ -8,6 +8,8 @@
 // SPDX-License-Identifier: Apache-2.0
 #pragma once
 
+#include <atomic>
+
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -81,9 +83,17 @@ struct TracerStats {
     uint64_t mounts = 0;
 };
 
+// Live profile of the slow path (written by the tracer thread, read by the log thread).
+struct TracerProfile {
+    static constexpr int kSlots = 512;
+    std::atomic<uint32_t> bySyscall[2][kSlots] = {};  // [compat][nr]: seccomp stops
+    std::atomic<uint32_t> byPid[65536] = {};          // tgid & 0xffff: seccomp stops
+};
+
 class Tracer {
 public:
     explicit Tracer(TracerConfig cfg);
+    TracerProfile& profile() { return profile_; }
 
     // Starts `program` (a guest path) and supervises it and all descendants until they exit.
     // Returns the root process exit status in shell convention (128+signal when killed), or -1.
@@ -160,6 +170,7 @@ private:
     std::map<pid_t, pid_t> tgid_;     // thread id -> process id
     std::map<pid_t, Creds> creds_;    // process id -> virtual credentials
     std::map<pid_t, std::set<int>> netlinkFds_;  // tgid -> faked kernel-uevent socket fds
+    TracerProfile profile_;
     std::map<pid_t, std::string> exe_;      // process id -> guest program (it may run via the loader)
     std::map<pid_t, std::string> pendingExe_;  // tid -> program of an in-flight execve
     std::string preloadEntryFor(const std::string& guestProgram, bool is32);

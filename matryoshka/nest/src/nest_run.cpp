@@ -23,6 +23,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <ctime>
+#include <map>
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <sys/syscall.h>
@@ -372,6 +374,91 @@ int main(int argc, char** argv) {
                         }
                         closedir(d);
                     }
+                }
+                // Speed profile of the last 30 s: CPU per process (guest and engine threads) and the
+                // tracer's slow-path stops per syscall / per process.
+                {
+                    static std::map<std::string, unsigned long long> lastCpu;
+                    std::vector<std::pair<unsigned long long, std::string>> cpu;
+                    auto scan = [&](const std::string& dir, const std::string& prefix) {
+                        DIR* d = opendir(dir.c_str());
+                        if (!d) return;
+                        while (dirent* e = readdir(d)) {
+                            if (e->d_name[0] < '0' || e->d_name[0] > '9') continue;
+                            std::string base = dir + "/" + e->d_name;
+                            struct stat pst;
+                            if (stat(base.c_str(), &pst) != 0 || pst.st_uid != getuid()) continue;
+                            char buf[512] = {};
+                            int fd = open((base + "/stat").c_str(), O_RDONLY | O_CLOEXEC);
+                            if (fd < 0) continue;
+                            ssize_t n = read(fd, buf, sizeof(buf) - 1);
+                            close(fd);
+                            const char* cp = n > 0 ? strrchr(buf, ')') : nullptr;
+                            if (!cp) continue;
+                            unsigned long long ut = 0, stt = 0;
+                            // fields after ')': state(3) ... utime(14) stime(15)
+                            if (sscanf(cp + 2, "%*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %llu %llu", &ut, &stt) != 2) continue;
+                            const char* op = strchr(buf, '(');
+                            std::string name = prefix + std::string(e->d_name) + ":" + (op ? std::string(op + 1, cp) : "?");
+                            unsigned long long total = ut + stt, prev = lastCpu.count(name) ? lastCpu[name] : 0;
+                            lastCpu[name] = total;
+                            if (total > prev) cpu.push_back({total - prev, name});
+                        }
+                        closedir(d);
+                    };
+                    scan("/proc", "");
+                    scan("/proc/self/task", "engine-thread ");
+                    std::sort(cpu.rbegin(), cpu.rend());
+                    long hz = sysconf(_SC_CLK_TCK);
+                    std::string line;
+                    for (size_t k = 0; k < cpu.size() && k < 10; k++) {
+                        char b[160];
+                        snprintf(b, sizeof(b), " %s=%.0f%%", cpu[k].second.c_str(), 100.0 * cpu[k].first / hz / 30.0);
+                        line += b;
+                    }
+                    fprintf(stderr, "nest: cpu (30s, %% of one core):%s\n", line.c_str());
+                    auto& prof = tracer.profile();
+                    static uint32_t lastSys[2][nest::TracerProfile::kSlots];
+                    std::vector<std::pair<uint32_t, int>> hot;
+                    for (int c = 0; c < 2; c++)
+                        for (int k = 0; k < nest::TracerProfile::kSlots; k++) {
+                            uint32_t v = prof.bySyscall[c][k].load(std::memory_order_relaxed);
+                            if (v > lastSys[c][k]) hot.push_back({v - lastSys[c][k], c * 10000 + k});
+                            lastSys[c][k] = v;
+                        }
+                    std::sort(hot.rbegin(), hot.rend());
+                    line.clear();
+                    uint64_t sum = 0;
+                    for (auto& h : hot) sum += h.first;
+                    for (size_t k = 0; k < hot.size() && k < 12; k++) {
+                        char b[48];
+                        snprintf(b, sizeof(b), " %s%d=%u", hot[k].second >= 10000 ? "c" : "", hot[k].second % 10000, hot[k].first);
+                        line += b;
+                    }
+                    fprintf(stderr, "nest: slow-path stops (30s) total=%llu by syscall:%s\n", static_cast<unsigned long long>(sum), line.c_str());
+                    static uint32_t lastPid[65536];
+                    std::vector<std::pair<uint32_t, int>> hp;
+                    for (int k = 0; k < 65536; k++) {
+                        uint32_t v = prof.byPid[k].load(std::memory_order_relaxed);
+                        if (v > lastPid[k]) hp.push_back({v - lastPid[k], k});
+                        lastPid[k] = v;
+                    }
+                    std::sort(hp.rbegin(), hp.rend());
+                    line.clear();
+                    for (size_t k = 0; k < hp.size() && k < 8; k++) {
+                        char path[48], name[64] = "?";
+                        snprintf(path, sizeof(path), "/proc/%d/comm", hp[k].second);
+                        int fd = open(path, O_RDONLY | O_CLOEXEC);
+                        if (fd >= 0) {
+                            ssize_t n = read(fd, name, sizeof(name) - 1);
+                            close(fd);
+                            if (n > 0) name[n - 1] = 0;
+                        }
+                        char b[96];
+                        snprintf(b, sizeof(b), " %d(%s)=%u", hp[k].second, name, hp[k].first);
+                        line += b;
+                    }
+                    fprintf(stderr, "nest: slow-path stops by process:%s\n", line.c_str());
                 }
                 fprintf(stderr, "nest: t=%ds mem_avail=%ldMB swap_free=%ldMB frames=%llu\n", t, availKb / 1024,
                         swapFreeKb / 1024, static_cast<unsigned long long>(wayland ? wayland->frames() : 0));
