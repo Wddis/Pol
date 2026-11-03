@@ -164,7 +164,22 @@ bool readMem(pid_t tid, uint64_t addr, void* buf, size_t len) {
     addr = untagAddr(addr);
     iovec local{buf, len};
     iovec remote{reinterpret_cast<void*>(addr), len};
-    return process_vm_readv(tid, &local, 1, &remote, 1, 0) == static_cast<ssize_t>(len);
+    if (process_vm_readv(tid, &local, 1, &remote, 1, 0) == static_cast<ssize_t>(len)) return true;
+    // Fallback: word-wise peek. process_vm_readv needs the target to be dumpable (or CAP_SYS_PTRACE),
+    // PTRACE_PEEKDATA only needs us to be its tracer - always true here.
+    auto* dst = static_cast<unsigned char*>(buf);
+    uint64_t start = addr & ~static_cast<uint64_t>(sizeof(long) - 1);
+    for (uint64_t a = start; a < addr + len; a += sizeof(long)) {
+        errno = 0;
+        long word = ptrace(PTRACE_PEEKDATA, tid, reinterpret_cast<void*>(a), nullptr);
+        if (errno) return false;
+        const auto* w = reinterpret_cast<const unsigned char*>(&word);
+        for (size_t k = 0; k < sizeof(long); k++) {
+            uint64_t at = a + k;
+            if (at >= addr && at < addr + len) dst[at - addr] = w[k];
+        }
+    }
+    return true;
 }
 
 bool writeMem(pid_t tid, uint64_t addr, const void* buf, size_t len) {

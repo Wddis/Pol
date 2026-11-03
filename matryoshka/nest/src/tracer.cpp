@@ -96,7 +96,8 @@ struct Spec {
 
 // prctl options that read or change capability state; every other prctl runs untraced.
 const std::vector<uint32_t> kCapPrctls = {PR_GET_KEEPCAPS, PR_SET_KEEPCAPS, PR_CAPBSET_READ, PR_CAPBSET_DROP,
-                                          PR_GET_SECUREBITS, PR_SET_SECUREBITS, PR_CAP_AMBIENT};
+                                          PR_GET_SECUREBITS, PR_SET_SECUREBITS, PR_CAP_AMBIENT,
+                                          PR_GET_DUMPABLE, PR_SET_DUMPABLE};
 
 std::vector<Spec> buildSpecs() {
     std::vector<Spec> s;
@@ -1218,6 +1219,11 @@ void Tracer::handleCaps(pid_t tid, Regs& r, long nr) {
         uint64_t a2 = r.compat ? static_cast<uint32_t>(r.arg[2]) : r.arg[2];
         uint32_t opt = static_cast<uint32_t>(r.arg[0]);
         switch (opt) {
+            case PR_GET_DUMPABLE: ret = c.dumpable ? 1 : 0; break;
+            case PR_SET_DUMPABLE:
+                if (a1 > 1) ret = -EINVAL;
+                else c.dumpable = a1 == 1;
+                break;
             case PR_GET_KEEPCAPS: ret = (c.securebits & kSecKeepCaps) ? 1 : 0; break;
             case PR_SET_KEEPCAPS:
                 if (a1 > 1) ret = -EINVAL;
@@ -1277,6 +1283,7 @@ void Tracer::applyExecCaps(pid_t tgid) {
     c.capPrm |= c.capAmb;
     c.capEff = (root && c.euid == 0) ? c.capPrm : c.capAmb;
     c.securebits &= ~kSecKeepCaps;
+    c.dumpable = true;  // exec of a program without set-id bits makes it dumpable again
 }
 
 pid_t Tracer::parentOf(pid_t tid) const {

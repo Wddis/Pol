@@ -100,6 +100,8 @@ public:
         // setuid and exec. The host kernel never sees them: privileged calls are emulated anyway.
         uint64_t capEff = 0, capPrm = 0, capInh = 0, capBnd = 0, capAmb = 0;
         uint32_t securebits = 0;
+        bool dumpable = true;  // virtual PR_SET_DUMPABLE: the host process stays dumpable so the
+                               // tracer and the binder broker can read its memory
         bool hasCap(int cap) const { return (capEff >> cap) & 1; }
     };
     // Current virtual identity of a guest process (by any of its thread ids).

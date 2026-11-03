@@ -612,6 +612,19 @@ TEST(fusectl_mount_is_a_readable_empty_dir) {
     EXPECT_EQ(r.out, "0\nok\n");
 }
 
+TEST(non_dumpable_guest_still_readable_by_tracer) {
+    // logd on the phone: after PR_SET_DUMPABLE 0 an unprivileged host user cannot process_vm_readv
+    // the process; capset's arguments must still be read (it failed with EFAULT).
+    std::vector<std::string> drop{"/usr/bin/setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"};
+    auto with = [&](std::vector<std::string> v) { v.insert(v.begin(), drop.begin(), drop.end()); return v; };
+    if (run(with({"/bin/true"})).status != 0) {
+        fprintf(stderr, "  skipped: cannot run unprivileged here\n");
+        return;
+    }
+    auto r = run(with({NEST_RUN_PATH, "-b", "/=/", "--", NEST_IDPROG_PATH, "nodump", "capset", "c0", "c0", "0", "caps"}));
+    EXPECT_EQ(r.out, "0 0\n0\nc0 c0 0 amb00\n");
+}
+
 TEST(mount_requires_root_identity) {
     auto r = runInState(mountCmd(true, "10050", {"mount-tmpfs", "/tmp"}), mktmp());
     EXPECT_EQ(r.out, "-1 EPERM\n");

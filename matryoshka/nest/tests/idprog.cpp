@@ -50,6 +50,10 @@ int main(int argc, char** argv) {
             int g = atoi(argv[++i]);
             printRes(fchown(fd, static_cast<uid_t>(u), static_cast<gid_t>(g)));
             close(fd);
+        } else if (!strcmp(c, "nodump")) {
+            // like many Android daemons: not dumpable any more (then only root may read our memory)
+            int a = prctl(PR_SET_DUMPABLE, 0, 0, 0, 0);
+            printf("%d %d\n", a, prctl(PR_GET_DUMPABLE, 0, 0, 0, 0));
         } else if (!strcmp(c, "uevent")) {
             // like ueventd: open the kernel-uevent netlink socket, set rcvbuf, bind to all groups
             int fd = socket(AF_NETLINK, SOCK_DGRAM | SOCK_CLOEXEC, 15 /*NETLINK_KOBJECT_UEVENT*/);
