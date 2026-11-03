@@ -9,5 +9,6 @@
     chmod; fchmodat; fchmod; rename; renameat;
     ioctl; mmap; mmap64; close; syscall;
     socket; bind; connect; getsockname; setsockopt; send; sendto; sendmsg; write; writev; recvfrom; recvmsg;
+    opendir; readdir; prctl; readdir64; closedir;
   local: *;
 };

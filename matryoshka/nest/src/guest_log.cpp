@@ -46,7 +46,7 @@ bool GuestLog::start(const std::string& socketPath, const std::string& outFile, 
     if (fd_ < 0 || bind(fd_, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) != 0) return false;
     chmod(socketPath.c_str(), 0666);
     out_ = open(outFile.c_str(), O_WRONLY | O_CREAT | O_APPEND | O_CLOEXEC, 0644);
-    if (out_ < 0 || pipe(wake_) != 0) return false;
+    if (out_ < 0 || pipe2(wake_, O_CLOEXEC) != 0) return false;
     if (!forward_.empty()) fwd_ = socket(AF_UNIX, SOCK_DGRAM | SOCK_CLOEXEC | SOCK_NONBLOCK, 0);
     th_ = std::thread([this] {
         unsigned char buf[5 * 1024];

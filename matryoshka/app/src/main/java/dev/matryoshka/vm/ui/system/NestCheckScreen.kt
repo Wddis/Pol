@@ -53,6 +53,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.matryoshka.vm.R
 import dev.matryoshka.vm.core.debug.TesterLog
+import dev.matryoshka.vm.core.nest.NestDisplayView
 import dev.matryoshka.vm.core.nest.NestGuest
 import dev.matryoshka.vm.core.nest.NestProbe
 import dev.matryoshka.vm.core.nest.ProbeLevel
@@ -156,6 +157,7 @@ private fun NestBootPanel() {
     var lines by remember { mutableStateOf(emptyList<String>()) }
     var stage by remember { mutableStateOf<String?>(null) }
     var showLogcat by remember { mutableStateOf(false) }
+    var showScreen by remember { mutableStateOf(true) }
     var binderTrace by remember { mutableStateOf(NestGuest.verboseBinder) }
     LaunchedEffect(Unit) { NestGuest.refresh(context) }
     androidx.compose.runtime.DisposableEffect(state) {
@@ -224,6 +226,18 @@ private fun NestBootPanel() {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     androidx.compose.material3.Checkbox(checked = binderTrace, onCheckedChange = { binderTrace = it })
                     Text(stringResource(R.string.nest_boot_binder_trace), style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            if (s is NestGuest.State.Running) {
+                OutlinedButton(onClick = { showScreen = !showScreen }, modifier = Modifier.padding(top = 8.dp)) {
+                    Text(stringResource(if (showScreen) R.string.nest_boot_hide_screen else R.string.nest_boot_show_screen))
+                }
+                if (showScreen) {
+                    // The guest's display (frames from its composer; touches go back to it).
+                    androidx.compose.ui.viewinterop.AndroidView(
+                        factory = { NestDisplayView(it, NestGuest.stateDir(it.applicationContext)) },
+                        modifier = Modifier.fillMaxWidth().height(520.dp).padding(top = 8.dp),
+                    )
                 }
             }
             if (lines.isNotEmpty()) {

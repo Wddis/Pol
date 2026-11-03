@@ -177,4 +177,6 @@
     <string name="nest_boot_show_logcat">Показать logcat</string>
     <string name="nest_boot_show_kmsg">Показать лог загрузки</string>
     <string name="nest_boot_binder_trace">Подробный лог binder (файл больше)</string>
+    <string name="nest_boot_show_screen">Показать экран гостя</string>
+    <string name="nest_boot_hide_screen">Скрыть экран гостя</string>
 </resources>

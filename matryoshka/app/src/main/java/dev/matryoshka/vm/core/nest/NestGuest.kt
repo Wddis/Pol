@@ -140,6 +140,11 @@ object NestGuest {
             "-P", "$lib/libnest_preload.so",
         )
         if (File(lib, "libnest_preload32.so").exists()) args += listOf("-P32", "$lib/libnest_preload32.so")
+        // Guest screen: 720 px wide (software rendering), the phone's aspect ratio.
+        val dm = app.resources.displayMetrics
+        val (pw, ph) = minOf(dm.widthPixels, dm.heightPixels) to maxOf(dm.widthPixels, dm.heightPixels)
+        val gh = (720L * ph / pw.coerceAtLeast(1)).toInt() and 1.inv()
+        args += listOf("--display", "720x${gh}@320")
         args += listOf("-B", File(st, "b.sock").absolutePath, "-v", "-s", "--", "/system/bin/init", "second_stage")
         val pb = ProcessBuilder(args)
             .redirectErrorStream(true)

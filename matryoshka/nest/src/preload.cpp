@@ -10,6 +10,8 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 #include <cerrno>
+#include <dirent.h>
+#include <dlfcn.h>
 #include <cstdio>
 #include <cstdarg>
 #include <cstdlib>
@@ -591,6 +593,73 @@ NEST_EXPORT int close(int fd) {
     long r = syscall(SYS_close, fd);
     if (r == -1 && errno == EINTR) return 0;  // the fd is gone either way (bionic semantics)
     return static_cast<int>(r);
+}
+
+// ---- bench only (NEST_HIDE_EMU_THREADS=1): a CPU emulator (qemu-user) runs helper threads of its
+// own inside every guest process. ART's zygote waits before each fork until /proc/self/task lists
+// one thread, so those helpers (they keep the name the process exec'd with: linker / linker64)
+// are left out of that listing. Never set on a phone.
+namespace {
+DIR* g_taskDirs[8];
+bool hideEmuThreads() { static bool v = getenv("NEST_HIDE_EMU_THREADS") != nullptr; return v; }
+void* realSym(const char* name) { return dlsym(RTLD_NEXT, name); }
+bool isOwnTaskDir(const char* p) {
+    if (!p) return false;
+    if (!strcmp(p, "/proc/self/task") || !strcmp(p, "/proc/self/task/")) return true;
+    char own[48];
+    snprintf(own, sizeof(own), "/proc/%d/task", getpid());
+    return !strncmp(p, own, strlen(own)) && (p[strlen(own)] == 0 || !strcmp(p + strlen(own), "/"));
+}
+bool isEmuThread(const char* tid) {
+    char path[64], comm[32] = {};
+    snprintf(path, sizeof(path), "/proc/self/task/%s/comm", tid);
+    int fd = static_cast<int>(syscall(SYS_openat, AT_FDCWD, path, O_RDONLY | O_CLOEXEC));
+    if (fd < 0) return false;
+    long n = syscall(SYS_read, fd, comm, sizeof(comm) - 1);
+    syscall(SYS_close, fd);
+    if (n > 0 && comm[n - 1] == '\n') comm[n - 1] = 0;
+    return !strcmp(comm, "linker64") || !strcmp(comm, "linker");
+}
+}  // namespace
+
+NEST_EXPORT DIR* opendir(const char* p) {
+    static auto real = reinterpret_cast<DIR* (*)(const char*)>(realSym("opendir"));
+    DIR* d = real(p);
+    if (d && hideEmuThreads() && isOwnTaskDir(p))
+        for (auto& slot : g_taskDirs)
+            if (__atomic_load_n(&slot, __ATOMIC_ACQUIRE) == nullptr) { DIR* z = nullptr; if (__atomic_compare_exchange_n(&slot, &z, d, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE)) break; }
+    return d;
+}
+
+NEST_EXPORT dirent* readdir(DIR* d) {
+    static auto real = reinterpret_cast<dirent* (*)(DIR*)>(realSym("readdir"));
+    dirent* e = real(d);
+    bool tracked = false;
+    for (auto& slot : g_taskDirs) tracked |= __atomic_load_n(&slot, __ATOMIC_ACQUIRE) == d;
+    while (tracked && e && e->d_name[0] >= '0' && e->d_name[0] <= '9' && atoi(e->d_name) != getpid() && isEmuThread(e->d_name))
+        e = real(d);
+    return e;
+}
+#if defined(__BIONIC__)
+NEST_EXPORT dirent64* readdir64(DIR* d) { return reinterpret_cast<dirent64*>(readdir(d)); }
+#endif
+
+NEST_EXPORT int closedir(DIR* d) {
+    static auto real = reinterpret_cast<int (*)(DIR*)>(realSym("closedir"));
+    for (auto& slot : g_taskDirs) { DIR* x = d; __atomic_compare_exchange_n(&slot, &x, nullptr, false, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE); }
+    return real(d);
+}
+
+// Bench only, same switch: qemu-user rejects guest seccomp filters itself, before the engine sees
+// them (on a phone the tracer accepts them without installing, see GuestSeccomp in tracer.cpp).
+NEST_EXPORT int prctl(int option, ...) {
+    va_list ap;
+    va_start(ap, option);
+    unsigned long a2 = va_arg(ap, unsigned long), a3 = va_arg(ap, unsigned long), a4 = va_arg(ap, unsigned long),
+                  a5 = va_arg(ap, unsigned long);
+    va_end(ap);
+    if (hideEmuThreads() && option == 22 /* PR_SET_SECCOMP */ && a2 == 2 /* SECCOMP_MODE_FILTER */) return 0;
+    return static_cast<int>(syscall(SYS_prctl, option, a2, a3, a4, a5));
 }
 
 }  // extern "C"
