@@ -25,6 +25,7 @@ struct BrokerStats {
     uint64_t deadReplies = 0;
     uint64_t deathNotices = 0;
     uint64_t fdsPassed = 0;
+    uint64_t abandonedWaits = 0;  // a client sent a new request while its read was pending
 };
 
 class Broker {

@@ -314,8 +314,18 @@ Uid:/Gid: при open() /proc/<pid|self>[/task/N]/status (memfd). Тест proc_
 (процессы не в S/R/I), оба в логе тестера. ART/libopenjdk preload не видит — open() из Java
 идёт мимо (только libandroid_runtime и др. из default namespace).
 
+### 0.5.8 — по логу 0.5.7
+«is crashing» почти ушёл (подмена Uid сработала), startOtherServices 20.5 с. Новый SIGSEGV
+system_server — в нашем коде: vbinder_client.cpp clientIoctl, memcpy в read_buffer=NULL
+(write-only BINDER_WRITE_READ, read_size 0) 28 байт ответа — брокер ответил на «брошенное»
+ожидание чтения, и ответ достался следующему запросу. Исправлено: новый запрос сбрасывает
+`t->waiting` (и пишет `nest: binder: pid … tid … sent a request while its read was pending`),
+клиент никогда не копирует больше readSize / в NULL (`oversized read answer` в
+vbinder-client.log, EIO). Символизация падений preload: build-id из tombstone →
+`app/build/intermediates/cxx/Debug/*/obj/arm64-v8a/libnest_preload.so` + llvm-symbolizer.
+
 ### Ждём от владельца
-Тест **0.5.7-nest** (было 0.5.6 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.5.8-nest** (было 0.5.7 … 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

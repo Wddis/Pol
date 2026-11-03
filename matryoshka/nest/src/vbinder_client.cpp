@@ -403,6 +403,13 @@ int clientIoctl(int fd, unsigned long request, void* arg) {
         if (rc == 0) {
             bwr->write_consumed += resp.writeConsumed;
             if (!read.empty()) {
+                // Never more than the guest asked for, never into a missing buffer: an answer that
+                // does not fit is a broker/client mix-up, reported instead of corrupting memory.
+                if (!bwr->read_buffer || read.size() > req.readSize) {
+                    clientError("oversized read answer", fd, static_cast<int>(read.size()));
+                    errno = EIO;
+                    return -1;
+                }
                 memcpy(reinterpret_cast<uint8_t*>(bwr->read_buffer) + bwr->read_consumed, read.data(), read.size());
                 bwr->read_consumed += read.size();
             }

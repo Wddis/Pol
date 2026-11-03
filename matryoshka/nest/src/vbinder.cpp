@@ -1063,6 +1063,14 @@ struct Broker::Impl {
         const uint8_t* payload = buf + sizeof(req);
         Proc* p = t->proc;
         t->writeConsumed = 0;
+        // A new request means the client stopped waiting for the previous read (it gave up on
+        // it): never answer that one later, the answer would be taken for this request's.
+        if (t->waiting) {
+            t->waiting = false;
+            std::lock_guard<std::mutex> g(statsMu);
+            if (st.abandonedWaits++ < 50)
+                fprintf(stderr, "nest: binder: pid %d tid %d sent a request while its read was pending\n", p->pid, t->tid);
+        }
         switch (req.cmd) {
             case static_cast<uint32_t>(BINDER_VERSION): {
                 binder_version v{BINDER_CURRENT_PROTOCOL_VERSION};
