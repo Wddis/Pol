@@ -110,6 +110,7 @@ constexpr long ioprio_set = 314;
 constexpr long sched_setscheduler = 156;
 constexpr long sched_setattr = 380;
 constexpr long socket = 281;
+constexpr long fstat64 = 197;
 }  // namespace arm
 
 namespace i386 {
@@ -218,5 +219,6 @@ constexpr long ioprio_set = 289;
 constexpr long sched_setscheduler = 156;
 constexpr long sched_setattr = 351;
 constexpr long socket = 359;
+constexpr long fstat64 = 197;
 }  // namespace i386
 }  // namespace nest::sys32

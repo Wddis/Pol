@@ -55,9 +55,13 @@ else()
   add_executable(nest_tests tests/test_main.cpp tests/test_vfs.cpp tests/test_tracer.cpp tests/test_vbinder.cpp)
   target_link_libraries(nest_tests nest_core pthread)
   add_executable(nest_idprog tests/idprog.cpp)
-  add_dependencies(nest_tests nest_run nest_idprog nest_preload nest_binderprog)
+  # Statically linked like Android's bootstrap linkerconfig: no preload, everything traced.
+  add_executable(nest_idprog_static tests/idprog.cpp)
+  target_link_options(nest_idprog_static PRIVATE -static)
+  add_dependencies(nest_tests nest_run nest_idprog nest_idprog_static nest_preload nest_binderprog)
   target_compile_definitions(nest_tests PRIVATE NEST_RUN_PATH="$<TARGET_FILE:nest_run>"
                                                 NEST_IDPROG_PATH="$<TARGET_FILE:nest_idprog>"
+                                                NEST_IDPROG_STATIC_PATH="$<TARGET_FILE:nest_idprog_static>"
                                                 NEST_PRELOAD_PATH="$<TARGET_FILE:nest_preload>"
                                                 NEST_BINDERPROG_PATH="$<TARGET_FILE:nest_binderprog>")
   add_test(NAME nest_tests COMMAND nest_tests)

@@ -266,10 +266,11 @@ NEST_EXPORT int fstatat64(int dirfd, const char* path, struct stat64* st, int fl
 #if defined(__LP64__) || defined(__BIONIC__)
 // fstat: the kernel's 64-bit stat layout on these ABIs (bionic arm32: fstat64).
 NEST_EXPORT int fstat(int fd, struct stat* st) {
+    // Tagged: untagged fstat is traced (static binaries get the owner fixed by the tracer).
 #if defined(SYS_fstat64)
-    long r = syscall(SYS_fstat64, fd, st);
+    long r = ret(taggedSyscall(SYS_fstat64, fd, reinterpret_cast<long>(st)));
 #else
-    long r = syscall(SYS_fstat, fd, st);
+    long r = ret(taggedSyscall(SYS_fstat, fd, reinterpret_cast<long>(st)));
 #endif
     if (r == 0) virtualOwner(st, nullptr, fd, true);
     return static_cast<int>(r);

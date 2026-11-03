@@ -73,6 +73,7 @@ enum class Kind {
     Xattr,      // fsetxattr/fremovexattr: security.* labels are virtual (see securityXattr)
     Sched,      // setpriority/ioprio_set/sched_set*: a host refusal is hidden from guests entitled to it
     Socket,     // socket(): the kernel-uevent netlink socket an app may not open is faked (black hole)
+    StatFix,    // untagged fstat (static binaries, raw syscalls): virtual owner patched in at exit
 };
 
 constexpr int NONE = -1;
@@ -159,6 +160,7 @@ std::vector<Spec> buildSpecs() {
     s.push_back({SYS_execve, Kind::Exec, CWD, 0});
     s.push_back({SYS_getcwd, Kind::GetCwd});
     s.push_back({SYS_socket, Kind::Socket});
+    s.push_back({SYS_fstat, Kind::StatFix});
     s.push_back({SYS_connect, Kind::Sock});
     s.push_back({SYS_bind, Kind::Sock});
     for (long nr : {SYS_getsockname, SYS_getpeername, SYS_accept, SYS_accept4}) s.push_back({nr, Kind::SockName});
@@ -302,6 +304,7 @@ std::vector<Spec> buildCompatSpecs() {
     add(C::execve, SYS_execve, Kind::Exec, CWD, 0);
     add(C::getcwd, SYS_getcwd, Kind::GetCwd);
     add(C::socket, SYS_socket, Kind::Socket);
+    add(C::fstat64, SYS_fstat, Kind::StatFix);
     add(C::connect, SYS_connect, Kind::Sock);
     add(C::bind, SYS_bind, Kind::Sock);
     add(C::getsockname, SYS_getsockname, Kind::SockName);
@@ -1351,7 +1354,11 @@ bool Tracer::clampRlimit(pid_t tid, Regs& r, long nr, uint64_t& scratch) {
         return false;
     }
     struct rlimit64 { uint64_t cur, max; } host{};
-    if (syscall(SYS_prlimit64, target, resource, nullptr, &host) != 0) return false;
+    // Another process's limits may be unreadable (SELinux on a phone denies process:getrlimit);
+    // the engine's own hard limit bounds every guest process (they descend from it).
+    if (syscall(SYS_prlimit64, target, resource, nullptr, &host) != 0 &&
+        syscall(SYS_prlimit64, 0, resource, nullptr, &host) != 0)
+        return false;
     if (want[1] <= host.max) return false;  // within the host's limit: the kernel allows it anyway
     uint64_t lim[2] = {std::min(want[0], host.max), host.max};
     stats_.faked++;
@@ -1603,6 +1610,43 @@ bool Tracer::isFakeNetlinkBind(pid_t tid, Regs& r) {
     return true;
 }
 
+// Virtual owner in a stat result the kernel wrote (same rules as the preload's wrappers):
+// the owner the guest's chown() recorded, root for the app's own unrecorded files.
+void Tracer::fixStatOwner(pid_t tid, Regs& r, const Pending& p) {
+    size_t uidOff, gidOff;
+    if (p.statKind == 2) { uidOff = 20; gidOff = 24; }          // struct statx
+    else if (r.compat) { uidOff = 24; gidOff = 28; }            // struct stat64 (arm32, i386)
+    else {
+#if defined(__x86_64__)
+        uidOff = 28; gidOff = 32;
+#else
+        uidOff = 24; gidOff = 28;                                // asm-generic struct stat
+#endif
+    }
+    uint32_t ids[2];
+    if (!readMem(tid, p.buf + uidOff, &ids[0], 4) || !readMem(tid, p.buf + gidOff, &ids[1], 4)) return;
+    const uint32_t hostUid = static_cast<uint32_t>(getuid()), hostGid = static_cast<uint32_t>(getgid());
+    if (ids[0] != hostUid && ids[1] != hostGid) return;
+    uint32_t u = ids[0], g = ids[1];
+    bool recorded = false;
+    if (ids[0] == hostUid && !p.guestPath.empty()) {
+        char buf[40];
+        ssize_t n = p.follow ? getxattr(p.guestPath.c_str(), kOwnerXattr, buf, sizeof(buf) - 1)
+                             : lgetxattr(p.guestPath.c_str(), kOwnerXattr, buf, sizeof(buf) - 1);
+        unsigned ru, rg;
+        if (n > 0) {
+            buf[n] = 0;
+            if (sscanf(buf, "%u:%u", &ru, &rg) == 2) { u = ru; g = rg; recorded = true; }
+        }
+    }
+    if (!recorded) {
+        if (u == hostUid) u = 0;
+        if (g == hostGid || g == hostUid) g = 0;
+    }
+    if (u != ids[0]) writeMem(tid, p.buf + uidOff, &u, 4);
+    if (g != ids[1]) writeMem(tid, p.buf + gidOff, &g, 4);
+}
+
 void Tracer::publishVfs() {
     if (share_) share_->publish(cfg_.vfs.serialize());
 }
@@ -1850,8 +1894,43 @@ void Tracer::handleSeccomp(pid_t tid) {
                 }
                 if (s->path2 >= 0) changed |= rewritePath(tid, r, s->dirfd2, s->path2, false, scratch);
                 if (changed) setArgs(tid, r);
+                if (cfg_.fakeRoot) {
+                    // stat family on the slow path (relative paths, static binaries): show the
+                    // guest's view of the owner once the kernel has filled the buffer.
+                    int bufArg = -1, kind = 1;
+                    if (s->logical == SYS_newfstatat) bufArg = 2;
+                    else if (s->logical == SYS_statx) { bufArg = 4; kind = 2; }
+                    else if (r.compat && (s->nr == C::stat64 || s->nr == C::lstat64)) bufArg = 1;
+#if defined(__x86_64__)
+                    else if (!r.compat && (s->logical == SYS_stat || s->logical == SYS_lstat)) bufArg = 1;
+#endif
+                    if (bufArg >= 0 && r.arg[bufArg]) {
+                        Pending p;
+                        p.nr = -4;
+                        p.buf = r.arg[bufArg];
+                        p.statKind = kind;
+                        p.follow = f;
+                        p.guestPath = lastHost_;
+                        if (p.guestPath.empty() && s->dirfd1 >= 0)  // AT_EMPTY_PATH: the dirfd itself
+                            p.guestPath = "/proc/" + std::to_string(tid) + "/fd/" +
+                                          std::to_string(static_cast<int>(r.arg[s->dirfd1]));
+                        pending_[tid] = p;
+                        wantExit = true;
+                    }
+                }
                 break;
             }
+            case Kind::StatFix:
+                if (cfg_.fakeRoot && r.arg[1]) {
+                    Pending p;
+                    p.nr = -4;
+                    p.buf = r.arg[1];
+                    p.statKind = 1;
+                    p.guestPath = "/proc/" + std::to_string(tid) + "/fd/" + std::to_string(static_cast<int>(r.arg[0]));
+                    pending_[tid] = p;
+                    wantExit = true;
+                }
+                break;
             case Kind::ReadLink: {
                 std::string guest;
                 rewritePath(tid, r, s->dirfd1, s->path1, false, scratch, &guest);
@@ -1928,7 +2007,14 @@ void Tracer::handleSeccomp(pid_t tid) {
                 break;
             }
             case Kind::Rlimit:
-                if (cfg_.fakeRoot && clampRlimit(tid, r, s->logical, scratch)) setArgs(tid, r);
+                if (!cfg_.fakeRoot) break;
+                if (clampRlimit(tid, r, s->logical, scratch)) setArgs(tid, r);
+                if (credsOf(tid).hasCap(24 /* CAP_SYS_RESOURCE */)) {  // last resort, decided at exit
+                    Pending p;
+                    p.nr = s->logical;
+                    pending_[tid] = p;
+                    wantExit = true;
+                }
                 break;
             case Kind::SockName:
                 if (r.arg[1] && r.arg[2]) {  // address wanted: fix it up at exit
@@ -2053,10 +2139,25 @@ void Tracer::handleSyscallExit(pid_t tid) {
     }
     long ret = static_cast<long>(r.ret);
     if (r.compat) ret = static_cast<int32_t>(static_cast<uint32_t>(ret));
+    if (p.nr == -4) {  // stat family: virtual owner
+        if (ret == 0) fixStatOwner(tid, r, p);
+        ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+        return;
+    }
     if (p.nr == -2) {  // faked uevent socket: remember the fd (per thread-group)
         if (ret >= 0) {
             std::lock_guard<std::mutex> g(credsMu_);
             netlinkFds_[tgidOf(tid)].insert(static_cast<int>(ret));
+        }
+        ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+        return;
+    }
+    if (p.nr == SYS_setrlimit || p.nr == SYS_prlimit64) {
+        // A privileged guest may raise its limits (init's `rlimit`); if the host still refused,
+        // keep the host's limit and report success instead of letting init abort the service.
+        if (ret == -EPERM) {
+            stats_.faked++;
+            setReturn(tid, r, 0);
         }
         ptrace(PTRACE_CONT, tid, nullptr, nullptr);
         return;

@@ -111,6 +111,8 @@ private:
         std::string guestPath;   // for readlinkat on /proc magic links
         uint64_t buf = 0;
         uint64_t bufSize = 0;
+        int statKind = 0;        // owner fix-up at exit: 1 = struct stat/stat64, 2 = struct statx
+        bool follow = true;
     };
 
     void handleSeccomp(pid_t tid);
@@ -140,6 +142,7 @@ private:
     bool rewriteExec(pid_t tid, struct Regs& r, uint64_t& scratch);
     bool rewriteSockaddr(pid_t tid, struct Regs& r, uint64_t& scratch, bool isConnect);
     bool isFakeNetlinkBind(pid_t tid, struct Regs& r);
+    void fixStatOwner(pid_t tid, struct Regs& r, const Pending& p);
     std::string guestCwdOf(pid_t tid);
     std::string guestFdPath(pid_t tid, int fd);
     uint64_t pushBytes(pid_t tid, uint64_t& scratch, const void* data, size_t len);

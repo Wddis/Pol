@@ -573,6 +573,11 @@ TEST(virtual_file_owner_like_the_phone) {
     auto r = run(with({NEST_RUN_PATH, "-b", "/=/", "-P", NEST_PRELOAD_PATH, "--", NEST_IDPROG_PATH, "owner", f, "chown", f,
                        "1000", "1001", "owner", f, "fchown", f, "-1", "2000", "owner", f, "chown", f, "0", "0", "owner", f}));
     EXPECT_EQ(r.out, "0:0 0:0\n0\n1000:1001 1000:1001\n0\n1000:2000 1000:2000\n0\n0:0 0:0\n");
+    // A static program (no preload, like the bootstrap linkerconfig reading the property area):
+    // the tracer patches the owner into stat/fstat results.
+    auto sr = run(with({NEST_RUN_PATH, "-b", "/=/", "-P", NEST_PRELOAD_PATH, "--", NEST_IDPROG_STATIC_PATH, "owner", f,
+                        "chown", f, "1000", "1001", "owner", f, "chown", f, "0", "0", "owner", f}));
+    EXPECT_EQ(sr.out, "0:0 0:0\n0\n1000:1001 1000:1001\n0\n0:0 0:0\n");
     struct stat st;
     EXPECT_TRUE(stat(f.c_str(), &st) == 0 && st.st_uid == 65534);  // the host file never changed owner
 }
@@ -582,6 +587,21 @@ TEST(kernel_uevent_socket_is_faked) {
     // may not. The engine must hand it a harmless socket that binds and never delivers events.
     auto r = run({NEST_RUN_PATH, "-b", "/=/", "--android", mktmp(), "--", NEST_IDPROG_PATH, "uevent"});
     EXPECT_EQ(r.out, "socket ok bind ok\n");
+}
+
+TEST(rlimit_raise_succeeds_as_unprivileged_host_user) {
+    // Like the phone: the host user may not raise hard limits at all; init's `rlimit memlock 1G`
+    // for bpfloader must still succeed for the guest's root.
+    std::vector<std::string> drop{"/usr/bin/setpriv", "--reuid=65534", "--regid=65534", "--clear-groups"};
+    auto with = [&](std::vector<std::string> v) { v.insert(v.begin(), drop.begin(), drop.end()); return v; };
+    if (run(with({"/bin/true"})).status != 0) {
+        fprintf(stderr, "  skipped: cannot run unprivileged here\n");
+        return;
+    }
+    auto r = run(with({NEST_RUN_PATH, "-b", "/=/", "--", NEST_IDPROG_PATH, "rlimit-raise"}));
+    EXPECT_EQ(r.out, "0\n");
+    auto app = run(with({NEST_RUN_PATH, "-b", "/=/", "-u", "10050", "--", NEST_IDPROG_PATH, "rlimit-raise"}));
+    EXPECT_EQ(app.out, "-1 EPERM\n");
 }
 
 TEST(mount_requires_root_identity) {
