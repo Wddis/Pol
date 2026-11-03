@@ -212,6 +212,7 @@ int main(int argc, char** argv) {
     }
     timespec t0{}, t1{};
     clock_gettime(CLOCK_MONOTONIC, &t0);
+    const int logLevel = cfg.verbose;
     nest::Tracer tracer(std::move(cfg));
     // Userspace binder driver for the guest; reports each process's *virtual* euid.
     std::unique_ptr<nest::vbinder::Broker> broker;
@@ -257,6 +258,26 @@ int main(int argc, char** argv) {
                 });
             }
         }
+    }
+    // Tester log: host memory and display progress every 30 s (low memory explains SIGKILLs from
+    // the phone's own memory killer, which the guest never sees coming).
+    if (!androidState.empty() && logLevel) {
+        std::thread([&] {
+            for (int t = 30;; t += 30) {
+                sleep(30);
+                long availKb = -1, swapFreeKb = -1;
+                if (FILE* f = fopen("/proc/meminfo", "re")) {
+                    char line[128];
+                    while (fgets(line, sizeof(line), f)) {
+                        sscanf(line, "MemAvailable: %ld kB", &availKb);
+                        sscanf(line, "SwapFree: %ld kB", &swapFreeKb);
+                    }
+                    fclose(f);
+                }
+                fprintf(stderr, "nest: t=%ds mem_avail=%ldMB swap_free=%ldMB frames=%llu\n", t, availKb / 1024,
+                        swapFreeKb / 1024, static_cast<unsigned long long>(wayland ? wayland->frames() : 0));
+            }
+        }).detach();
     }
     int rc = tracer.run(args[0], args, env);
     if (inputFd >= 0) {

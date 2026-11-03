@@ -284,8 +284,18 @@ thread»): ждёт ISensors, а Waydroid sensors HAL без `waydroid.stub_sens
 (exit 0). В копию vendor build.prop добавлено `waydroid.stub_sensors_hal=1`,
 `waydroid.multi_windows=false`. Стенд: HAL «ready», system_server до StartConnectivityService.
 
+### 0.5.5 — лог 0.5.4 + расширенный лог тестера
+Телефон 0.5.4: `startOtherServices` завершён (12.8 с), «SystemServer init took too long», затем
+system_server умирает без видимой причины в хвосте logcat → zygote перезапуск. Чтобы видеть причину:
+- движок (`-v`): PTRACE_O_TRACEEXIT → `[pid] died NAME: signal N` / `[pid] exit NAME: status N`
+  (имя из argv — zygote-дети без exec), `[pid] SENDER sends signal N to T (NAME)` для 6/9/15/3/11
+  (без групповых SIGKILL от init, повторы один раз), каждые 30 с `nest: t= mem_avail= swap_free= frames=`.
+- лог (`GuestLogDigest.kt`): сводка в начале (смерти служб init, смерти процессов по движку, сигналы,
+  вехи загрузки, последний SystemServerTiming, память), события движка без exec, ошибки E/F всего
+  logcat со свёрткой повторов и стеками, tombstones (6), ANR (2), DropBox (crash/watchdog/anr).
+
 ### Ждём от владельца
-Тест **0.5.4-nest** (было 0.5.3, 0.5.2, 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+Тест **0.5.5-nest** (было 0.5.4, 0.5.3, 0.5.2, 0.5.1) на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14

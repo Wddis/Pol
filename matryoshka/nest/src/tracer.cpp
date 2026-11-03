@@ -1314,6 +1314,73 @@ pid_t Tracer::parentOf(pid_t tid) const {
 
 // Virtual pid 1. Returns true when the call is answered here (result), false to let it run
 // (possibly with translated arguments).
+std::string Tracer::procName(pid_t pid) {
+    // argv[0] (zygote renames its children there), else comm
+    char path[48], buf[256] = {};
+    snprintf(path, sizeof(path), "/proc/%d/cmdline", pid);
+    int fd = open(path, O_RDONLY | O_CLOEXEC);
+    ssize_t n = fd >= 0 ? read(fd, buf, sizeof(buf) - 1) : -1;
+    if (fd >= 0) close(fd);
+    std::string name;
+    if (n > 0) {
+        // argv[0], skipping a CPU emulator or the dynamic loader running the program (argv[1])
+        size_t at = 0;
+        for (int k = 0; k < 3 && at < static_cast<size_t>(n); k++) {
+            std::string arg(buf + at);
+            at += arg.size() + 1;
+            if (arg.find("qemu-") != std::string::npos || arg.find("/linker") != std::string::npos) continue;
+            name = arg;
+            break;
+        }
+    }
+    if (name.empty() || name.find("linker") != std::string::npos) {
+        snprintf(path, sizeof(path), "/proc/%d/comm", pid);
+        fd = open(path, O_RDONLY | O_CLOEXEC);
+        n = fd >= 0 ? read(fd, buf, sizeof(buf) - 1) : -1;
+        if (fd >= 0) close(fd);
+        if (n > 0) {
+            buf[n] = 0;
+            if (buf[n - 1] == '\n') buf[n - 1] = 0;
+            std::string comm = buf;
+            {
+                std::lock_guard<std::mutex> g(credsMu_);
+                auto e = exe_.find(pid);
+                if (e != exe_.end()) comm = e->second + " (" + comm + ")";
+            }
+            name = comm;
+        }
+    }
+    return name.empty() ? "?" : name;
+}
+
+void Tracer::logKill(pid_t tid, const Regs& r, long nr) {
+    long target, sig;
+    if (nr == SYS_kill || nr == SYS_tkill) {
+        target = static_cast<long>(static_cast<int32_t>(r.arg[0]));
+        sig = static_cast<long>(r.arg[1]);
+    } else if (nr == SYS_tgkill) {
+        target = static_cast<long>(static_cast<int32_t>(r.arg[1]));
+        sig = static_cast<long>(r.arg[2]);
+    } else {
+        return;
+    }
+    if (sig != SIGKILL && sig != SIGABRT && sig != SIGTERM && sig != SIGQUIT && sig != SIGSEGV) return;
+    if (target == tid || target == tgidOf(tid)) return;  // own abort/raise: the death line says it
+    std::string sender = procName(tgidOf(tid));
+    // init's process-group cleanup after every service end: the children's death lines say enough
+    if (target < 0 && sig == SIGKILL && sender.find("/init") != std::string::npos) return;
+    {
+        // init retries its process-group kills: one line per (target, signal) is enough
+        static std::mutex mu;
+        static std::set<std::pair<long, long>> seen;
+        std::lock_guard<std::mutex> g(mu);
+        if (!seen.insert({target, sig}).second) return;
+        if (seen.size() > 20000) seen.clear();
+    }
+    fprintf(stderr, "[%d] %s sends signal %ld to %ld (%s)\n", tid, sender.c_str(), sig, target,
+            target > 0 ? procName(static_cast<pid_t>(target)).c_str() : "group");
+}
+
 bool Tracer::handlePid(pid_t tid, Regs& r, long nr, long& result) {
     const pid_t init = initTgid_;
     // Signal targets: virtual pid 1 is the guest init's host pid.
@@ -2183,6 +2250,7 @@ void Tracer::handleSeccomp(pid_t tid) {
                 if (cfg_.fakeRoot) handleCaps(tid, r, s->logical);
                 break;
             case Kind::Pid: {
+                if (cfg_.verbose) logKill(tid, r, s->logical);
                 long res = 0;
                 if (cfg_.virtualInitPid && handlePid(tid, r, s->logical, res)) {
                     setSyscall(tid, r, -1);
@@ -2418,7 +2486,8 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
     int status = 0;
     if (waitpid(child, &status, __WALL) != child || !WIFSTOPPED(status)) return -1;
     long opts = PTRACE_O_TRACESECCOMP | PTRACE_O_TRACEFORK | PTRACE_O_TRACEVFORK | PTRACE_O_TRACECLONE |
-                PTRACE_O_TRACEEXEC | PTRACE_O_TRACESYSGOOD | PTRACE_O_EXITKILL;
+                PTRACE_O_TRACEEXEC | PTRACE_O_TRACESYSGOOD | PTRACE_O_EXITKILL |
+                (cfg_.verbose ? PTRACE_O_TRACEEXIT : 0);
     if (ptrace(PTRACE_SETOPTIONS, child, nullptr, reinterpret_cast<void*>(opts)) != 0) {
         kill(child, SIGKILL);
         return -1;
@@ -2500,6 +2569,20 @@ int Tracer::run(const std::string& program, const std::vector<std::string>& argv
                 netlinkFds_.erase(tid);  // a fresh program does not inherit the faked sockets' meaning
             }
             if (cfg_.fakeRoot) applyExecCaps(tid);
+            ptrace(PTRACE_CONT, tid, nullptr, nullptr);
+        } else if (sig == SIGTRAP && event == PTRACE_EVENT_EXIT) {
+            // Tester log: every guest process's end, with its name (zygote children never exec).
+            if (tgidOf(tid) == tid) {
+                unsigned long st = 0;
+                ptrace(PTRACE_GETEVENTMSG, tid, nullptr, &st);
+                int code = static_cast<int>(st);
+                std::string name = procName(tid);
+                if (WIFSIGNALED(code))
+                    fprintf(stderr, "[%d] died %s: signal %d%s\n", tid, name.c_str(), WTERMSIG(code),
+                            WCOREDUMP(code) ? " (core)" : "");
+                else
+                    fprintf(stderr, "[%d] exit %s: status %d\n", tid, name.c_str(), WEXITSTATUS(code));
+            }
             ptrace(PTRACE_CONT, tid, nullptr, nullptr);
         } else if (sig == SIGTRAP && event != 0) {
             if (event == PTRACE_EVENT_FORK || event == PTRACE_EVENT_VFORK || event == PTRACE_EVENT_CLONE) {

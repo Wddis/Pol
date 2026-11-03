@@ -48,16 +48,30 @@ object TesterLog {
             w.appendLine()
 
             w.appendLine("== Nest boot test: state=${NestGuest.state.value} image=${NestGuest.installedImage(context)}")
+            w.appendLine("host: ${hostMemory()}")
+            GuestLogDigest.summary(context).forEach { w.appendLine(it) }
+            w.appendLine()
+            // Everything the engine said except the exec stream, then its tail.
+            NestGuest.engineOut(context).takeIf { it.exists() }?.let { f ->
+                w.appendLine("-- engine events (${f.length()} bytes; deaths, kills, memory, errors)")
+                GuestLogDigest.grep(f, 4000) { !GuestLogDigest.EXEC.containsMatchIn(it) }.forEach { w.appendLine(it) }
+            }
             for ((title, f, n) in listOf(
-                Triple("engine output", NestGuest.engineOut(context), 300),
+                Triple("engine output", NestGuest.engineOut(context), 200),
                 Triple("guest kmsg", NestGuest.kmsg(context), 1500),
-                Triple("guest logcat", NestGuest.logcat(context), 4000),
+                Triple("guest logcat", NestGuest.logcat(context), 3000),
                 Triple("binder trace", NestGuest.binderLog(context), 3000),
             )) {
                 if (!f.exists()) continue
                 w.appendLine("-- $title (${f.length()} bytes, last $n lines)")
                 NestGuest.tail(f, n, maxBytes = 4 * 1024 * 1024).forEach { w.appendLine(it) }
             }
+            // Errors from the whole guest logcat (the tail above loses the start of the boot).
+            NestGuest.logcat(context).takeIf { it.exists() }?.let { f ->
+                w.appendLine("-- guest logcat errors, whole boot (E/F, crashes, watchdog; repeats folded)")
+                GuestLogDigest.errors(f, 5000).forEach { w.appendLine(it) }
+            }
+            GuestLogDigest.guestReports(NestGuest.dataDir(context)).forEach { w.appendLine(it) }
             w.appendLine()
 
             w.appendLine("== Virtual devices")
@@ -81,6 +95,12 @@ object TesterLog {
         }
         file
     }
+
+    private fun hostMemory(): String = runCatching {
+        File("/proc/meminfo").readLines().filter {
+            it.startsWith("MemTotal") || it.startsWith("MemAvailable") || it.startsWith("SwapFree") || it.startsWith("SwapTotal")
+        }.joinToString(", ") { it.replace(Regex("\\s+"), " ") }
+    }.getOrDefault("?")
 
     fun share(context: Context, file: File) {
         val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
