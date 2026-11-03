@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -242,7 +243,8 @@ private fun NestBootPanel() {
                     // The guest's display (frames from its composer; touches go back to it).
                     androidx.compose.ui.viewinterop.AndroidView(
                         factory = { NestDisplayView(it, NestGuest.stateDir(it.applicationContext), waiting) },
-                        modifier = Modifier.fillMaxWidth().height(520.dp).padding(top = 8.dp),
+                        modifier = Modifier.padding(top = 8.dp).height(520.dp)
+                            .aspectRatio(NestGuest.displayAspect, matchHeightConstraintsFirst = true),
                     )
                 }
             }

@@ -4,14 +4,14 @@ package dev.matryoshka.vm.core.nest
 import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.Bitmap
-import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.Paint
-import android.graphics.Rect
+import android.graphics.PixelFormat
 import android.net.LocalSocket
 import android.net.LocalSocketAddress
 import android.view.MotionEvent
-import android.view.View
+import android.view.SurfaceHolder
+import android.view.SurfaceView
 import java.io.File
 import java.io.RandomAccessFile
 import java.nio.ByteOrder
@@ -21,10 +21,14 @@ import java.util.concurrent.Executors
 
 /**
  * Shows the guest's screen: the engine's Wayland server writes every frame the guest composer
- * presents into STATE/display.fb (64-byte header "NFB1" + pixels, see nest/src/wayland_server.h).
- * Touches go back as datagrams "d|u|m ID X Y" (display pixels) on STATE/input.sock.
+ * presents into STATE/display.fb (64-byte header "NFB1" + R,G,B,A pixels, see
+ * nest/src/wayland_server.h). A background thread copies each new frame straight into this
+ * SurfaceView's buffer, sized like the guest's display: the phone's compositor scales it, the app's
+ * UI thread and GPU do no per-frame work. Touches go back as datagrams "d|u|m ID X Y" (display
+ * pixels) on STATE/input.sock.
  */
-class NestDisplayView(context: Context, private val stateDir: File, private val waitingText: String) : View(context) {
+class NestDisplayView(context: Context, private val stateDir: File, private val waitingText: String) :
+    SurfaceView(context), SurfaceHolder.Callback {
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.LTGRAY
         textAlign = Paint.Align.CENTER
@@ -34,37 +38,89 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
     private var mappedSize = 0L
     private var bitmap: Bitmap? = null
     private var lastSeq = -1L
-    private var fbW = 0
-    private var fbH = 0
-    private val dst = Rect()
-    private val paint = Paint(Paint.FILTER_BITMAP_FLAG)
+    @Volatile private var fbW = 0
+    @Volatile private var fbH = 0
+    @Volatile private var surfaceReady = false
+    @Volatile private var bufW = 0
+    @Volatile private var bufH = 0
+    @Volatile private var running = false
+    private var reader: Thread? = null
     private val input = Executors.newSingleThreadExecutor()
     private var sock: LocalSocket? = null
 
-    // Frames are copied on a background thread into a spare bitmap, then swapped in: the UI thread
-    // only draws (it also has to deliver touches without delay).
-    @Volatile private var running = false
-    private var spare: Bitmap? = null
-    private val frameLock = Any()
-    private var reader: Thread? = null
+    init {
+        holder.addCallback(this)
+        holder.setFormat(PixelFormat.RGBA_8888)
+    }
 
-    override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
+    override fun surfaceCreated(h: SurfaceHolder) {
+        surfaceReady = true
+        lastSeq = -1L  // repaint the current frame into the new surface
         running = true
-        reader = Thread({
-            while (running) {
-                val fresh = runCatching { poll() }.getOrDefault(false)
-                if (fresh) postInvalidateOnAnimation()
-                Thread.sleep(if (fresh) 4L else 8L)
-            }
-        }, "nest-display").apply { isDaemon = true; start() }
+        reader = Thread({ loop() }, "nest-display").apply { isDaemon = true; start() }
+    }
+
+    override fun surfaceChanged(h: SurfaceHolder, format: Int, width: Int, height: Int) {
+        lastSeq = -1L
+    }
+
+    override fun surfaceDestroyed(h: SurfaceHolder) {
+        surfaceReady = false
+        running = false
+        reader?.interrupt()
+        runCatching { reader?.join(500) }
     }
 
     override fun onDetachedFromWindow() {
-        running = false
-        reader?.interrupt()
         input.execute { runCatching { sock?.close() }; sock = null }
         super.onDetachedFromWindow()
+    }
+
+    private fun loop() {
+        var waitingShown = false
+        while (running) {
+            val fresh = runCatching { poll() }.getOrDefault(false)
+            if (fresh || (bitmap != null && bufW == 0)) {
+                present()
+            } else if (bitmap == null && !waitingShown) {
+                waitingShown = drawWaiting()
+            }
+            try {
+                Thread.sleep(if (fresh) 2L else 6L)
+            } catch (_: InterruptedException) {
+                return
+            }
+        }
+    }
+
+    private fun drawWaiting(): Boolean {
+        if (!surfaceReady) return false
+        val c = runCatching { holder.lockCanvas() }.getOrNull() ?: return false
+        try {
+            c.drawColor(Color.BLACK)
+            c.drawText(waitingText, c.width / 2f, c.height / 2f, textPaint)
+        } finally {
+            holder.unlockCanvasAndPost(c)
+        }
+        return true
+    }
+
+    private fun present() {
+        val bmp = bitmap ?: return
+        if (!surfaceReady) return
+        // Buffer the size of the guest's display: one plain copy per frame, scaled by the compositor.
+        if (bufW != bmp.width || bufH != bmp.height) {
+            bufW = bmp.width
+            bufH = bmp.height
+            post { holder.setFixedSize(bufW, bufH) }  // UI thread only
+            return  // the next frame goes into the resized buffer
+        }
+        val c = runCatching { holder.lockCanvas() }.getOrNull() ?: return
+        try {
+            c.drawBitmap(bmp, 0f, 0f, null)
+        } finally {
+            holder.unlockCanvasAndPost(c)
+        }
     }
 
     /** Copies a new frame into the bitmap; true when there is one. */
@@ -89,65 +145,27 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
         val h = m.getInt(8)
         val stride = m.getInt(12)
         val format = m.getInt(16)
-        if (w <= 0 || h <= 0 || HEADER + stride.toLong() * h > mappedSize) return false
-        val bmp = spare?.takeIf { it.width == w && it.height == h }
-            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        if (format == FMT_ABGR && stride == w * 4) {
-            // The engine always writes R,G,B,A bytes: the bitmap's own memory layout, one copy.
-            val b = m.duplicate()
-            b.position(HEADER)
-            b.limit(HEADER + stride * h)
-            bmp.copyPixelsFromBuffer(b)
-        } else {
-            val row = IntArray(w)
-            val px = IntArray(w * h)
-            val b = m.duplicate().order(ByteOrder.LITTLE_ENDIAN)
-            for (y in 0 until h) {
-                b.position(HEADER + y * stride)
-                b.asIntBuffer().get(row)
-                val o = y * w
-                for (x in 0 until w) {
-                    val v = row[x]
-                    val argb = if (format == FMT_ARGB || format == FMT_XRGB) v
-                    else (v and 0xff00ff00.toInt()) or ((v and 0xff) shl 16) or ((v ushr 16) and 0xff)
-                    px[o + x] = if (format == FMT_XRGB || format == FMT_XBGR) argb or 0xff000000.toInt() else argb
-                }
-            }
-            bmp.setPixels(px, 0, w, 0, 0, w, h)
-        }
+        if (w <= 0 || h <= 0 || format != FMT_ABGR || stride != w * 4 || HEADER + stride.toLong() * h > mappedSize) return false
+        val bmp = bitmap?.takeIf { it.width == w && it.height == h }
+            ?: Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888).also { bitmap = it }
+        val b = m.duplicate()
+        b.position(HEADER)
+        b.limit(HEADER + stride * h)
+        bmp.copyPixelsFromBuffer(b)  // R,G,B,A bytes: the bitmap's own layout
+        fbW = w
+        fbH = h
         lastSeq = seq
-        synchronized(frameLock) {
-            spare = bitmap?.takeIf { it.width == w && it.height == h }
-            bitmap = bmp
-            fbW = w; fbH = h
-        }
         return true
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        canvas.drawColor(Color.BLACK)
-        synchronized(frameLock) { drawFrame(canvas) }
-    }
-
-    private fun drawFrame(canvas: Canvas) {
-        val bmp = bitmap ?: run {
-            canvas.drawText(waitingText, width / 2f, height / 2f, textPaint)
-            return
-        }
-        val s = minOf(width / bmp.width.toFloat(), height / bmp.height.toFloat())
-        val dw = (bmp.width * s).toInt()
-        val dh = (bmp.height * s).toInt()
-        dst.set((width - dw) / 2, (height - dh) / 2, (width + dw) / 2, (height + dh) / 2)
-        canvas.drawBitmap(bmp, null, dst, paint)
     }
 
     @SuppressLint("ClickableViewAccessibility")
     override fun onTouchEvent(e: MotionEvent): Boolean {
-        if (fbW == 0 || dst.width() == 0) return true
-        val sx = fbW / dst.width().toFloat()
-        val sy = fbH / dst.height().toFloat()
+        if (fbW == 0 || width == 0 || height == 0) return true
+        // the surface buffer is stretched over the whole view (its aspect ratio is the guest's)
+        val sx = fbW / width.toFloat()
+        val sy = fbH / height.toFloat()
         val msgs = mutableListOf<String>()
-        fun at(i: Int) = "${e.getPointerId(i)} ${(e.getX(i) - dst.left) * sx} ${(e.getY(i) - dst.top) * sy}"
+        fun at(i: Int) = "${e.getPointerId(i)} ${e.getX(i) * sx} ${e.getY(i) * sy}"
         when (e.actionMasked) {
             MotionEvent.ACTION_DOWN, MotionEvent.ACTION_POINTER_DOWN -> msgs += "d " + at(e.actionIndex)
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> msgs += "u " + at(e.actionIndex)
@@ -170,9 +188,6 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
     private companion object {
         const val HEADER = 64
         const val MAGIC = 0x3142464e
-        const val FMT_ARGB = 0
-        const val FMT_XRGB = 1
         const val FMT_ABGR = 0x34324241
-        const val FMT_XBGR = 0x34324258
     }
 }

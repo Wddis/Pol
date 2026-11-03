@@ -94,7 +94,8 @@ struct Spec {
     long followMask = 0;
     bool followDefault = true;
     long logical = -1;  // native number with the same meaning (handlers dispatch on it)
-    std::vector<uint32_t> arg0Only;  // non-empty: trace only when arg0 is one of these (prctl)
+    std::vector<uint32_t> arg0Only;  // non-empty: trace only when arg[argOnlyIndex] is one of these
+    int argOnlyIndex = 0;            // which argument arg0Only filters (prctl: option; getsockopt: optname)
     int nonZeroArg = NONE;           // >= 0: trace only when this argument is non-zero (prlimit64's new limit)
 };
 
@@ -169,6 +170,8 @@ std::vector<Spec> buildSpecs() {
     s.push_back({SYS_fchmod, Kind::Fchmod});
     s.push_back({SYS_seccomp, Kind::GuestSeccomp});
     s.push_back({SYS_getsockopt, Kind::PeerCred});
+    s.back().arg0Only = {SO_PEERCRED};  // only this option: getsockopt is frequent (SO_ERROR, buffers...)
+    s.back().argOnlyIndex = 2;
     s.push_back({SYS_connect, Kind::Sock});
     s.push_back({SYS_bind, Kind::Sock});
     for (long nr : {SYS_getsockname, SYS_getpeername, SYS_accept, SYS_accept4}) s.push_back({nr, Kind::SockName});
@@ -471,7 +474,8 @@ bool installTraceFilter() {
             size_t k = s.arg0Only.size();
             f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, static_cast<uint32_t>(s.nr), 0,
                                  static_cast<uint8_t>(k + 3)));
-            f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS, offsetof(seccomp_data, args[0])));
+            f.push_back(BPF_STMT(BPF_LD | BPF_W | BPF_ABS,
+                                 static_cast<uint32_t>(offsetof(seccomp_data, args) + 8 * s.argOnlyIndex)));
             for (size_t i = 0; i < k; i++)
                 f.push_back(BPF_JUMP(BPF_JMP | BPF_JEQ | BPF_K, s.arg0Only[i], static_cast<uint8_t>(k - i), 0));
             f.push_back(BPF_STMT(BPF_RET | BPF_K, SECCOMP_RET_ALLOW));

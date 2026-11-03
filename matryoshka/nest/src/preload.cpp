@@ -845,6 +845,87 @@ extern "C" NEST_EXPORT int hw_get_module_by_class(const char* cls, const char* i
     if (r == 0 && module) wrapGralloc(*module);
     return r;
 }
+// ---- identity fast path (arm64): getuid & co. answered in-process
+// system_server asks getuid() hundreds of times a second (Process.myUid()); each call used to stop
+// the process in the tracer, which answers with the virtual id. Here bionic's getuid/geteuid/
+// getgid/getegid stubs are redirected to a cache filled by one trapped call; the set*id stubs are
+// redirected too, so any identity change empties the cache. Installed only when libc's code page
+// can be patched (else everything stays on the tracer).
+#if defined(__aarch64__)
+namespace {
+constexpr long kIdSys[4] = {SYS_getuid, SYS_geteuid, SYS_getgid, SYS_getegid};
+long g_idCache[4] = {-1, -1, -1, -1};
+
+long cachedId(int k) {
+    long v = __atomic_load_n(&g_idCache[k], __ATOMIC_ACQUIRE);
+    if (v >= 0) return v;
+    v = syscall(kIdSys[k]);  // trapped: the tracer answers with the virtual id
+    if (v >= 0) __atomic_store_n(&g_idCache[k], v, __ATOMIC_RELEASE);
+    return v;
+}
+void dropIds() {
+    for (long& v : g_idCache) __atomic_store_n(&v, -1L, __ATOMIC_RELEASE);
+}
+uid_t fastGetuid() { return static_cast<uid_t>(cachedId(0)); }
+uid_t fastGeteuid() { return static_cast<uid_t>(cachedId(1)); }
+gid_t fastGetgid() { return static_cast<gid_t>(cachedId(2)); }
+gid_t fastGetegid() { return static_cast<gid_t>(cachedId(3)); }
+long setIds(long nr, long a, long b, long c) {
+    long r = syscall(nr, a, b, c);  // trapped: the tracer applies the virtual change
+    dropIds();
+    return r;
+}
+int hSetuid(uid_t u) { return static_cast<int>(setIds(SYS_setuid, u, 0, 0)); }
+int hSetgid(gid_t g) { return static_cast<int>(setIds(SYS_setgid, g, 0, 0)); }
+int hSetreuid(uid_t r, uid_t e) { return static_cast<int>(setIds(SYS_setreuid, r, e, 0)); }
+int hSetregid(gid_t r, gid_t e) { return static_cast<int>(setIds(SYS_setregid, r, e, 0)); }
+int hSetresuid(uid_t r, uid_t e, uid_t s) { return static_cast<int>(setIds(SYS_setresuid, r, e, s)); }
+int hSetresgid(gid_t r, gid_t e, gid_t s) { return static_cast<int>(setIds(SYS_setresgid, r, e, s)); }
+int hSetfsuid(uid_t u) { return static_cast<int>(setIds(SYS_setfsuid, u, 0, 0)); }
+int hSetfsgid(gid_t g) { return static_cast<int>(setIds(SYS_setfsgid, g, 0, 0)); }
+
+// Overwrites a bionic syscall stub ("mov x8, #nr; svc #0; ...") with "ldr x16, #8; br x16; .quad to".
+bool redirectStub(void* fn, long nr, void* to) {
+    auto* code = static_cast<uint32_t*>(fn);
+    if (!fn || code[0] != (0xd2800008u | (static_cast<uint32_t>(nr) << 5)) || code[1] != 0xd4000001u) return false;
+    long page = sysconf(_SC_PAGESIZE);
+    uintptr_t start = reinterpret_cast<uintptr_t>(fn) & ~static_cast<uintptr_t>(page - 1);
+    size_t len = (reinterpret_cast<uintptr_t>(fn) + 16 - start + page - 1) & ~static_cast<uintptr_t>(page - 1);
+    if (mprotect(reinterpret_cast<void*>(start), len, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) return false;
+    uint32_t tramp[4] = {0x58000050u, 0xd61f0200u, 0, 0};
+    uint64_t addr = reinterpret_cast<uint64_t>(to);
+    memcpy(&tramp[2], &addr, 8);
+    memcpy(code, tramp, sizeof(tramp));
+    __builtin___clear_cache(reinterpret_cast<char*>(code), reinterpret_cast<char*>(code) + sizeof(tramp));
+    mprotect(reinterpret_cast<void*>(start), len, PROT_READ | PROT_EXEC);
+    return true;
+}
+
+__attribute__((constructor)) void installIdFastPath() {
+    if (!getenv("NEST_VFS_FILE")) return;  // only inside the engine
+    void* libc = dlopen("libc.so", RTLD_NOW | RTLD_NOLOAD);
+    if (!libc) return;
+    struct { const char* name; long nr; void* to; } hooks[] = {
+        // the setters first: never cache an id that a non-redirected setter could change
+        {"setuid", SYS_setuid, reinterpret_cast<void*>(hSetuid)},
+        {"setgid", SYS_setgid, reinterpret_cast<void*>(hSetgid)},
+        {"setreuid", SYS_setreuid, reinterpret_cast<void*>(hSetreuid)},
+        {"setregid", SYS_setregid, reinterpret_cast<void*>(hSetregid)},
+        {"setresuid", SYS_setresuid, reinterpret_cast<void*>(hSetresuid)},
+        {"setresgid", SYS_setresgid, reinterpret_cast<void*>(hSetresgid)},
+        {"setfsuid", SYS_setfsuid, reinterpret_cast<void*>(hSetfsuid)},
+        {"setfsgid", SYS_setfsgid, reinterpret_cast<void*>(hSetfsgid)},
+    };
+    for (auto& h : hooks)
+        if (!redirectStub(dlsym(libc, h.name), h.nr, h.to)) return;  // a setter we cannot see: no cache
+    redirectStub(dlsym(libc, "getuid"), SYS_getuid, reinterpret_cast<void*>(fastGetuid));
+    redirectStub(dlsym(libc, "geteuid"), SYS_geteuid, reinterpret_cast<void*>(fastGeteuid));
+    redirectStub(dlsym(libc, "getgid"), SYS_getgid, reinterpret_cast<void*>(fastGetgid));
+    redirectStub(dlsym(libc, "getegid"), SYS_getegid, reinterpret_cast<void*>(fastGetegid));
+}
+}  // namespace
+#endif
+
 }  // extern "C"
 
 // ---- bench only (NEST_HIDE_EMU_THREADS=1, set when a CPU emulator stands in for the phone):
