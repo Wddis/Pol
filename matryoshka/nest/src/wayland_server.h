@@ -56,6 +56,8 @@ public:
 
     // Touch input from the app (coordinates in display pixels). down/up/motion.
     void sendTouch(int action, int id, float x, float y);
+    // A key (Linux input code: KEY_BACK 158, KEY_HOMEPAGE 172, KEY_APPSELECT 580...) on wl_keyboard.
+    void sendKey(int code, bool pressed);
 
     uint64_t frames() const;
     int clients() const;

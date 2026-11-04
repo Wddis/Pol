@@ -15,11 +15,13 @@ Every component was checked for licence compatibility with Matryoshka's Apache-2
 | QEMU | GPL-2.0 | **Not in this APK.** Optional separate engine-pack APK | Engine pack must ship/offer its complete source |
 | Magisk | GPL-3.0 | **Not in this APK.** Downloaded by the user, on request, from the official GitHub release, installed into the guest | Licence shown before download; no modification, no redistribution by us |
 | microG GmsCore | Apache-2.0 | **Not in this APK.** Downloaded on request from the official release | Licence shown before download |
+| F-Droid client | GPL-3.0 | **Not in this APK.** Downloaded on request from f-droid.org, installed into the guest | Licence shown before download |
 | Google Play Services / Play Store | Proprietary | **Never downloaded or distributed** by Matryoshka | User-provided only |
 
-ADB protocol client, display client, engine scripts, UI and the guest device configuration are
-original Matryoshka code. The signature-spoofing patch is an independent implementation of the
+ADB protocol client, display client, engine scripts, UI, the guest device configuration and the
+guest network agent (`nest/guest-agent`, compiled against our own declaration-only stubs of the
+Android framework classes it uses) are original Matryoshka code. The signature-spoofing patch is an independent implementation of the
 approach used by microG (no code copied).
 
-"Android" is a trademark of Google LLC; "scrcpy", "Magisk", "microG", "QEMU" belong to their
+"Android" is a trademark of Google LLC; "scrcpy", "Magisk", "microG", "F-Droid", "QEMU" belong to their
 respective owners and are used only to name the components.

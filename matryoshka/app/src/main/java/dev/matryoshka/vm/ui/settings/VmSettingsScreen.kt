@@ -12,6 +12,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeveloperBoard
 import androidx.compose.material.icons.outlined.Hub
@@ -117,7 +118,7 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                 }
             }
 
-            if (vm.engine != EngineType.CONTAINER) {
+            if (vm.engine != EngineType.CONTAINER && vm.engine != EngineType.NEST) {
                 SectionTitle(stringResource(R.string.graphics))
                 SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
                     GpuMode.entries.forEachIndexed { i, g ->
@@ -146,8 +147,12 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                     ListRow(
                         Icons.Outlined.AdminPanelSettings,
                         stringResource(if (hasMagisk) R.string.magisk_installed else R.string.install_magisk),
-                        stringResource(if (vm.engine == EngineType.CONTAINER) R.string.magisk_container_note else R.string.magisk_install_desc),
-                        onClick = if (running && !working && vm.engine != EngineType.CONTAINER) ({ confirmComponent = "magisk" }) else null,
+                        stringResource(when (vm.engine) {
+                            EngineType.NEST -> R.string.magisk_nest_note
+                            EngineType.CONTAINER -> R.string.magisk_container_note
+                            else -> R.string.magisk_install_desc
+                        }),
+                        onClick = if (running && !working && vm.engine != EngineType.CONTAINER && vm.engine != EngineType.NEST) ({ confirmComponent = "magisk" }) else null,
                     )
                     if (hasMagisk) {
                         ListRow(Icons.Outlined.LayersClear, stringResource(R.string.remove_magisk), stringResource(R.string.remove_magisk_desc),
@@ -157,6 +162,11 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                     ListRow(
                         Icons.Outlined.Hub, stringResource(R.string.install_microg), stringResource(R.string.microg_desc),
                         tint = Brand.Teal, onClick = if (running && !working) ({ confirmComponent = "microg" }) else null,
+                    )
+                    HorizontalDivider()
+                    ListRow(
+                        Icons.Outlined.Apps, stringResource(R.string.install_fdroid), stringResource(R.string.fdroid_desc),
+                        tint = Brand.Teal, onClick = if (running && !working) ({ confirmComponent = "fdroid" }) else null,
                     )
                     if (!running) Text(stringResource(R.string.start_first), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 12.dp))
@@ -184,7 +194,7 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
     }
 
     confirmComponent?.let { which ->
-        val c = if (which == "magisk") Components.MAGISK else Components.MICROG_CORE
+        val c = when (which) { "magisk" -> Components.MAGISK; "fdroid" -> Components.FDROID; else -> Components.MICROG_CORE }
         AlertDialog(
             onDismissRequest = { confirmComponent = null },
             title = { Text(c.title) },
@@ -194,7 +204,9 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                     confirmComponent = null
                     working = true
                     scope.launch {
-                        val r = runCatching { if (which == "magisk") m.installMagisk(vmId) else m.installMicroG(vmId) }
+                        val r = runCatching {
+                            when (which) { "magisk" -> m.installMagisk(vmId); "fdroid" -> m.installAppStore(vmId); else -> m.installMicroG(vmId) }
+                        }
                         working = false
                         snack.showSnackbar(r.fold({ context.getString(R.string.component_done, c.title) }, { it.message ?: "Error" }))
                     }

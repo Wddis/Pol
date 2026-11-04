@@ -34,6 +34,13 @@
     <string name="virtualization">Virtualization</string>
     <string name="engine_hypervisor">Hypervisor</string>
     <string name="engine_container">Container</string>
+    <string name="engine_nest">Nest</string>
+    <string name="engine_nest_desc">Android runs as ordinary app processes on this phone: no root, native speed, the phone\'s GPU.</string>
+    <string name="nest_back">Back</string>
+    <string name="nest_home">Home</string>
+    <string name="nest_recents">Recent apps</string>
+    <string name="nest_waiting">Android is starting…</string>
+    <string name="nest_image">Android 11 (downloaded on first start, about 1 GB)</string>
     <string name="engine_emulator">Emulator</string>
     <string name="engine_hypervisor_desc">A real virtual machine with its own kernel on hardware virtualization (KVM). Strongest isolation.</string>
     <string name="engine_container_desc">Android runs on the host kernel in isolated namespaces with its own binder. Near-native speed, needs root.</string>
@@ -62,6 +69,9 @@
     <string name="root">Root</string>
     <string name="magisk_title">Root with Magisk</string>
     <string name="magisk_desc">Magisk can be installed after the first boot from the device settings.</string>
+    <string name="install_fdroid">Install F-Droid</string>
+    <string name="fdroid_desc">Free and open-source app store (GPL-3.0), downloaded from f-droid.org.</string>
+    <string name="magisk_nest_note">Magisk for Nest devices comes in a later update (it is prepared without a boot image).</string>
     <string name="magisk_container_note">The container engine has no boot image, so Magisk is unavailable. Use the Hypervisor or Emulator engine for Magisk.</string>
     <string name="engine_log">Engine log</string>
     <string name="overview">Overview</string>

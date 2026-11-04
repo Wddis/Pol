@@ -33,6 +33,13 @@
     <string name="virtualization">Виртуализация</string>
     <string name="engine_hypervisor">Гипервизор</string>
     <string name="engine_container">Контейнер</string>
+    <string name="engine_nest">Nest</string>
+    <string name="engine_nest_desc">Android работает как обычные процессы приложения на этом телефоне: без root, на родной скорости, с видеочипом телефона.</string>
+    <string name="nest_back">Назад</string>
+    <string name="nest_home">Домой</string>
+    <string name="nest_recents">Недавние</string>
+    <string name="nest_waiting">Android запускается…</string>
+    <string name="nest_image">Android 11 (скачивается при первом запуске, около 1 ГБ)</string>
     <string name="engine_emulator">Эмулятор</string>
     <string name="engine_hypervisor_desc">Настоящая виртуальная машина со своим ядром на аппаратной виртуализации (KVM). Максимальная изоляция.</string>
     <string name="engine_container_desc">Android работает на ядре хоста в изолированных пространствах имён со своим binder. Почти нативная скорость, нужен root.</string>
@@ -61,6 +68,9 @@
     <string name="root">Root</string>
     <string name="magisk_title">Root через Magisk</string>
     <string name="magisk_desc">Magisk можно установить после первой загрузки в настройках устройства.</string>
+    <string name="install_fdroid">Установить F-Droid</string>
+    <string name="fdroid_desc">Магазин свободных приложений (GPL-3.0), загружается с f-droid.org.</string>
+    <string name="magisk_nest_note">Magisk для устройств Nest появится в следующем обновлении (готовится без boot-образа).</string>
     <string name="magisk_container_note">У контейнерного движка нет boot-образа, поэтому Magisk недоступен. Для Magisk используйте движок «Гипервизор» или «Эмулятор».</string>
     <string name="engine_log">Журнал движка</string>
     <string name="overview">Обзор</string>

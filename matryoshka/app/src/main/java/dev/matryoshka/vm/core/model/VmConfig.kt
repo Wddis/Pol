@@ -15,9 +15,11 @@ import kotlinx.serialization.Serializable
  *    namespaces with its own binderfs instance. Near-native speed, needs root and binderfs.
  *  - [EMULATOR]: full-system emulation (QEMU TCG). Works without root on any 64-bit device
  *    but is an order of magnitude slower. Fallback only.
+ *  - [NEST]: the guest userspace runs as ordinary app processes under the Nest engine (ptrace +
+ *    seccomp, userspace binder, virtual filesystem). No root, native CPU speed, the phone's GPU.
  */
 @Serializable
-enum class EngineType { HYPERVISOR, CONTAINER, EMULATOR }
+enum class EngineType { NEST, HYPERVISOR, CONTAINER, EMULATOR }
 
 /** Which Google-services layer is provisioned in the guest. */
 @Serializable

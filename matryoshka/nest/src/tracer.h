@@ -66,6 +66,9 @@ struct TracerConfig {
     // connect() to these host socket paths goes to another host path (bind() is unchanged):
     // lets the log tee sit in front of the guest's logd.
     std::map<std::string, std::string> connectRedirect;
+    // Guest paths the engine has laid out itself (shared storage): guest mounts on them or below
+    // are accepted and ignored (there is one mount view for all guest processes).
+    std::vector<std::string> fixedMounts;
 };
 
 struct TracerStats {

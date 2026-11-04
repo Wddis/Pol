@@ -53,6 +53,11 @@ data class NestImageFile(val name: String, val sha256: String, val size: Long)
  */
 object NestGuest {
     const val RELEASE = "https://github.com/Wddis/Pol/releases/download/nest-guest-a11"
+    /** Pseudo image id of Nest VMs: the guest image is managed here, not by ImageManager. */
+    const val IMAGE_ID = "nest-a11"
+    const val DEFAULT_ADB_PORT = 15_500
+
+    fun adbListen(port: Int) = "service.adb.listen_addrs=tcp:$port"  // the engine keeps it on loopback
 
     sealed interface State {
         data object NotInstalled : State
@@ -82,6 +87,8 @@ object NestGuest {
     private fun base(c: Context) = File(c.dataDir, "n")
     fun rootfs(c: Context) = File(base(c), "r")
     fun dataDir(c: Context) = File(base(c), "d")
+    /** /data of one Nest VM (short: guest sockets under /data live below this path). */
+    fun vmDataDir(c: Context, vmId: String) = File(base(c), "v" + vmId.filter { it.isLetterOrDigit() }.take(8))
     fun stateDir(c: Context) = File(base(c), "s")
     private fun archive(c: Context) = File(c.filesDir, "images/nest-guest.tar.gz")
     private fun stamp(c: Context) = File(rootfs(c), ".nest-image")
@@ -128,19 +135,33 @@ object NestGuest {
         }
     }
 
+    /**
+     * How one VM boots: its own /data, extra guest properties (--prop) and the host's ADB key the
+     * guest's adbd accepts (written to /data/misc/adb/adb_keys).
+     */
+    data class BootOptions(
+        val dataDir: File? = null,
+        val props: List<String> = emptyList(),
+        val adbPublicKey: String? = null,
+    )
+
     /** Boots the guest's init (second stage) under the engine. */
-    fun boot(c: Context) {
+    fun boot(c: Context, opts: BootOptions = BootOptions()) {
         if (process != null || installedImage(c) == null) return
         val app = c.applicationContext
         val lib = app.applicationInfo.nativeLibraryDir
         val st = stateDir(app)
         st.deleteRecursively()  // per-boot state: /dev, sockets, tmpfs mounts
         st.mkdirs()
-        dataDir(app).mkdirs()
+        val data = opts.dataDir ?: dataDir(app)
+        data.mkdirs()
+        opts.adbPublicKey?.let { key ->
+            File(data, "misc/adb").apply { mkdirs() }.resolve("adb_keys").writeText(key.trim() + "\n")
+        }
         val args = mutableListOf(
             "$lib/libnest_run.so",
             "-b", "/=${rootfs(app).absolutePath}",
-            "-b", "/data=${dataDir(app).absolutePath}",
+            "-b", "/data=${data.absolutePath}",
             "--android", st.absolutePath,
             "-P", "$lib/libnest_preload.so",
         )
@@ -155,6 +176,16 @@ object NestGuest {
         displayWidth = 540
         displayHeight = gh
         if (useGpu) args += "--gpu"  // the phone's GPU driver for the guest (falls back to software)
+        // The guest's adbd: key authentication, loopback only (never reachable from the phone's
+        // Wi-Fi), so only this app can talk to it.
+        val props = linkedMapOf("ro.adb.secure" to "1", "service.adb.listen_addrs" to "tcp:$DEFAULT_ADB_PORT")
+        // The guest's network (nest/guest-agent): one always-up network with the phone's DNS.
+        netAgent(app)?.let { args += listOf("--net-agent", it.absolutePath) }
+        props["nest.net.dns"] = hostDns(app).joinToString(",")
+        props["nest.net.dns_file"] = File(st, "net-dns").absolutePath
+        updateDns(app)
+        opts.props.forEach { kv -> kv.split('=', limit = 2).let { if (it.size == 2) props[it[0]] = it[1] } }
+        props.forEach { (k, v) -> args += listOf("--prop", "$k=$v") }
         args += listOf("-B", File(st, "b.sock").absolutePath, "-v", "-s", "--", "/system/bin/init", "second_stage")
         val pb = ProcessBuilder(args)
             .redirectErrorStream(true)
@@ -175,6 +206,53 @@ object NestGuest {
             val code = p.waitFor()
             process = null
             _state.value = State.Stopped(code, (System.currentTimeMillis() - started) / 1000)
+        }
+    }
+
+    val isRunning: Boolean get() = process?.isAlive == true
+
+    /** assets/nest-agent.jar (built from nest/guest-agent) as a file the guest can read. */
+    private fun netAgent(c: Context): File? = runCatching {
+        val f = File(c.filesDir, "nest/nest-agent.jar")
+        f.parentFile?.mkdirs()
+        val bytes = c.assets.open("nest-agent.jar").use { it.readBytes() }
+        if (!f.exists() || f.length() != bytes.size.toLong() || !f.readBytes().contentEquals(bytes)) {
+            val tmp = File(f.path + ".tmp")
+            tmp.writeBytes(bytes)
+            tmp.renameTo(f)
+        }
+        f
+    }.getOrNull()
+
+    /** Tells a running guest the phone's current DNS servers (after a network change). */
+    fun updateDns(c: Context) {
+        runCatching { File(stateDir(c.applicationContext), "net-dns").writeText(hostDns(c).joinToString(",") + "\n") }
+    }
+
+    /** The phone's DNS servers (numeric), public resolvers as the fallback. */
+    fun hostDns(c: Context): List<String> {
+        val cm = c.getSystemService(android.net.ConnectivityManager::class.java)
+        val own = runCatching {
+            cm?.activeNetwork?.let { cm.getLinkProperties(it) }?.dnsServers.orEmpty().mapNotNull { it.hostAddress }
+        }.getOrDefault(emptyList())
+        return (own + listOf("1.1.1.1", "8.8.8.8")).map { it.substringBefore('%') }.distinct().take(4)
+    }
+
+    /** Downloads/unpacks the guest image if needed and waits for it (VM preparation). */
+    suspend fun ensureInstalled(c: Context, progress: (String) -> Unit) {
+        refresh(c)
+        if (installedImage(c) != null) return
+        install(c)
+        while (true) {
+            when (val s = state.value) {
+                is State.Downloading -> progress("Downloading Android 11: ${s.done / 1_000_000} / ${s.total / 1_000_000} MB")
+                State.Verifying -> progress("Verifying the download")
+                is State.Extracting -> progress("Unpacking: ${100 * s.done / s.total.coerceAtLeast(1)} %")
+                State.Ready -> return
+                is State.Failed -> throw IOException(s.message)
+                else -> Unit
+            }
+            kotlinx.coroutines.delay(1000)
         }
     }
 

@@ -78,7 +78,10 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import dev.matryoshka.vm.R
 import dev.matryoshka.vm.core.display.DisplaySession
+import dev.matryoshka.vm.core.model.EngineType
 import dev.matryoshka.vm.core.model.VmState
+import dev.matryoshka.vm.core.nest.NestDisplayView
+import dev.matryoshka.vm.core.nest.NestGuest
 import dev.matryoshka.vm.service.VmService
 import dev.matryoshka.vm.ui.BackButton
 import dev.matryoshka.vm.ui.components.NestedDevice
@@ -105,9 +108,16 @@ fun DeviceScreen(
     val m = manager()
     val states by m.states.collectAsState()
     val state = states[vmId] ?: VmState.Stopped
-    Crossfade(state is VmState.Running, label = "device") { running ->
-        if (running) LiveDisplay(vmId, onBack, onApps, onFiles, onSettings)
-        else DeviceOverview(vmId, state, onBack, onSettings)
+    val engine = m.repo.vms.collectAsState().value.firstOrNull { it.id == vmId }?.engine
+    // A Nest guest draws its own screen from the first boot frame on (boot animation included).
+    val nest = engine == EngineType.NEST
+    val live = state is VmState.Running || (nest && state is VmState.Booting && NestGuest.isRunning)
+    Crossfade(live, label = "device") { on ->
+        when {
+            on && nest -> NestLiveDisplay(vmId, state is VmState.Running, onBack, onApps, onFiles, onSettings)
+            on -> LiveDisplay(vmId, onBack, onApps, onFiles, onSettings)
+            else -> DeviceOverview(vmId, state, onBack, onSettings)
+        }
     }
 }
 
@@ -260,6 +270,78 @@ private fun LiveDisplay(vmId: String, onBack: () -> Unit, onApps: () -> Unit, on
                                 MenuItem(R.string.files, Icons.Outlined.Folder) { menu = false; onFiles() }
                                 MenuItem(R.string.volume_up, Icons.Outlined.VolumeUp) { session?.key(KeyEvent.KEYCODE_VOLUME_UP) }
                                 MenuItem(R.string.volume_down, Icons.Outlined.VolumeDown) { session?.key(KeyEvent.KEYCODE_VOLUME_DOWN) }
+                                MenuItem(R.string.settings, Icons.Outlined.Settings) { menu = false; onSettings() }
+                                MenuItem(R.string.restart, Icons.Outlined.RestartAlt) { menu = false; m.restart(vmId) }
+                                MenuItem(R.string.power_off, Icons.Outlined.PowerSettingsNew) { menu = false; VmService.stop(context, vmId); onBack() }
+                                MenuItem(R.string.minimize, Icons.AutoMirrored.Outlined.ArrowBack) { menu = false; onBack() }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** Immersive, screen kept on while a virtual device is shown. */
+@Composable
+private fun ImmersiveEffect() {
+    val context = LocalContext.current
+    val view = LocalView.current
+    DisposableEffect(Unit) {
+        val window = (context as Activity).window
+        val ctl = WindowCompat.getInsetsController(window, view)
+        ctl.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        ctl.hide(WindowInsetsCompat.Type.systemBars())
+        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        onDispose {
+            ctl.show(WindowInsetsCompat.Type.systemBars())
+            window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        }
+    }
+}
+
+/** The Nest guest's own screen (engine viewer), navigation keys as the guest's keyboard keys. */
+@Composable
+private fun NestLiveDisplay(
+    vmId: String, booted: Boolean, onBack: () -> Unit, onApps: () -> Unit, onFiles: () -> Unit, onSettings: () -> Unit,
+) {
+    val m = manager()
+    val context = LocalContext.current
+    var view by remember { mutableStateOf<NestDisplayView?>(null) }
+    var toolbar by remember { mutableStateOf(true) }
+    var menu by remember { mutableStateOf(false) }
+    ImmersiveEffect()
+    // The phone's back gesture is the guest's Back; leaving the device is in the menu.
+    androidx.activity.compose.BackHandler { view?.tapKey(NestDisplayView.KEY_BACK) }
+    val waiting = stringResource(R.string.nest_waiting)
+
+    Box(Modifier.fillMaxSize().background(Color.Black)) {
+        AndroidView(
+            factory = { ctx -> NestDisplayView(ctx, NestGuest.stateDir(ctx), waiting).also { view = it } },
+            modifier = Modifier.align(Alignment.Center)
+                .aspectRatio(NestGuest.displayAspect, matchHeightConstraintsFirst = true),
+        )
+        Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+            IconButton(onClick = { toolbar = !toolbar }, modifier = Modifier.size(28.dp)) {
+                Icon(if (toolbar) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp, null, tint = Color.White.copy(alpha = 0.7f))
+            }
+            AnimatedVisibility(toolbar, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
+                Surface(shape = CircleShape, color = Color(0xE6181A22), tonalElevation = 6.dp) {
+                    Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                        PillButton(Icons.AutoMirrored.Outlined.ArrowBack) { view?.tapKey(NestDisplayView.KEY_BACK) }
+                        PillButton(Icons.Outlined.Circle) { view?.tapKey(NestDisplayView.KEY_HOMEPAGE) }
+                        PillButton(Icons.Outlined.CropSquare) { view?.tapKey(NestDisplayView.KEY_APPSELECT) }
+                        PillButton(Icons.Outlined.Keyboard) { view?.toggleKeyboard() }
+                        Box {
+                            PillButton(Icons.Outlined.MoreHoriz) { menu = true }
+                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                                if (booted) {
+                                    MenuItem(R.string.apps, Icons.Outlined.Apps) { menu = false; onApps() }
+                                    MenuItem(R.string.files, Icons.Outlined.Folder) { menu = false; onFiles() }
+                                }
+                                MenuItem(R.string.volume_up, Icons.Outlined.VolumeUp) { view?.tapKey(NestDisplayView.KEY_VOLUMEUP) }
+                                MenuItem(R.string.volume_down, Icons.Outlined.VolumeDown) { view?.tapKey(NestDisplayView.KEY_VOLUMEDOWN) }
                                 MenuItem(R.string.settings, Icons.Outlined.Settings) { menu = false; onSettings() }
                                 MenuItem(R.string.restart, Icons.Outlined.RestartAlt) { menu = false; m.restart(vmId) }
                                 MenuItem(R.string.power_off, Icons.Outlined.PowerSettingsNew) { menu = false; VmService.stop(context, vmId); onBack() }

@@ -1,3 +1,6 @@
+import javax.inject.Inject
+import org.gradle.process.ExecOperations
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
@@ -16,8 +19,8 @@ android {
         // and the Nest engine runs the guest system's own binaries from there (like Termux).
         // Consequence: the APK is distributed outside Google Play.
         targetSdk = 28
-        versionCode = 40
-        versionName = "0.9.2-nest"
+        versionCode = 41
+        versionName = "0.10.0-nest"
 
         // Phones only: the Nest engine and the guest image are arm64.
         ndk { abiFilters += listOf("arm64-v8a") }
@@ -102,6 +105,47 @@ android {
         // libnest_run.so is an executable: it must exist as a real file in nativeLibraryDir.
         jniLibs.useLegacyPackaging = true
     }
+}
+
+/**
+ * The guest agent (nest/guest-agent): Java code that runs inside the guest under app_process. It is
+ * compiled against stubs of the guest's framework classes and dexed on its own into
+ * assets/nest-agent.jar; the app binds it into the guest at boot.
+ */
+abstract class GuestAgentTask : DefaultTask() {
+    @get:InputDirectory abstract val sourceDir: DirectoryProperty
+    @get:Input abstract val d8: Property<String>
+    @get:OutputDirectory abstract val outputDir: DirectoryProperty
+    @get:Inject abstract val exec: ExecOperations
+
+    @TaskAction
+    fun build() {
+        val classes = File(temporaryDir, "classes").apply { deleteRecursively(); mkdirs() }
+        val sources = sourceDir.get().asFile.walk().filter { it.isFile && it.name.endsWith(".java") }.map { it.absolutePath }.toList()
+        val javac = javax.tools.ToolProvider.getSystemJavaCompiler() ?: throw GradleException("No Java compiler")
+        val rc = javac.run(null, null, null, *(listOf("--release", "8", "-nowarn", "-d", classes.absolutePath) + sources).toTypedArray())
+        if (rc != 0) throw GradleException("Guest agent does not compile")
+        // Only our own classes: the framework stubs are provided by the guest.
+        val own = File(classes, "dev").walk().filter { it.isFile && it.name.endsWith(".class") }.map { it.absolutePath }.toList()
+        val out = outputDir.get().asFile.apply { deleteRecursively(); mkdirs() }
+        exec.exec { commandLine(listOf(d8.get(), "--release", "--min-api", "30", "--output", File(out, "nest-agent.jar").absolutePath) + own) }
+    }
+}
+
+val guestAgent = tasks.register<GuestAgentTask>("buildGuestAgent") {
+    sourceDir.set(rootProject.layout.projectDirectory.dir("nest/guest-agent"))
+    // d8 of AGP's build-tools, or the newest installed ones
+    d8.set(provider {
+        val bt = android.sdkDirectory.resolve("build-tools")
+        val preferred = bt.resolve("${android.buildToolsVersion}/d8")
+        (if (preferred.exists()) preferred
+        else bt.listFiles().orEmpty().map { it.resolve("d8") }.filter { it.exists() }.maxByOrNull { it.parentFile.name }
+            ?: throw GradleException("No build-tools with d8 in ${bt}")).absolutePath
+    })
+}
+
+androidComponents {
+    onVariants { v -> v.sources.assets?.addGeneratedSourceDirectory(guestAgent, GuestAgentTask::outputDir) }
 }
 
 dependencies {

@@ -27,6 +27,7 @@
 
 #include "fastpath.h"
 #include "netlink_emu.h"
+#include <netinet/in.h>
 #include "vbinder_client.h"
 #include "vfs.h"
 #include "vfs_share.h"
@@ -633,6 +634,44 @@ NEST_EXPORT int socket(int domain, int type, int protocol) {
 }
 NEST_EXPORT int bind(int fd, const struct sockaddr* a, socklen_t l) {
     if (nlOf(fd)) return 0;
+    // Guest servers listen on the phone's loopback only: a TCP port bound on "any address" would
+    // otherwise be reachable from the phone's Wi-Fi (adbd, debug servers of guest apps). Client
+    // sockets (port 0) and UDP are unchanged.
+    if (a && hostUid() >= 0) {
+        int type = 0;
+        socklen_t tl = sizeof(type);
+        if (a->sa_family == AF_INET && l >= sizeof(sockaddr_in)) {
+            sockaddr_in in;
+            memcpy(&in, a, sizeof(in));
+            if (in.sin_port != 0 && in.sin_addr.s_addr == htonl(INADDR_ANY) &&
+                syscall(SYS_getsockopt, fd, SOL_SOCKET, SO_TYPE, &type, &tl) == 0 && type == SOCK_STREAM) {
+                in.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+                return static_cast<int>(syscall(SYS_bind, fd, &in, sizeof(in)));
+            }
+        } else if (a->sa_family == AF_INET6 && l >= sizeof(sockaddr_in6)) {
+            sockaddr_in6 in6;
+            memcpy(&in6, a, sizeof(in6));
+            static const in6_addr any = IN6ADDR_ANY_INIT;
+            if (in6.sin6_port != 0 && memcmp(&in6.sin6_addr, &any, sizeof(any)) == 0 &&
+                syscall(SYS_getsockopt, fd, SOL_SOCKET, SO_TYPE, &type, &tl) == 0 && type == SOCK_STREAM) {
+                // A dual-stack socket (adbd's) serves IPv4 clients: it gets the IPv4 loopback
+                // (v4-mapped), an IPv6-only one ::1.
+                int v6only = 0;
+                socklen_t vl = sizeof(v6only);
+                syscall(SYS_getsockopt, fd, IPPROTO_IPV6, IPV6_V6ONLY, &v6only, &vl);
+                if (v6only) {
+                    in6.sin6_addr = in6addr_loopback;
+                } else {
+                    memset(&in6.sin6_addr, 0, sizeof(in6.sin6_addr));
+                    in6.sin6_addr.s6_addr[10] = 0xff;
+                    in6.sin6_addr.s6_addr[11] = 0xff;
+                    in6.sin6_addr.s6_addr[12] = 127;
+                    in6.sin6_addr.s6_addr[15] = 1;
+                }
+                return static_cast<int>(syscall(SYS_bind, fd, &in6, sizeof(in6)));
+            }
+        }
+    }
     return static_cast<int>(syscall(SYS_bind, fd, a, l));
 }
 NEST_EXPORT int connect(int fd, const struct sockaddr* a, socklen_t l) {
@@ -671,7 +710,26 @@ NEST_EXPORT int setsockopt(int fd, int level, int name, const void* v, socklen_t
         if (level == SOL_SOCKET) syscall(SYS_setsockopt, fd, level, name, v, l);  // best effort
         return 0;  // SOL_NETLINK options (memberships, ext ack...) are accepted
     }
-    return static_cast<int>(syscall(SYS_setsockopt, fd, level, name, v, l));
+    int r = static_cast<int>(syscall(SYS_setsockopt, fd, level, name, v, l));
+    // The guest's network routing (netd's fwmarks, sockets bound to the guest's nominal
+    // interface) is the phone's business: its sockets leave through the phone's own default
+    // network. Marking needs CAP_NET_ADMIN, the interface does not exist; both are accepted so
+    // that the guest's network stack (fwmarkd, DNS resolver, NetworkMonitor) keeps working.
+    if (r != 0 && level == SOL_SOCKET && (name == SO_MARK || name == SO_BINDTODEVICE) &&
+        (errno == EPERM || errno == ENODEV || errno == EACCES || errno == ENOPROTOOPT))
+        return 0;
+    return r;
+}
+NEST_EXPORT int getsockopt(int fd, int level, int name, void* v, socklen_t* l) {
+    int r = static_cast<int>(syscall(SYS_getsockopt, fd, level, name, v, l));
+    // fwmarkd reads a socket's mark before changing it; a kernel (or emulator) without SO_MARK
+    // reads as "no mark yet".
+    if (r != 0 && errno == ENOPROTOOPT && level == SOL_SOCKET && name == SO_MARK && v && l && *l >= sizeof(int)) {
+        memset(v, 0, sizeof(int));
+        *l = sizeof(int);
+        return 0;
+    }
+    return r;
 }
 NEST_EXPORT ssize_t send(int fd, const void* b, size_t n, int f) {
     if (NlFd* x = nlOf(fd)) return nlSend(x, b, n);

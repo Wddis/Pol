@@ -152,6 +152,7 @@ fun ImagesScreen() {
 }
 
 private fun engineNameStatic(e: EngineType) = when (e) {
+    EngineType.NEST -> "Nest"
     EngineType.HYPERVISOR -> "Hypervisor"
     EngineType.CONTAINER -> "Container"
     EngineType.EMULATOR -> "Emulator"

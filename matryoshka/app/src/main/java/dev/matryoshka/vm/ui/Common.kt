@@ -25,6 +25,7 @@ fun BackButton(onBack: () -> Unit) {
 @Composable
 fun engineName(e: EngineType): String = stringResource(
     when (e) {
+        EngineType.NEST -> R.string.engine_nest
         EngineType.HYPERVISOR -> R.string.engine_hypervisor
         EngineType.CONTAINER -> R.string.engine_container
         EngineType.EMULATOR -> R.string.engine_emulator
@@ -34,6 +35,7 @@ fun engineName(e: EngineType): String = stringResource(
 @Composable
 fun engineDescription(e: EngineType): String = stringResource(
     when (e) {
+        EngineType.NEST -> R.string.engine_nest_desc
         EngineType.HYPERVISOR -> R.string.engine_hypervisor_desc
         EngineType.CONTAINER -> R.string.engine_container_desc
         EngineType.EMULATOR -> R.string.engine_emulator_desc

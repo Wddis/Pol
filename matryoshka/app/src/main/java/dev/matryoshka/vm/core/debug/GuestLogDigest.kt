@@ -21,6 +21,8 @@ object GuestLogDigest {
         "ZygoteInit took to complete", "Entered the Android system server", "startOtherServices took",
         "Enter boot animation", "SystemServer init took", "Boot is finished", "BOOT_COMPLETED", "Displayed ",
         "Exit zygote", "WATCHDOG KILLING", "FATAL EXCEPTION", "Abort message",
+        "network up, DNS", "self-test: ", "Switching to new default network", "adbd listening on",
+        "Rebooting, reason",
     )
 
     /** Summary lines (cheap: one pass over each file). */

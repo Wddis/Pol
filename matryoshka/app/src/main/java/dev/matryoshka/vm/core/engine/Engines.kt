@@ -5,6 +5,7 @@ import dev.matryoshka.vm.core.host.HostProbe
 import dev.matryoshka.vm.core.image.GuestImage
 import dev.matryoshka.vm.core.model.EngineType
 import dev.matryoshka.vm.core.model.VmConfig
+import dev.matryoshka.vm.core.nest.NestGuest
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -201,9 +202,64 @@ class EmulatorEngine(private val env: EngineEnvironment) : VmEngine {
     }
 }
 
+/**
+ * Android as ordinary processes of this app under the Nest engine (no root). One Nest guest runs
+ * at a time; its screen is the engine's own viewer, its adbd listens on the phone's loopback.
+ */
+class NestEngine(private val env: EngineEnvironment) : VmEngine {
+    override val type = EngineType.NEST
+
+    override fun netPlan(vm: VmConfig) = NetPlan(
+        // The guest shares the phone's network stack (sockets are the host's).
+        guestIp = "127.0.0.1", prefixLength = 8, gateway = "127.0.0.1",
+        dns = env.hostDns(), adbHost = "127.0.0.1", adbPort = adbPort(vm),
+    )
+
+    private fun adbPort(vm: VmConfig) = NestGuest.DEFAULT_ADB_PORT + vm.netIndex
+
+    override suspend fun prepare(vm: VmConfig, image: GuestImage, log: (String) -> Unit) = withContext(Dispatchers.IO) {
+        NestGuest.ensureInstalled(env.context, log)
+        log("Android 11 ready")
+    }
+
+    override suspend fun start(vm: VmConfig, image: GuestImage) = withContext(Dispatchers.IO) {
+        if (NestGuest.isRunning) throw EngineException("Another Nest device is running: stop it first")
+        NestGuest.boot(
+            env.context,
+            NestGuest.BootOptions(
+                dataDir = NestGuest.vmDataDir(env.context, vm.id),
+                props = listOf(NestGuest.adbListen(adbPort(vm))),
+                adbPublicKey = env.adbKey.adbPublicKey(),
+            ),
+        )
+        Thread.sleep(500)
+        if (!NestGuest.isRunning) {
+            throw EngineException("The Nest engine did not start", NestGuest.tail(NestGuest.engineOut(env.context), 30).joinToString("\n"))
+        }
+    }
+
+    override suspend fun stop(vm: VmConfig) = withContext(Dispatchers.IO) {
+        NestGuest.stop()
+        var waited = 0
+        while (NestGuest.isRunning && waited++ < 60) Thread.sleep(100)
+    }
+
+    override suspend fun isRunning(vm: VmConfig) = NestGuest.isRunning
+
+    override suspend fun onHostNetworkChanged(vm: VmConfig) {
+        if (NestGuest.isRunning) NestGuest.updateDns(env.context)
+    }
+
+    override suspend fun destroy(vm: VmConfig) = withContext(Dispatchers.IO) {
+        if (NestGuest.isRunning) stop(vm)
+        NestGuest.vmDataDir(env.context, vm.id).deleteRecursively()
+        Unit
+    }
+}
+
 class EngineRegistry(env: EngineEnvironment) {
     private val engines: Map<EngineType, VmEngine> = listOf(
-        HypervisorEngine(env), ContainerEngine(env), EmulatorEngine(env),
+        NestEngine(env), HypervisorEngine(env), ContainerEngine(env), EmulatorEngine(env),
     ).associateBy { it.type }
 
     operator fun get(type: EngineType): VmEngine = engines.getValue(type)

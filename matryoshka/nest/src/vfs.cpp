@@ -155,10 +155,17 @@ bool Vfs::resolve(const std::string& path, const std::string& guestCwd, bool fol
         }
         done.push_back(c);
         bool last = pending.empty();
-        if (missing || (last && !followLast && !trailingSlash)) continue;
-
         std::string g;
         for (auto& d : done) g += "/" + d;
+        if (missing) {
+            // a bind point below a missing directory exists again
+            const Mount* bm = nullptr;
+            mapLexical(g, &bm);
+            if (!bm || bm->guest != g) continue;
+            missing = false;
+        }
+        if (last && !followLast && !trailingSlash) continue;
+
         std::string h = mapLexical(g);
         struct stat st;
         if (fs_->lstat(h.c_str(), &st) != 0) {

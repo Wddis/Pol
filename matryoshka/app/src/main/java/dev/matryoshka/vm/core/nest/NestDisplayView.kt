@@ -192,6 +192,58 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
         return true
     }
 
+    /** A key of the guest's keyboard: Linux key code (input-event-codes.h). */
+    fun sendKey(code: Int, pressed: Boolean) = input.execute { send("k $code ${if (pressed) 1 else 0}") }
+
+    fun tapKey(code: Int, shift: Boolean = false) = input.execute {
+        if (shift) send("k $KEY_LEFTSHIFT 1")
+        send("k $code 1")
+        send("k $code 0")
+        if (shift) send("k $KEY_LEFTSHIFT 0")
+    }
+
+    /** Text from the phone's keyboard, typed into the guest key by key (US layout, ASCII). */
+    fun typeText(text: CharSequence) {
+        for (ch in text) {
+            val (code, shift) = NestKeys.forChar(ch) ?: continue
+            tapKey(code, shift)
+        }
+    }
+
+    fun toggleKeyboard() {
+        isFocusableInTouchMode = true
+        requestFocus()
+        val imm = context.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+        imm.toggleSoftInput(android.view.inputmethod.InputMethodManager.SHOW_FORCED, 0)
+    }
+
+    override fun onCheckIsTextEditor() = true
+
+    override fun onCreateInputConnection(outAttrs: android.view.inputmethod.EditorInfo): android.view.inputmethod.InputConnection {
+        outAttrs.inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_NO_SUGGESTIONS or
+            android.text.InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD
+        outAttrs.imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_FULLSCREEN or android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI
+        return object : android.view.inputmethod.BaseInputConnection(this, false) {
+            override fun commitText(text: CharSequence, newCursorPosition: Int): Boolean { typeText(text); return true }
+            override fun deleteSurroundingText(beforeLength: Int, afterLength: Int): Boolean {
+                repeat(beforeLength.coerceIn(0, 64)) { tapKey(KEY_BACKSPACE) }
+                return true
+            }
+            override fun sendKeyEvent(event: android.view.KeyEvent): Boolean {
+                if (event.action == android.view.KeyEvent.ACTION_DOWN) onKeyDown(event.keyCode, event)
+                return true
+            }
+            override fun performEditorAction(actionCode: Int): Boolean { tapKey(KEY_ENTER); return true }
+        }
+    }
+
+    override fun onKeyDown(keyCode: Int, event: android.view.KeyEvent): Boolean {
+        NestKeys.forAndroidKey(keyCode)?.let { tapKey(it); return true }
+        val ch = event.unicodeChar
+        if (ch != 0) { typeText(ch.toChar().toString()); return true }
+        return super.onKeyDown(keyCode, event)
+    }
+
     private fun send(msg: String) {
         val s = sock ?: runCatching {
             LocalSocket(LocalSocket.SOCKET_DGRAM).apply {
@@ -201,9 +253,18 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
         runCatching { s.outputStream.write(msg.toByteArray()) }.onFailure { runCatching { s.close() }; sock = null }
     }
 
-    private companion object {
-        const val HEADER = 64
-        const val MAGIC = 0x3142464e
-        const val FMT_ABGR = 0x34324241
+    companion object {
+        const val KEY_BACK = 158
+        const val KEY_HOMEPAGE = 172
+        const val KEY_APPSELECT = 580
+        const val KEY_VOLUMEDOWN = 114
+        const val KEY_VOLUMEUP = 115
+        const val KEY_POWER = 116
+        const val KEY_ENTER = 28
+        const val KEY_BACKSPACE = 14
+        const val KEY_LEFTSHIFT = 42
+        private const val HEADER = 64
+        private const val MAGIC = 0x3142464e
+        private const val FMT_ABGR = 0x34324241
     }
 }

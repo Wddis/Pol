@@ -23,6 +23,8 @@ data class Component(
     val githubRepo: String,
     val assetPattern: Regex,
     val homepage: String,
+    /** Fixed download URL instead of a GitHub release (the project's own site). */
+    val directUrl: String? = null,
 )
 
 object Components {
@@ -35,6 +37,12 @@ object Components {
         id = "microg-core", title = "microG Services", license = "Apache-2.0",
         githubRepo = "microg/GmsCore", assetPattern = Regex("""^com\.google\.android\.gms-\d+\.apk$"""),
         homepage = "https://microg.org",
+    )
+    /** F-Droid, the free-software app store (its own signed build from f-droid.org). */
+    val FDROID = Component(
+        id = "fdroid", title = "F-Droid", license = "GPL-3.0",
+        githubRepo = "", assetPattern = Regex("""^F-Droid\.apk$"""),
+        homepage = "https://f-droid.org", directUrl = "https://f-droid.org/F-Droid.apk",
     )
     val MICROG_COMPANION = Component(
         id = "microg-companion", title = "microG Companion", license = "Apache-2.0",
@@ -52,6 +60,13 @@ class Provisioner(private val cacheDir: File) {
 
     /** Downloads the newest release asset of [c]; cached by file name. */
     suspend fun fetch(c: Component, onProgress: (Float) -> Unit = {}): File = withContext(Dispatchers.IO) {
+        c.directUrl?.let { url ->
+            val target = File(cacheDir, "components/${c.id}.apk").apply { parentFile?.mkdirs() }
+            val part = File(target.path + ".part")
+            http(url).inputStream.use { input -> part.outputStream().use { input.copyTo(it, 128 * 1024) } }
+            if (!part.renameTo(target)) throw IOException("Could not store ${c.title}")
+            return@withContext target
+        }
         val release = http("https://api.github.com/repos/${c.githubRepo}/releases/latest").inputStream.use {
             json.decodeFromString(Release.serializer(), it.readBytes().decodeToString())
         }
@@ -92,6 +107,15 @@ class Provisioner(private val cacheDir: File) {
         val spoof = guest.shell("dumpsys package com.google.android.gms | grep -c FAKE_PACKAGE_SIGNATURE").second.trim()
         log(if (spoof != "0") "microG installed. Open “microG Settings” in the virtual device to finish setup."
             else "microG installed, but this guest image has no signature spoofing — some apps will not work.")
+    }
+
+    /** Installs a plain app component (an app store) into the guest. */
+    suspend fun installApp(guest: GuestClient, c: Component, log: (String) -> Unit) {
+        log("Downloading ${c.title}…")
+        val apk = fetch(c)
+        log("Installing ${c.title}…")
+        guest.install(listOf(ApkSource(apk.name, apk.length()) { apk.inputStream() }))
+        log("${c.title} installed")
     }
 
     /**

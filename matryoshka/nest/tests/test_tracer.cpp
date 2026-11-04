@@ -691,6 +691,36 @@ TEST(stale_netlink_fd_does_not_swallow_a_reused_number) {
     EXPECT_EQ(r.out, "5 5 hello\n");
 }
 
+TEST(shared_storage_is_the_guests_data_media) {
+    // /sdcard without FUSE: /storage/emulated is laid out by the engine, zygote's per-app storage
+    // binds on /storage must not replace it.
+    std::string state = mktmp();
+    std::string data = mktmp();
+    auto r = run({NEST_RUN_PATH, "-b", "/=/", "-b", "/data=" + data, "--android", state, "--", NEST_IDPROG_PATH,
+                  "bind", "/tmp", "/storage", "write", "/storage/self/primary/hello.txt", "hi"});
+    EXPECT_EQ(r.out, "0\n");
+    std::ifstream f(data + "/media/0/hello.txt");
+    std::string got((std::istreambuf_iterator<char>(f)), std::istreambuf_iterator<char>());
+    EXPECT_EQ(got, "hi");
+}
+
+TEST(guest_tcp_servers_listen_on_loopback_only) {
+    // A guest server on "any address" (adbd) must not be reachable from the phone's network.
+    std::string dir = mktmp();
+    std::string pre = std::string("NEST_HOST_UID=") + std::to_string(getuid()) + " NEST_VFS_FILE=" + dir + "/x LD_PRELOAD=" + NEST_PRELOAD_PATH + " ";
+    auto r = run({"/bin/sh", "-c", pre + NEST_IDPROG_PATH + " listen-any 15655"});
+    EXPECT_EQ(r.out, "0 127.0.0.1\n");
+}
+
+TEST(guest_socket_marks_are_accepted) {
+    // netd marks sockets (fwmark) and may bind them to the guest's nominal interface: the phone
+    // refuses both for an app, the guest's network stack must still go on.
+    std::string dir = mktmp();
+    std::string cmd = std::string("NEST_VFS_FILE=") + dir + "/x LD_PRELOAD=" + NEST_PRELOAD_PATH + " " + NEST_IDPROG_PATH + " sockmark";
+    auto r = run({"/bin/sh", "-c", cmd});
+    EXPECT_EQ(r.out, "0 0 -1\n");
+}
+
 TEST(proc_status_shows_virtual_ids) {
     // ActivityManager compares /proc/<pid>/status's uid with the process's (isProcessAliveLocked).
     // The tracer publishes each process's virtual ids in <state>/attr/creds-<pid> ...

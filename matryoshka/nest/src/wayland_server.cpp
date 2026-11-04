@@ -297,7 +297,7 @@ struct WaylandServer::Impl {
                 for (uint32_t f : kFormats) send(c, Msg(id, 0).u(f));
                 break;
             case T::Seat:
-                send(c, Msg(id, 0).u(1 | 4));  // pointer | touch
+                send(c, Msg(id, 0).u(1 | 2 | 4));  // pointer | keyboard (navigation keys) | touch
                 if (o.version >= 2) send(c, Msg(id, 1).s("seat0"));
                 break;
             case T::Output: {
@@ -537,6 +537,13 @@ struct WaylandServer::Impl {
             evs.swap(touches);
         }
         for (auto& e : evs) {
+            if (e.action == 3) {  // key: Linux key code in id, pressed in x
+                for (auto& cp : clients)
+                    for (auto& kv : cp->objs)
+                        if (kv.second.type == T::Keyboard)
+                            send(*cp, Msg(kv.first, 3).u(serial++).u(nowMs()).u(static_cast<uint32_t>(e.id)).u(e.x > 0 ? 1 : 0));
+                continue;
+            }
             for (auto& cp : clients) {
                 Client& c = *cp;
                 // Focus: the toplevel window, else the surface that presented the screen, else any
@@ -680,6 +687,8 @@ void WaylandServer::stop() {
         if (f >= 0) close(f);
     d_->listenFd = d_->wake[0] = d_->wake[1] = d_->viewerListen = d_->viewer = -1;
 }
+
+void WaylandServer::sendKey(int code, bool pressed) { sendTouch(3, code, pressed ? 1.0f : 0.0f, 0); }
 
 void WaylandServer::sendTouch(int action, int id, float x, float y) {
     {

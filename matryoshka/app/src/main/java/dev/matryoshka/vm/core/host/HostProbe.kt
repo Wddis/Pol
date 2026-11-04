@@ -98,6 +98,15 @@ class HostProbe(private val context: Context, private val root: RootShell) {
 
         val engines = listOf(
             EngineAvailability(
+                EngineType.NEST,
+                usable = is64ArmHost && Build.VERSION.SDK_INT >= 26,
+                reason = when {
+                    !is64ArmHost -> "Requires an arm64 phone"
+                    Build.VERSION.SDK_INT < 26 -> "Requires Android 8 or newer"
+                    else -> "No root needed, native speed"
+                },
+            ),
+            EngineAvailability(
                 EngineType.HYPERVISOR,
                 usable = is64ArmHost && rootGranted && kvm == Support.YES && (systemCrosvm || bundledCrosvm),
                 reason = when {

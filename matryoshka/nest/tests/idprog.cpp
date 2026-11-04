@@ -1,3 +1,5 @@
+#include <arpa/inet.h>
+#include <netinet/in.h>
 // Test helper: executes uid/gid operations given on the command line and prints the results.
 //   idprog uid | gid | setuid N | setgid N | setresuid R E S | fork-uid | exec PATH ARGS...
 // SPDX-License-Identifier: Apache-2.0
@@ -358,6 +360,31 @@ int main(int argc, char** argv) {
             printf("pid %s uid %u gid %u\n", uc.pid == getpid() ? "self" : "other", uc.uid, uc.gid);
             close(sv[0]);
             close(sv[1]);
+        } else if (!strcmp(c, "listen-any")) {  // a TCP server on all addresses: where is it?
+            int s = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+            int one = 1;
+            setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
+            sockaddr_in a{};
+            a.sin_family = AF_INET;
+            a.sin_port = htons(static_cast<uint16_t>(atoi(argv[++i])));
+            int b = bind(s, reinterpret_cast<sockaddr*>(&a), sizeof(a));
+            sockaddr_in got{};
+            socklen_t gl = sizeof(got);
+            getsockname(s, reinterpret_cast<sockaddr*>(&got), &gl);
+            char ip[32] = {};
+            inet_ntop(AF_INET, &got.sin_addr, ip, sizeof(ip));
+            printf("%d %s\n", b, ip);
+            close(s);
+        } else if (!strcmp(c, "sockmark")) {  // netd/resolver socket options the phone refuses
+            int s = socket(AF_INET, SOCK_DGRAM | SOCK_CLOEXEC, 0);
+            unsigned mark = 0x10064;
+            int a = setsockopt(s, SOL_SOCKET, SO_MARK, &mark, sizeof(mark));
+            const char dev[] = "nestnone0";
+            int b = setsockopt(s, SOL_SOCKET, SO_BINDTODEVICE, dev, sizeof(dev));
+            int bad = 1 << 30;
+            int c2 = setsockopt(s, SOL_SOCKET, 0x7fff, &bad, sizeof(bad));  // unknown option: still refused
+            printf("%d %d %d\n", a, b, c2);
+            close(s);
         } else if (!strcmp(c, "nl-stale")) {  // netlink fd closed behind the preload, number reused
             int nl = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, 0);
             syscall(SYS_close, nl);  // like bionic's fdsan: not through close()

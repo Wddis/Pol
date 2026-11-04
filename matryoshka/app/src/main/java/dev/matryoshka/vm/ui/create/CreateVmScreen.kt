@@ -60,6 +60,7 @@ import dev.matryoshka.vm.core.model.EngineType
 import dev.matryoshka.vm.core.model.GmsMode
 import dev.matryoshka.vm.core.model.GpuMode
 import dev.matryoshka.vm.core.model.VmConfig
+import dev.matryoshka.vm.core.nest.NestGuest
 import dev.matryoshka.vm.ui.BackButton
 import dev.matryoshka.vm.ui.components.Panel
 import dev.matryoshka.vm.ui.components.SectionTitle
@@ -96,8 +97,14 @@ fun CreateVmScreen(onBack: () -> Unit, onCreated: (String) -> Unit, onGetImages:
     LaunchedEffect(report) { if (engine == null) engine = report?.recommended ?: EngineType.HYPERVISOR }
     var imageId by remember { mutableStateOf<String?>(null) }
     LaunchedEffect(images, engine) {
-        if (imageId == null || images.none { it.id == imageId }) imageId = images.firstOrNull { engine in it.engines }?.id
+        imageId = when {
+            engine == EngineType.NEST -> NestGuest.IMAGE_ID  // the engine downloads its own image
+            imageId == null || images.none { it.id == imageId && engine in it.engines } -> images.firstOrNull { engine in it.engines }?.id
+            else -> imageId
+        }
     }
+    // Magisk is patched into a boot image; Nest and Container guests have none (yet).
+    val noMagisk = engine == EngineType.CONTAINER || engine == EngineType.NEST
     val hostRamGb = ((report?.totalRamMb ?: 8192) / 1024f)
     val maxRam = (hostRamGb * 0.6f).coerceIn(2f, 12f)
     var ramGb by remember { mutableFloatStateOf(3f) }
@@ -161,7 +168,11 @@ fun CreateVmScreen(onBack: () -> Unit, onCreated: (String) -> Unit, onGetImages:
 
             SectionTitle(stringResource(R.string.system_image))
             val compatible = images.filter { engine in it.engines }
-            if (compatible.isEmpty()) {
+            if (engine == EngineType.NEST) {
+                Panel {
+                    Text(stringResource(R.string.nest_image), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.padding(16.dp))
+                }
+            } else if (compatible.isEmpty()) {
                 Panel {
                     Column(Modifier.padding(16.dp)) {
                         Text(stringResource(R.string.no_images), style = MaterialTheme.typography.bodyMedium)
@@ -227,11 +238,11 @@ fun CreateVmScreen(onBack: () -> Unit, onCreated: (String) -> Unit, onGetImages:
                     Column(Modifier.weight(1f)) {
                         Text(stringResource(R.string.magisk_title), style = MaterialTheme.typography.bodyLarge)
                         Text(
-                            stringResource(if (engine == EngineType.CONTAINER) R.string.magisk_container_note else R.string.magisk_desc),
+                            stringResource(when (engine) { EngineType.NEST -> R.string.magisk_nest_note; EngineType.CONTAINER -> R.string.magisk_container_note; else -> R.string.magisk_desc }),
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Switch(checked = magisk && engine != EngineType.CONTAINER, onCheckedChange = { magisk = it }, enabled = engine != EngineType.CONTAINER)
+                    Switch(checked = magisk && !noMagisk, onCheckedChange = { magisk = it }, enabled = !noMagisk)
                 }
             }
 
@@ -246,7 +257,7 @@ fun CreateVmScreen(onBack: () -> Unit, onCreated: (String) -> Unit, onGetImages:
                                 id = id, name = name.trim(), engine = engine!!, imageId = imageId!!,
                                 memoryMb = (ramGb * 1024).roundToInt(), cpuCores = cpus.roundToInt(), storageGb = storage.roundToInt(),
                                 display = preset.config, gpu = GpuMode.AUTO, gms = gms,
-                                magisk = magisk && engine != EngineType.CONTAINER,
+                                magisk = magisk && !noMagisk,
                                 netIndex = m.repo.nextNetIndex(), accentColor = accent,
                             )
                         )

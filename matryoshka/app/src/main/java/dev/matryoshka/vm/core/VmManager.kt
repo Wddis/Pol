@@ -11,11 +11,13 @@ import dev.matryoshka.vm.core.guest.GuestClient
 import dev.matryoshka.vm.core.guest.Provisioner
 import dev.matryoshka.vm.core.host.HostProbe
 import dev.matryoshka.vm.core.host.RootShell
+import dev.matryoshka.vm.core.image.GuestImage
 import dev.matryoshka.vm.core.image.ImageManager
 import dev.matryoshka.vm.core.model.EngineType
 import dev.matryoshka.vm.core.model.GmsMode
 import dev.matryoshka.vm.core.model.VmConfig
 import dev.matryoshka.vm.core.model.VmState
+import dev.matryoshka.vm.core.nest.NestGuest
 import dev.matryoshka.vm.core.storage.VmRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -88,8 +90,14 @@ class VmManager(private val context: Context) {
         val engine = engines[vm.engine]
         try {
             setState(id, VmState.Preparing("Checking system image"))
-            val image = images.get(vm.imageId) ?: throw EngineException("System image ${vm.imageId} is not installed")
-            if (!images.isComplete(image, vm.engine)) throw EngineException("System image is incomplete — download it again")
+            val image = if (vm.engine == EngineType.NEST) {
+                // Nest's guest image is downloaded and unpacked by the engine itself (prepare).
+                GuestImage(id = NestGuest.IMAGE_ID, name = "Android 11", engines = listOf(EngineType.NEST), files = emptyList())
+            } else {
+                val img = images.get(vm.imageId) ?: throw EngineException("System image ${vm.imageId} is not installed")
+                if (!images.isComplete(img, vm.engine)) throw EngineException("System image is incomplete — download it again")
+                img
+            }
 
             setState(id, VmState.Preparing("Preparing virtual hardware"))
             engine.prepare(vm, image) { log(id, it); setState(id, VmState.Preparing(it)) }
@@ -101,8 +109,13 @@ class VmManager(private val context: Context) {
             val guest = guest(id)!!
             guest.close()
             setState(id, VmState.Booting("Booting Android 11"))
-            val adbTimeout = if (vm.engine == EngineType.EMULATOR) 20 * 60_000L else 4 * 60_000L
-            if (!guest.awaitAdb(adbTimeout)) throw EngineException("The virtual device did not come up", env.readLogTail(vm, logNameFor(vm.engine)))
+            val adbTimeout = when (vm.engine) {
+                EngineType.EMULATOR -> 20 * 60_000L
+                EngineType.NEST -> 12 * 60_000L
+                else -> 4 * 60_000L
+            }
+            if (vm.engine == EngineType.NEST) watchNest(id)
+            if (!guest.awaitAdb(adbTimeout)) throw EngineException("The virtual device did not come up", failureLog(vm))
             log(id, "Guest connected: ${guest.connection().bannerProps["ro.product.model"] ?: "Android"}")
             setState(id, VmState.Booting("Starting system services"))
             if (!guest.awaitBootCompleted(adbTimeout)) throw EngineException("Android did not finish booting")
@@ -116,6 +129,30 @@ class VmManager(private val context: Context) {
             log(id, "Error: ${e.message}")
             runCatching { engine.stop(vm) }
             setState(id, VmState.Failed(e.message ?: e.javaClass.simpleName, (e as? EngineException)?.log))
+        }
+    }
+
+    private suspend fun failureLog(vm: VmConfig): String? = runCatching {
+        if (vm.engine == EngineType.NEST) NestGuest.tail(NestGuest.engineOut(context), 40).joinToString("\n")
+        else env.readLogTail(vm, logNameFor(vm.engine))
+    }.getOrNull()
+
+    /** A Nest guest is a child process of this app: notice when it ends on its own. */
+    private fun watchNest(id: String) = scope.launch {
+        while (true) {
+            kotlinx.coroutines.delay(2000)
+            val s = state(id)
+            if (s is VmState.Stopping || s is VmState.Stopped || s is VmState.Failed) return@launch
+            if (!NestGuest.isRunning) {
+                jobs.remove(id)?.cancel()
+                guests[id]?.close()
+                val st = NestGuest.state.value
+                val code = (st as? NestGuest.State.Stopped)?.exitCode
+                log(id, "The Nest engine ended" + (code?.let { " (code $it)" } ?: ""))
+                setState(id, if (code == 0 || code == 143) VmState.Stopped
+                    else VmState.Failed("Android stopped unexpectedly", failureLog(repo.get(id) ?: return@launch)))
+                return@launch
+            }
         }
     }
 
@@ -182,6 +219,8 @@ class VmManager(private val context: Context) {
         if (vm.engine == EngineType.CONTAINER) {
             throw EngineException("Magisk needs a boot image; use the Hypervisor or Emulator engine for Magisk root.")
         }
+        // Nest: no boot image; Magisk is to be started by the engine itself (docs/CONTEXT.md, plan).
+        if (vm.engine == EngineType.NEST) throw EngineException("Magisk for Nest devices comes in a later update.")
         val g = guest(id) ?: throw EngineException("Start the virtual device first")
         provisioner.installMagisk(g, images.file(vm.imageId, "boot.img"), env.bootDir(vm)) { log(id, it) }
     }
@@ -189,6 +228,11 @@ class VmManager(private val context: Context) {
     suspend fun installMicroG(id: String) {
         val g = guest(id) ?: throw EngineException("Start the virtual device first")
         provisioner.installMicroG(g) { log(id, it) }
+    }
+
+    suspend fun installAppStore(id: String) {
+        val g = guest(id) ?: throw EngineException("Start the virtual device first")
+        provisioner.installApp(g, dev.matryoshka.vm.core.guest.Components.FDROID) { log(id, it) }
     }
 
     fun removeMagisk(id: String) {
@@ -212,6 +256,7 @@ class VmManager(private val context: Context) {
     suspend fun hostReport(askRoot: Boolean) = probe.probe(askRoot)
 
     private fun logNameFor(engine: EngineType) = when (engine) {
+        EngineType.NEST -> "engine.txt"
         EngineType.HYPERVISOR -> "console.log"
         EngineType.CONTAINER -> "container.log"
         EngineType.EMULATOR -> "qemu.log"
@@ -220,6 +265,7 @@ class VmManager(private val context: Context) {
 
 val EngineType.label: String
     get() = when (this) {
+        EngineType.NEST -> "Nest"
         EngineType.HYPERVISOR -> "Hypervisor"
         EngineType.CONTAINER -> "Container"
         EngineType.EMULATOR -> "Emulator"

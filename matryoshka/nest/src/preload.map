@@ -8,7 +8,7 @@
     mkdir; mkdirat; unlink; unlinkat; rmdir;
     chmod; fchmodat; fchmod; rename; renameat;
     ioctl; mmap; mmap64; close; syscall;
-    socket; bind; connect; getsockname; setsockopt; send; sendto; sendmsg; write; writev; recvfrom; recvmsg;
+    socket; bind; connect; getsockname; setsockopt; getsockopt; send; sendto; sendmsg; write; writev; recvfrom; recvmsg;
     minijail_use_seccomp_filter; hw_get_module; hw_get_module_by_class;
     extern "C++" { "set_app_seccomp_filter()"; "set_app_zygote_seccomp_filter()"; "set_system_seccomp_filter()"; "install_setuidgid_seccomp_filter(unsigned int, unsigned int)"; };
   local: *;

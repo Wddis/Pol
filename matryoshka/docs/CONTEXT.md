@@ -549,7 +549,46 @@ zygote'ом, норма. Оставшиеся сбои — следствия о
 2. Сеть в госте: Android гостя видит «нет сети» (фейковый netlink) — нужен виртуальный интерфейс/
    ConnectivityService (сокеты сами по себе уже работают через хост).
 3. Хранилище и файлы: /storage/emulated (FUSE/MediaProvider), обмен файлами, установка/экспорт APK.
-4. microG (GMS, FOSS) + магазин (F-Droid/Aurora). 5. Magisk. 6. Звук. 7. Профиль устройства. на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
+4. microG (GMS, FOSS) + магазин (F-Droid/Aurora). 5. Magisk. 6. Звук. 7. Профиль устройства.
+
+### 0.10.0 — пункты 1–3 плана (Nest — обычный тип VM, сеть, хранилище), подготовка 4–5
+**1. Приложение.** `EngineType.NEST` (первым в списке, «рекомендуется» на arm64 Android 8+),
+`NestEngine` в `core/engine/Engines.kt`: prepare = `NestGuest.ensureInstalled` (образ качает сам
+движок, ImageManager не нужен — `VmManager.boot` подставляет `GuestImage(NestGuest.IMAGE_ID)`),
+start = `NestGuest.boot(BootOptions(dataDir = n/v<id8>, props, adbPublicKey))`, одна Nest-VM за раз.
+`VmManager.watchNest` замечает самостоятельный выход движка. `DeviceScreen.NestLiveDisplay`:
+полноэкранный `NestDisplayView` с момента загрузки (анимация видна), кнопки Назад/Домой/Недавние
+(клавиши Linux 158/172/580 через input.sock `"k CODE 1|0"` → wl_keyboard → InputFlinger гостя),
+жест «назад» телефона = Назад гостя, клавиатура телефона (`NestKeys`, ASCII/US-раскладка),
+громкость; меню: приложения/файлы (через adb), перезапуск, выключение, свернуть. Создание VM:
+для Nest нет выбора образа, Magisk выключен (`magisk_nest_note`). Foreground-сервис — общий
+`VmService`. Поворот — позже (экран гостя фиксирован).
+**adbd гостя** (для приложений/файлов/APK): `--prop ro.adb.secure=1`,
+`service.adb.listen_addrs=tcp:15500+netIndex`, ключ приложения пишется в `/data/misc/adb/adb_keys`.
+Preload: `bind()` TCP-сервера на «любой адрес» → loopback (`127.0.0.1`, двухстековый `[::]` →
+`::ffff:127.0.0.1`, v6only → `::1`) — ничего из гостя не слышно из Wi-Fi телефона. На стенде adbd
+не слушает: в песочнице нет IPv6, а adbd A11 слушает через AF_INET6 (EAFNOSUPPORT → «unrecoverable»)
+— только стенд; на телефоне IPv6 есть.
+**2. Сеть.** `nest/guest-agent` — Java-агент внутри гостя (app_process, служба init `nest_net`,
+uid system, dex собирается Gradle-задачей `buildGuestAgent` против своих заглушек фреймворка →
+`assets/nest-agent.jar`, движок `--net-agent JAR` привязывает его в `/system/framework`).
+Регистрирует NetworkAgent: ETHERNET, INTERNET/NOT_METERED/…, eth0 10.0.2.15/24 (условно —
+сокеты гостя и так идут через сеть телефона), DNS телефона (`nest.net.dns`, обновляется файлом
+`<state>/net-dns` при смене сети телефона, `NestEngine.onHostNetworkChanged`). Self-test в logcat:
+`NestNet: self-test: socket …, dns …`. Preload: `setsockopt(SO_MARK|SO_BINDTODEVICE)` с EPERM/ENODEV
+→ 0 (fwmark netd/резолвер/NetworkMonitor). Стенд: ConnectivityService «Switching to new default
+network … ETHERNET … CONNECTED», DNS выставлен.
+**3. Хранилище.** Без FUSE: `persist.sys.fuse=false` + флаг `persist.sys.fflag.override.settings_fuse`
+(init.rc ставит fuse=true в post-fs-data — наше rc выключает позже в том же триггере; иначе
+StorageManager перезагружал «fuse_prop»). `/proc/filesystems` без sdcardfs → vold монтирует
+emulated-том «ничем», движок сам: `/storage/emulated` = `/data/media` гостя, `/storage/self/primary`
+→ `/storage/emulated/0`; `cfg.fixedMounts` — монтирования гостя на `/storage` (zygote, init)
+игнорируются. VFS: точка привязки под несуществующим каталогом снова находится (resolve).
+**4–5 (подготовка).** F-Droid (`Components.FDROID`, прямой URL f-droid.org) — строка в настройках VM;
+microG ставится как раньше, но в образе Waydroid нет signature spoofing (сообщает сам Provisioner).
+Magisk для Nest — позже: без boot-образа, план — движок сам кладёт magisk/magiskinit и
+запускает демон службой init (post-fs-data/late_start), модули — через VFS-привязки.
+Тесты движка: 81 (новые: storage, SO_MARK, loopback-bind). на телефоне (образ уже скачан, ставится поверх): «Система» → «Проверка движка Nest» → «Пробная загрузка
 Android 11»: скачать образ → «Загрузить Android 11» → 3–5 минут → «Отправить лог».
 В лог попадают вывод движка, kmsg гостя, logcat гостя и (по галочке) трасса binder.
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14
@@ -568,8 +607,9 @@ Android 11»: скачать образ → «Загрузить Android 11» �
 - `app/` — приложение (Kotlin, Compose). Важное: `core/nest/NestProbe.kt` (проверка телефона),
   `core/nest/NestGuest.kt` (скачивание/распаковка/запуск гостя), `core/debug/TesterLog.kt`
   (кнопка лога), `ui/system/NestCheckScreen.kt`. Старые движки (`core/engine/Engines.kt`:
-  HYPERVISOR/crosvm, CONTAINER — требуют root, EMULATOR — QEMU-пакет) остаются; NEST пока
-  не стал типом VM в `EngineType` — это отдельная задача после успешной загрузки на телефоне.
+  HYPERVISOR/crosvm, CONTAINER — требуют root, EMULATOR — QEMU-пакет) остаются; NEST — тип VM
+  с 0.10.0 (`NestEngine`), тестовый экран остаётся для диагностики.
+- `nest/guest-agent/` — Java-агент внутри гостя (сеть), заглушки фреймворка в `stubs/`.
 - `guest/` — сборка гостевых образов. `docs/` — RESEARCH.md (исследование, план, сценарий Magisk),
   ARCHITECTURE.md, LIMITATIONS.md, этот файл.
 - `.github/workflows/matryoshka.yml` — CI: shellcheck, тесты Nest (с `g++-multilib`), probe,

@@ -1880,6 +1880,12 @@ long Tracer::doMount(pid_t tid, Regs& r) {
 
     if (flags & MS_REMOUNT) return 0;
     if (flags & (MS_SHARED | MS_PRIVATE | MS_SLAVE | MS_UNBINDABLE)) return 0;  // propagation only
+    for (const std::string& fixed : cfg_.fixedMounts) {
+        if (target == fixed || (target.size() > fixed.size() && target.compare(0, fixed.size(), fixed) == 0 && target[fixed.size()] == '/')) {
+            logf(2, "[%d] mount on %s kept as laid out", tid, target.c_str());
+            return 0;
+        }
+    }
     if (flags & (MS_BIND | MS_MOVE)) {
         std::string src, srcHost;
         if (!guestPathArg(tid, r.arg[0], true, src, &srcHost)) return -ENOENT;
@@ -1927,6 +1933,9 @@ long Tracer::doMount(pid_t tid, Regs& r) {
 long Tracer::doUmount(pid_t tid, Regs& r) {
     std::string target;
     if (!guestPathArg(tid, r.arg[0], false, target)) return -ENOENT;
+    for (const std::string& fixed : cfg_.fixedMounts)
+        if (target == fixed || (target.size() > fixed.size() && target.compare(0, fixed.size(), fixed) == 0 && target[fixed.size()] == '/'))
+            return 0;
     if (cfg_.vfs.unbind(target)) publishVfs();
     return 0;
 }

@@ -47,7 +47,35 @@
 extern char** environ;
 
 static void usage() {
-    fprintf(stderr, "usage: nest-run [-b GUEST=HOST[:ro]]... [-w CWD] [-0|-n] [--pid1] [--display WxH@DPI] [-v] [-s] [-E K=V]... [-c] -- PROG [ARGS]\n");
+    fprintf(stderr, "usage: nest-run [-b GUEST=HOST[:ro]]... [-w CWD] [-0|-n] [--pid1] [--display WxH@DPI] [--prop K=V]... [--net-agent JAR] [--gpu] [-v] [-s] [-E K=V]... [-c] -- PROG [ARGS]\n");
+}
+
+// Shared storage (/sdcard): Android 11 serves it through a FUSE daemon (MediaProvider), which
+// needs a kernel mount an app cannot make. The guest runs with FUSE off (persist.sys.fuse=false,
+// no sdcardfs in the virtual /proc/filesystems), so vold mounts its emulated volume without a
+// filesystem of its own, and the engine lays the views out itself: /storage/emulated is the
+// guest's /data/media, /storage/self/primary is user 0's part. Zygote's per-app storage binds on
+// /storage are then no-ops (one mount view for all processes; storage permissions are the
+// framework's, as with FUSE).
+static void setupSharedStorage(nest::TracerConfig& cfg, const std::string& state) {
+    std::string data;
+    if (!cfg.vfs.resolve("/data", "/", true, data)) return;
+    std::string media = data + "/media";
+    mkdir(media.c_str(), 0770);
+    mkdir((media + "/0").c_str(), 0770);
+    std::string self = state + "/storage-self";
+    mkdir(self.c_str(), 0755);
+    unlink((self + "/primary").c_str());
+    if (symlink("/storage/emulated/0", (self + "/primary").c_str()) != 0) return;
+    std::string storage;
+    struct stat st;
+    if (cfg.vfs.resolve("/storage", "/", true, storage) && stat(storage.c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+        mkdir((storage + "/emulated").c_str(), 0755);  // listed in /storage
+        mkdir((storage + "/self").c_str(), 0755);
+    }
+    cfg.vfs.bind("/storage/emulated", media, false, true);
+    cfg.vfs.bind("/storage/self", self, false, true);
+    cfg.fixedMounts.push_back("/storage");
 }
 
 int main(int argc, char** argv) {
@@ -60,6 +88,8 @@ int main(int argc, char** argv) {
     bool stats = false, clean = false;
     std::string preload, binderSock, androidState;
     nest::DisplayConfig display;
+    std::vector<std::string> guestProps;  // --prop KEY=VALUE
+    std::string netAgent;  // --net-agent JAR
     bool useGpu = false;  // --gpu: the phone's GPU driver for the guest (graphics, step 2)
     std::vector<std::string> extraEnv;
     int i = 1;
@@ -89,6 +119,10 @@ int main(int argc, char** argv) {
             cfg.preload32Host = argv[++i];
         } else if (a == "--android" && i + 1 < argc) {
             androidState = argv[++i];
+        } else if (a == "--prop" && i + 1 < argc) {  // guest system property (wins over the image's)
+            guestProps.emplace_back(argv[++i]);
+        } else if (a == "--net-agent" && i + 1 < argc) {  // nest/guest-agent dex (guest network)
+            netAgent = argv[++i];
         } else if (a == "--gpu") {
             useGpu = true;
         } else if (a == "--display" && i + 1 < argc) {
@@ -188,6 +222,7 @@ int main(int argc, char** argv) {
             }
             // the whole Android screen in one window (default "none": hwcomposer shows nothing)
             text += "waydroid.active_apps=Waydroid\n";
+
             // No A/B checkpoints in a VM: vold's key storage otherwise waits for the checkpoint
             // commit (vold.checkpoint_committed, set only after boot) while holding its lock, and
             // the user unlock, hence the boot, waits for vold -> system_server's watchdog fires.
@@ -215,6 +250,42 @@ int main(int argc, char** argv) {
                 fclose(f);
             }
         }
+        // --prop: written into a private copy of /system/etc/prop.default, the first property file
+        // init loads, so read-only ones (ro.adb.secure...) cannot be set before ours.
+        if (!guestProps.empty()) {
+            std::string sysProp;
+            if (cfg.vfs.resolve("/system/etc/prop.default", "/", true, sysProp)) {
+                std::string text;
+                if (FILE* f = fopen(sysProp.c_str(), "re")) {
+                    char buf[4096];
+                    size_t n;
+                    while ((n = fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+                    fclose(f);
+                }
+                for (const std::string& kv : guestProps) {
+                    std::string key = kv.substr(0, kv.find('=')) + "=";
+                    size_t at = 0;
+                    while ((at = text.find(key, at)) != std::string::npos) {  // drop the image's value
+                        if (at == 0 || text[at - 1] == '\n') {
+                            size_t eol = text.find('\n', at);
+                            text.erase(at, eol == std::string::npos ? std::string::npos : eol - at + 1);
+                        } else {
+                            at += key.size();
+                        }
+                    }
+                    if (!text.empty() && text.back() != '\n') text += '\n';
+                    text += kv + "\n";
+                }
+                std::string copy = androidState + "/system-prop.default";
+                if (FILE* f = fopen(copy.c_str(), "we")) {
+                    fwrite(text.data(), 1, text.size(), f);
+                    fclose(f);
+                    cfg.vfs.bind("/system/etc/prop.default", copy, true, true);
+                }
+            }
+        }
+        if (!netAgent.empty()) cfg.vfs.bind("/system/framework/nest-agent.jar", netAgent, true, true);
+        setupSharedStorage(cfg, androidState);
         // Speed: shorter UI animations once booted (software rendering draws every animation frame).
         std::string initDir;
         if (cfg.vfs.resolve("/vendor/etc/init", "/", true, initDir)) {
@@ -225,6 +296,24 @@ int main(int argc, char** argv) {
                       "    exec - system system -- /system/bin/settings put global transition_animation_scale 0.5\n"
                       "    exec - system system -- /system/bin/settings put global animator_duration_scale 0.5\n",
                       f);
+                // Shared storage without FUSE (setupSharedStorage): init.rc turns FUSE on at
+                // post-fs-data, this later action of the same trigger turns it off again before
+                // vold, zygote and StorageManager read it (the feature flag must agree, or
+                // StorageManager reboots to "fix" the property).
+                fputs("\non post-fs-data\n"
+                      "    setprop persist.sys.fflag.override.settings_fuse false\n"
+                      "    setprop persist.sys.fuse false\n",
+                      f);
+                if (!netAgent.empty()) {
+                    // The guest's network (nest/guest-agent/README.md): restarted by init when it
+                    // exits (system_server restart).
+                    fputs("\nservice nest_net /system/bin/app_process /system/bin dev.matryoshka.guest.NetAgent\n"
+                          "    class main\n"
+                          "    user system\n"
+                          "    group system inet\n"
+                          "    setenv CLASSPATH /system/framework/nest-agent.jar\n",
+                          f);
+                }
                 fclose(f);
             }
         }
@@ -317,6 +406,10 @@ int main(int argc, char** argv) {
                         int id = 0;
                         float x = 0, y = 0;
                         if (sscanf(msg, "%c %d %f %f", &kind, &id, &x, &y) < 2) continue;
+                        if (kind == 'k') {  // "k CODE 1|0": a key (navigation buttons)
+                            wayland->sendKey(id, x > 0);
+                            continue;
+                        }
                         wayland->sendTouch(kind == 'd' ? 0 : kind == 'u' ? 1 : 2, id, x, y);
                     }
                 });
