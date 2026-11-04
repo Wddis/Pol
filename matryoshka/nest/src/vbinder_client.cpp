@@ -181,7 +181,9 @@ BinderFd* lookup(int fd) {
     if (fd < 0 || fd >= kMaxTrackedFd || g_count.load(std::memory_order_relaxed) == 0) return nullptr;
     BinderFd* b = g_fds[fd];
     if (b && fdInodeFast(fd) != b->ino) {
-        // Closed without our close() (bionic fdsan): the number is something else now.
+        // Closed without our close() (bionic fdsan): the number is something else now. Only the
+        // owning process forgets it: a vfork()ed child shares this table with its parent.
+        if (b->pid != myPid()) return nullptr;
         std::lock_guard<std::mutex> g(g_mu);
         if (g_fds[fd] == b) {
             g_fds[fd] = nullptr;
@@ -451,6 +453,10 @@ int clientIoctl(int fd, unsigned long request, void* arg) {
 void clientClose(int fd) {
     BinderFd* b = lookup(fd);
     if (!b) return;
+    // A vfork()ed child (Java's ProcessBuilder, posix_spawn) runs in its parent's memory and closes
+    // every inherited fd before exec: that must not erase the parent's binder fd (the parent's next
+    // call then went to the kernel as a plain ioctl on a socket: EACCES, the app aborted).
+    if (b->pid != myPid()) return;
     {
         std::lock_guard<std::mutex> g(g_mu);
         g_fds[fd] = nullptr;

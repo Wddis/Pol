@@ -72,6 +72,12 @@ class NestDisplayView(context: Context, private val stateDir: File, private val 
         reader = Thread({ loop() }, "nest-display").apply { isDaemon = true; start() }
     }
 
+    /** True once the guest has shown anything (its own "starting" screen included). */
+    fun hasFrames(): Boolean {
+        val n = native
+        return (n != 0L && runCatching { NestNativeView.frames(n) > 0 }.getOrDefault(false)) || lastSeq >= 0
+    }
+
     override fun surfaceChanged(h: SurfaceHolder, format: Int, width: Int, height: Int) {
         lastSeq = -1L
     }

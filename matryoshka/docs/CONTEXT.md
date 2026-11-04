@@ -658,6 +658,24 @@ Matryoshka): `ro.product.{,system.,vendor.,odm.,product.,system_ext.}{manufactur
   группу; демон делает setsid), magic mount = много привязок в VFS.
 - GMS: microG ставится при первой загрузке; подмена подписи — после Magisk (модуль).
 
+### 14.1 — по логу 14.0 (Magisk: бесконечная загрузка; надписи загрузки друг на друге)
+- **Демон Magisk на телефоне запустился** (post-fs-data/service/boot-complete exit 0, magiskd жив).
+  Приложение Magisk (и Device Info) падали: `IPCThreadState: getAndExecuteCommand(fd=4) returned
+  unexpected error -13`. **Причина — vfork:** Java (ProcessBuilder) и posix_spawn делают vfork,
+  ребёнок до exec закрывает все унаследованные fd — в памяти родителя; наш `close()` стирал запись
+  binder-fd (и netlink) в общей таблице → следующий ioctl родителя шёл в ядро на сокет → EACCES.
+  Исправлено: таблицы меняет только процесс-владелец (`BinderFd.pid`, `NlFd.owner`), то же при
+  проверке inode. Тест `vforked_child_does_not_erase_parent_virtual_fds` (без исправления падает).
+  Касается всех приложений, запускающих команды (root-приложения, инфо об устройстве и т. п.).
+- su для приложений гостя: при `--magisk` движок привязывает magisk как `/system/bin/su`,
+  `/system/xbin/su`, `/system/bin/magisk`, `/system/bin/resetprop` (multi-call по имени). Установка
+  Magisk для Nest сама перезапускает устройство.
+- «Сервисы Google (одной кнопкой)»: microG Services + Companion + Aurora Store (F-Droid API:
+  `api/v1/packages/<pkg>` → suggestedVersionCode → `repo/<pkg>_<code>.apk`), pm grant для GmsCore.
+  Подмена подписи (вход в аккаунт Google в microG) по-прежнему требует модуля — следующий шаг.
+- Надпись «Android запускается…» скрывается, как только гость нарисовал первый кадр
+  (`NestDisplayView.hasFrames`).
+
 ---
 
 ## 4. Карта репозитория (`matryoshka/`)

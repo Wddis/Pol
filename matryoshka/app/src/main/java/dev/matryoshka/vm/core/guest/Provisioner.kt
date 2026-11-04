@@ -25,6 +25,8 @@ data class Component(
     val homepage: String,
     /** Fixed download URL instead of a GitHub release (the project's own site). */
     val directUrl: String? = null,
+    /** Package on f-droid.org: its suggested version is downloaded from the F-Droid repository. */
+    val fdroidPackage: String? = null,
 )
 
 object Components {
@@ -44,6 +46,12 @@ object Components {
         githubRepo = "", assetPattern = Regex("""^F-Droid\.apk$"""),
         homepage = "https://f-droid.org", directUrl = "https://f-droid.org/F-Droid.apk",
     )
+    /** Aurora Store: free client for Google Play's catalogue (anonymous, no Google account). */
+    val AURORA = Component(
+        id = "aurora", title = "Aurora Store", license = "GPL-3.0",
+        githubRepo = "", assetPattern = Regex(".*"),
+        homepage = "https://auroraoss.com", fdroidPackage = "com.aurora.store",
+    )
     val MICROG_COMPANION = Component(
         id = "microg-companion", title = "microG Companion", license = "Apache-2.0",
         githubRepo = "microg/GmsCore", assetPattern = Regex("""^com\.android\.vending-\d+\.apk$"""),
@@ -60,6 +68,18 @@ class Provisioner(private val cacheDir: File) {
 
     /** Downloads the newest release asset of [c]; cached by file name. */
     suspend fun fetch(c: Component, onProgress: (Float) -> Unit = {}): File = withContext(Dispatchers.IO) {
+        c.fdroidPackage?.let { pkg ->
+            val info = http("https://f-droid.org/api/v1/packages/$pkg").inputStream.use { it.readBytes().decodeToString() }
+            val code = Regex(""""suggestedVersionCode"\s*:\s*(\d+)""").find(info)?.groupValues?.get(1)
+                ?: throw IOException("${c.title}: no version on F-Droid")
+            val target = File(cacheDir, "components/${pkg}_$code.apk").apply { parentFile?.mkdirs() }
+            if (!target.exists() || target.length() == 0L) {
+                val part = File(target.path + ".part")
+                http("https://f-droid.org/repo/${pkg}_$code.apk").inputStream.use { input -> part.outputStream().use { input.copyTo(it, 128 * 1024) } }
+                if (!part.renameTo(target)) throw IOException("Could not store ${c.title}")
+            }
+            return@withContext target
+        }
         c.directUrl?.let { url ->
             val target = File(cacheDir, "components/${c.id}.apk").apply { parentFile?.mkdirs() }
             val part = File(target.path + ".part")
@@ -158,6 +178,26 @@ class Provisioner(private val cacheDir: File) {
         log("Installing the Magisk app…")
         guest.install(listOf(ApkSource(apk.name, apk.length()) { apk.inputStream() }))
         log("Magisk is ready: restart the device to start it (experimental on Nest).")
+    }
+
+    /**
+     * "Google services" in one step: microG Services and Companion (free replacements for Play
+     * Services and the Play Store's service part) and Aurora Store to get apps from Google Play's
+     * catalogue. Google's own apps are never downloaded (proprietary).
+     */
+    suspend fun installGoogleServices(guest: GuestClient, log: (String) -> Unit) {
+        installMicroG(guest, log)
+        installApp(guest, Components.AURORA, log)
+        // microG works without asking for these one by one
+        guest.shell(
+            listOf(
+                "android.permission.ACCESS_FINE_LOCATION", "android.permission.ACCESS_COARSE_LOCATION",
+                "android.permission.ACCESS_BACKGROUND_LOCATION", "android.permission.READ_PHONE_STATE",
+                "android.permission.GET_ACCOUNTS",
+            ).joinToString("; ") { "pm grant com.google.android.gms $it 2>/dev/null" } +
+                "; dumpsys deviceidle whitelist +com.google.android.gms >/dev/null 2>&1; true"
+        )
+        log("Google services ready: Aurora Store installs apps from Google Play's catalogue.")
     }
 
     /** Installs a plain app component (an app store) into the guest. */

@@ -385,6 +385,23 @@ int main(int argc, char** argv) {
             int c2 = setsockopt(s, SOL_SOCKET, 0x7fff, &bad, sizeof(bad));  // unknown option: still refused
             printf("%d %d %d\n", a, b, c2);
             close(s);
+        } else if (!strcmp(c, "nl-vfork")) {  // a vfork()ed child closes the inherited netlink fd
+            int nl = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, 0);
+            pid_t pid = vfork();
+            if (pid == 0) {
+                close(nl);  // shares our memory: must not erase our (the parent's) bookkeeping
+                _exit(0);
+            }
+            int st = 0;
+            waitpid(pid, &st, 0);
+            struct { uint32_t len; uint16_t type, flags; uint32_t seq, pid; uint8_t fam, pad[3]; } req{};
+            req.len = sizeof(req);
+            req.type = 18;      // RTM_GETLINK
+            req.flags = 0x301;  // NLM_F_REQUEST | NLM_F_DUMP
+            send(nl, &req, sizeof(req), 0);
+            char buf[256];
+            ssize_t r = recv(nl, buf, sizeof(buf), MSG_DONTWAIT);
+            printf("reply %s\n", r > 0 ? "yes" : "no");
         } else if (!strcmp(c, "nl-stale")) {  // netlink fd closed behind the preload, number reused
             int nl = socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, 0);
             syscall(SYS_close, nl);  // like bionic's fdsan: not through close()

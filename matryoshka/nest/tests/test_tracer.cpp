@@ -704,6 +704,15 @@ TEST(shared_storage_is_the_guests_data_media) {
     EXPECT_EQ(got, "hi");
 }
 
+TEST(vforked_child_does_not_erase_parent_virtual_fds) {
+    // Java's ProcessBuilder vfork()s; the child closes every inherited fd before exec, in the
+    // parent's memory. The parent's virtual netlink (and binder) fds must survive that.
+    std::string dir = mktmp();
+    std::string pre = std::string("NEST_HOST_UID=") + std::to_string(getuid()) + " NEST_VFS_FILE=" + dir + "/x LD_PRELOAD=" + NEST_PRELOAD_PATH + " ";
+    auto r = run({"/bin/sh", "-c", pre + NEST_IDPROG_PATH + " nl-vfork"});
+    EXPECT_EQ(r.out, "reply yes\n");
+}
+
 TEST(guest_tcp_servers_listen_on_loopback_only) {
     // A guest server on "any address" (adbd) must not be reachable from the phone's network.
     std::string dir = mktmp();

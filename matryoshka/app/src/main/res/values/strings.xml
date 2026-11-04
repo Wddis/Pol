@@ -44,12 +44,14 @@
     <string name="install_selected">Install (%1$d)</string>
     <string name="installed_count">Installed: %1$d</string>
     <string name="nest_panel">Controls</string>
-    <string name="magisk_nest_experimental">Experimental on Nest: Magisk is started by the engine without a boot image. Restart the device after installing.</string>
+    <string name="magisk_nest_experimental">Experimental on Nest: Magisk is started by the engine without a boot image; the device restarts once by itself. Then open Magisk: root requests show its prompt.</string>
     <string name="new_identity">New device IDs</string>
     <string name="new_identity_desc">A new serial number and new Android IDs for apps at the next start. Now: %1$s</string>
     <string name="device_group_basic">Basic</string>
     <string name="device_group_gaming">Gaming phones</string>
     <string name="device_group_other">Other</string>
+    <string name="install_google">Google services (one tap)</string>
+    <string name="install_google_desc">microG Services + Companion and Aurora Store (apps from Google Play\'s catalogue, no account needed). Free software; Google\'s own apps are not downloaded.</string>
     <string name="nest_back">Back</string>
     <string name="nest_home">Home</string>
     <string name="nest_recents">Recent apps</string>

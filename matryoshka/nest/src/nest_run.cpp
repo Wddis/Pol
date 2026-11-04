@@ -298,6 +298,11 @@ int main(int argc, char** argv) {
         if (!magiskDir.empty()) {
             cfg.vfs.bind("/debug_ramdisk", magiskDir, false, true);
             cfg.fixedMounts.push_back("/debug_ramdisk");  // init's second stage unmounts it
+            // su for the guest's apps where they look for it (Magisk would magic-mount it; one
+            // shared mount view makes that unreliable here): the multi-call binary acts by name.
+            std::string magiskBin = magiskDir + "/magisk";
+            for (const char* p : {"/system/bin/su", "/system/xbin/su", "/system/bin/magisk", "/system/bin/resetprop"})
+                cfg.vfs.bind(p, magiskBin, true, true);
         }
         setupSharedStorage(cfg, androidState);
         // Speed: shorter UI animations once booted (software rendering draws every animation frame).

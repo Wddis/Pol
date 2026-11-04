@@ -43,12 +43,14 @@
     <string name="install_selected">Установить (%1$d)</string>
     <string name="installed_count">Установлено приложений: %1$d</string>
     <string name="nest_panel">Управление</string>
-    <string name="magisk_nest_experimental">Экспериментально для Nest: Magisk запускает сам движок, без boot-образа. После установки перезапустите устройство.</string>
+    <string name="magisk_nest_experimental">Экспериментально для Nest: Magisk запускает сам движок, без boot-образа; устройство один раз перезапустится само. Потом откройте Magisk — запросы root будут появляться в нём.</string>
     <string name="new_identity">Новые идентификаторы</string>
     <string name="new_identity_desc">Новый серийный номер и новые Android ID для приложений при следующем запуске. Сейчас: %1$s</string>
     <string name="device_group_basic">Основные</string>
     <string name="device_group_gaming">Игровые</string>
     <string name="device_group_other">Другие</string>
+    <string name="install_google">Сервисы Google (одной кнопкой)</string>
+    <string name="install_google_desc">microG (замена сервисов Google) и Aurora Store — приложения из каталога Google Play, аккаунт не нужен. Свободные программы; собственные приложения Google не скачиваются.</string>
     <string name="nest_back">Назад</string>
     <string name="nest_home">Домой</string>
     <string name="nest_recents">Недавние</string>

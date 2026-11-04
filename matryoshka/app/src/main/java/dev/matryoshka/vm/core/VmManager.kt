@@ -259,6 +259,9 @@ class VmManager(private val context: Context) {
             val g = guest(id) ?: throw EngineException("Start the virtual device first")
             provisioner.prepareNestMagisk(g, NestGuest.magiskTmpDir(context, vm.id), NestGuest.vmDataDir(context, vm.id)) { log(id, it) }
             repo.update(id) { it.copy(magisk = true) }
+            // Like a phone after flashing: the guest restarts once and comes up rooted.
+            log(id, "Restarting the device to start Magisk…")
+            restart(id)
             return@withContext
         }
         val g = guest(id) ?: throw EngineException("Start the virtual device first")
@@ -268,6 +271,11 @@ class VmManager(private val context: Context) {
     suspend fun installMicroG(id: String) {
         val g = guest(id) ?: throw EngineException("Start the virtual device first")
         provisioner.installMicroG(g) { log(id, it) }
+    }
+
+    suspend fun installGoogleServices(id: String) {
+        val g = guest(id) ?: throw EngineException("Start the virtual device first")
+        provisioner.installGoogleServices(g) { log(id, it) }
     }
 
     suspend fun installAppStore(id: String) {

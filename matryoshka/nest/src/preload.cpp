@@ -231,6 +231,7 @@ constexpr int kNlMaxFd = 65536;
 constexpr int kAfNetlink = 16;
 struct NlFd {
     int peer = -1;
+    long owner = 0;  // pid that created it (a vfork()ed child shares this table, see close())
     int proto = 0;
     unsigned long ino = 0;  // the guest end's socket inode: detects an fd number closed behind our back
 };
@@ -247,6 +248,7 @@ inline NlFd* nlOf(int fd) {
     NlFd* n = &g_nl[fd];
     if (n->peer < 0) return nullptr;
     if (fdInode(fd) != n->ino) {
+        if (n->owner != taggedSyscall(SYS_getpid)) return nullptr;  // not ours to forget
         syscall(SYS_close, n->peer);
         n->peer = -1;
         __atomic_sub_fetch(&g_nlCount, 1, __ATOMIC_RELAXED);
@@ -629,6 +631,7 @@ NEST_EXPORT int socket(int domain, int type, int protocol) {
     g_nl[sv[0]].proto = protocol;
     g_nl[sv[0]].ino = fdInode(sv[0]);
     g_nl[sv[0]].peer = sv[1];
+    g_nl[sv[0]].owner = taggedSyscall(SYS_getpid);
     __atomic_add_fetch(&g_nlCount, 1, __ATOMIC_RELAXED);
     return sv[0];
 }
@@ -777,9 +780,11 @@ NEST_EXPORT ssize_t recvmsg(int fd, struct msghdr* m, int f) {
 NEST_EXPORT int close(int fd) {
     if (nest::vbinder::clientIsBinderFd(fd)) nest::vbinder::clientClose(fd);
     if (NlFd* x = nlOf(fd)) {
-        syscall(SYS_close, x->peer);
-        x->peer = -1;
-        __atomic_sub_fetch(&g_nlCount, 1, __ATOMIC_RELAXED);
+        if (x->owner == taggedSyscall(SYS_getpid)) {  // not in a vfork()ed child (shared memory)
+            syscall(SYS_close, x->peer);
+            x->peer = -1;
+            __atomic_sub_fetch(&g_nlCount, 1, __ATOMIC_RELAXED);
+        }
     }
     long r = syscall(SYS_close, fd);
     if (r == -1 && errno == EINTR) return 0;  // the fd is gone either way (bionic semantics)

@@ -332,8 +332,16 @@ private fun NestLiveDisplay(
             modifier = Modifier.align(Alignment.Center)
                 .aspectRatio(NestGuest.displayAspect, matchHeightConstraintsFirst = true),
         )
-        if (!booted) {
-            // No boot animation in the guest (it costs the boot time): a static note instead.
+        // Until the guest draws its first frame (it has no boot animation): a static note, gone as
+        // soon as the guest shows its own "starting" screen.
+        var guestDrawing by remember { mutableStateOf(false) }
+        LaunchedEffect(view) {
+            while (!guestDrawing) {
+                guestDrawing = view?.hasFrames() == true
+                kotlinx.coroutines.delay(400)
+            }
+        }
+        if (!booted && !guestDrawing) {
             Text(
                 waiting, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.align(Alignment.Center),

@@ -203,7 +203,7 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                     }
                     HorizontalDivider()
                     ListRow(
-                        Icons.Outlined.Hub, stringResource(R.string.install_microg), stringResource(R.string.microg_desc),
+                        Icons.Outlined.Hub, stringResource(R.string.install_google), stringResource(R.string.install_google_desc),
                         tint = Brand.Teal, onClick = if (running && !working) ({ confirmComponent = "microg" }) else null,
                     )
                     HorizontalDivider()
@@ -248,7 +248,7 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                     working = true
                     scope.launch {
                         val r = runCatching {
-                            when (which) { "magisk" -> m.installMagisk(vmId); "fdroid" -> m.installAppStore(vmId); else -> m.installMicroG(vmId) }
+                            when (which) { "magisk" -> m.installMagisk(vmId); "fdroid" -> m.installAppStore(vmId); else -> m.installGoogleServices(vmId) }
                         }
                         working = false
                         snack.showSnackbar(r.fold({ context.getString(R.string.component_done, c.title) }, { it.message ?: "Error" }))
