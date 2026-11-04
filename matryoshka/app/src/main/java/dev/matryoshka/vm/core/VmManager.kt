@@ -167,11 +167,25 @@ class VmManager(private val context: Context) {
             runCatching {
                 guest.shell(
                     "wm size reset; wm density reset; " +
+                        // the phone keeps the screen on; the guest's own sleep only blanked it
+                        // (black screen until a touch) and showed the lock screen
+                        "svc power stayon true; settings put system screen_off_timeout 2147483647; " +
                         "settings put global window_animation_scale 0.5; " +
                         "settings put global transition_animation_scale 0.5; " +
                         "settings put global animator_duration_scale 0.5; " +
                         "settings put global activity_manager_constants max_cached_processes=8"
                 )
+                // Once per device (the marker lives in the guest's settings): no lock screen, dark
+                // theme, and system parts a VM never uses switched off (they start at boot and
+                // take memory). They stay installed and can be enabled again under Apps.
+                if (guest.shell("settings get global matryoshka_tuned").second.trim() != TUNING_LEVEL) {
+                    log(vm.id, "Tuning the guest system…")
+                    guest.shell(
+                        "locksettings set-disabled true; cmd uimode night yes; " +
+                            NEST_UNUSED_PACKAGES.joinToString("; ") { "pm disable-user --user 0 $it >/dev/null 2>&1" } +
+                            "; settings put global matryoshka_tuned $TUNING_LEVEL"
+                    )
+                }
             }.onFailure { log(vm.id, "Guest settings: ${it.message}") }
         } else {
             runCatching { guest.applyDisplay(vm.display.width, vm.display.height, vm.display.dpi) }
@@ -240,8 +254,13 @@ class VmManager(private val context: Context) {
         if (vm.engine == EngineType.CONTAINER) {
             throw EngineException("Magisk needs a boot image; use the Hypervisor or Emulator engine for Magisk root.")
         }
-        // Nest: no boot image; Magisk is to be started by the engine itself (docs/CONTEXT.md, plan).
-        if (vm.engine == EngineType.NEST) throw EngineException("Magisk for Nest devices comes in a later update.")
+        if (vm.engine == EngineType.NEST) {
+            // No boot image: the engine starts Magisk itself from the next boot on.
+            val g = guest(id) ?: throw EngineException("Start the virtual device first")
+            provisioner.prepareNestMagisk(g, NestGuest.magiskTmpDir(context, vm.id), NestGuest.vmDataDir(context, vm.id)) { log(id, it) }
+            repo.update(id) { it.copy(magisk = true) }
+            return@withContext
+        }
         val g = guest(id) ?: throw EngineException("Start the virtual device first")
         provisioner.installMagisk(g, images.file(vm.imageId, "boot.img"), env.bootDir(vm)) { log(id, it) }
     }
@@ -258,10 +277,18 @@ class VmManager(private val context: Context) {
 
     fun removeMagisk(id: String) {
         val vm = repo.get(id) ?: return
+        if (vm.engine == EngineType.NEST) {
+            NestGuest.magiskTmpDir(context, vm.id).deleteRecursively()
+            scope.launch { repo.update(id) { it.copy(magisk = false) } }
+            return
+        }
         env.bootDir(vm).deleteRecursively()
     }
 
-    fun hasMagiskBoot(id: String): Boolean = repo.get(id)?.let { File(env.bootDir(it), "ramdisk.magisk.img").exists() } == true
+    fun hasMagiskBoot(id: String): Boolean = repo.get(id)?.let {
+        if (it.engine == EngineType.NEST) it.magisk && File(NestGuest.magiskTmpDir(context, it.id), "magisk").exists()
+        else File(env.bootDir(it), "ramdisk.magisk.img").exists()
+    } == true
 
     fun onHostNetworkChanged() = scope.launch {
         runningIds.mapNotNull { repo.get(it) }.forEach { vm -> runCatching { engines[vm.engine].onHostNetworkChanged(vm) } }
@@ -283,6 +310,16 @@ class VmManager(private val context: Context) {
         EngineType.EMULATOR -> "qemu.log"
     }
 }
+
+private const val TUNING_LEVEL = "1"
+
+/** Guest system parts a Nest VM has no use for (no NFC, camera, printers, secure element...). */
+private val NEST_UNUSED_PACKAGES = listOf(
+    "com.android.dreams.basic", "com.android.dreams.phototable", "com.android.egg", "com.android.traceur",
+    "com.android.nfc", "com.android.printspooler", "com.android.printservice.recommendation", "com.android.se",
+    "com.android.simappdialog", "org.lineageos.recorder", "com.android.camera2", "com.android.wallpaper.livepicker",
+    "com.boringdroid.systemui", "org.lineageos.waydroidupdater", "com.android.systemui.plugin.globalactions.wallet",
+)
 
 val EngineType.label: String
     get() = when (this) {

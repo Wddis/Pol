@@ -1,6 +1,9 @@
 package dev.matryoshka.vm.ui.settings
 
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -12,6 +15,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.Fingerprint
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.DeveloperBoard
@@ -48,7 +53,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.matryoshka.vm.R
 import dev.matryoshka.vm.core.guest.Components
-import dev.matryoshka.vm.core.model.DeviceProfile
+import dev.matryoshka.vm.core.model.DeviceCatalog
 import dev.matryoshka.vm.core.model.EngineType
 import dev.matryoshka.vm.core.model.GpuMode
 import dev.matryoshka.vm.core.model.VmState
@@ -80,7 +85,8 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
     var storage by remember { mutableFloatStateOf(vm.storageGb.toFloat()) }
     var gpu by remember { mutableStateOf(vm.gpu) }
     var keepAlive by remember { mutableStateOf(vm.keepAliveInBackground) }
-    var profile by remember { mutableStateOf(vm.deviceProfile) }
+    var modelId by remember { mutableStateOf(vm.deviceModelId) }
+    var pickModel by remember { mutableStateOf(false) }
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmComponent by remember { mutableStateOf<String?>(null) }
     var working by remember { mutableStateOf(false) }
@@ -92,7 +98,7 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                 memoryMb = (ram * 1024).roundToInt(), cpuCores = cpus.roundToInt(),
                 // Storage can only grow: shrinking a sparse disk would corrupt the guest filesystem.
                 storageGb = maxOf(it.storageGb, storage.roundToInt()),
-                gpu = gpu, keepAliveInBackground = keepAlive, deviceProfile = profile,
+                gpu = gpu, keepAliveInBackground = keepAlive, deviceModelId = modelId,
             )
         }
         snack.showSnackbar(context.getString(if (locked) R.string.saved_next_boot else R.string.saved))
@@ -105,7 +111,7 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                 actions = { TextButton(onClick = { save() }) { Text(stringResource(R.string.save)) } },
             )
         },
-        snackbarHost = { SnackbarHost(snack) },
+        snackbarHost = { dev.matryoshka.vm.ui.AppSnackbarHost(snack) },
     ) { pad ->
         Column(Modifier.fillMaxSize().padding(pad).verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
             OutlinedTextField(name, { name = it.take(40) }, label = { Text(stringResource(R.string.device_name)) }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -133,21 +139,37 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
 
             if (vm.engine == EngineType.NEST) {
                 SectionTitle(stringResource(R.string.device_identity))
-                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
-                    DeviceProfile.entries.forEachIndexed { i, p ->
-                        SegmentedButton(selected = profile == p, onClick = { profile = p }, shape = SegmentedButtonDefaults.itemShape(i, DeviceProfile.entries.size)) {
-                            Text(
-                                if (p == DeviceProfile.HOST) "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
-                                else stringResource(R.string.device_identity_generic),
-                                maxLines = 1,
-                            )
-                        }
+                Panel {
+                    Column {
+                        val current = DeviceCatalog.resolve(vm.copy(deviceModelId = modelId))
+                        ListRow(
+                            Icons.Outlined.PhoneAndroid, current.title,
+                            "${current.manufacturer} · ${current.model}",
+                            onClick = { pickModel = true },
+                        )
+                        HorizontalDivider()
+                        ListRow(
+                            Icons.Outlined.Fingerprint, stringResource(R.string.new_identity),
+                            stringResource(R.string.new_identity_desc, vm.serialNo ?: "—"),
+                            onClick = {
+                                scope.launch {
+                                    m.repo.update(vmId) { it.copy(serialNo = dev.matryoshka.vm.core.engine.newSerial(), pendingIdReset = true) }
+                                    snack.showSnackbar(context.getString(R.string.saved_next_boot))
+                                }
+                            },
+                        )
                     }
                 }
                 Text(
                     stringResource(R.string.device_identity_desc), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp, start = 4.dp),
                 )
+            }
+            if (pickModel) {
+                DeviceModelDialog(selected = modelId ?: DeviceCatalog.resolve(vm).id, onDismiss = { pickModel = false }) { id ->
+                    modelId = id
+                    pickModel = false
+                }
             }
 
             SectionTitle(stringResource(R.string.behavior))
@@ -169,11 +191,11 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                         Icons.Outlined.AdminPanelSettings,
                         stringResource(if (hasMagisk) R.string.magisk_installed else R.string.install_magisk),
                         stringResource(when (vm.engine) {
-                            EngineType.NEST -> R.string.magisk_nest_note
+                            EngineType.NEST -> R.string.magisk_nest_experimental
                             EngineType.CONTAINER -> R.string.magisk_container_note
                             else -> R.string.magisk_install_desc
                         }),
-                        onClick = if (running && !working && vm.engine != EngineType.CONTAINER && vm.engine != EngineType.NEST) ({ confirmComponent = "magisk" }) else null,
+                        onClick = if (running && !working && vm.engine != EngineType.CONTAINER) ({ confirmComponent = "magisk" }) else null,
                     )
                     if (hasMagisk) {
                         ListRow(Icons.Outlined.LayersClear, stringResource(R.string.remove_magisk), stringResource(R.string.remove_magisk_desc),
@@ -250,5 +272,45 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
             },
             dismissButton = { TextButton(onClick = { confirmDelete = false }) { Text(stringResource(R.string.cancel)) } },
         )
+    }
+}
+
+@Composable
+private fun DeviceModelDialog(selected: String, onDismiss: () -> Unit, onPick: (String) -> Unit) {
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.device_identity)) },
+        text = {
+            androidx.compose.foundation.lazy.LazyColumn(Modifier.heightIn(max = 460.dp)) {
+                val base = listOf(
+                    DeviceCatalog.HOST to "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}",
+                    DeviceCatalog.GENERIC to "Matryoshka",
+                )
+                item { GroupHeader(stringResource(R.string.device_group_basic)) }
+                base.forEach { (id, title) -> item { ModelRow(title, null, id == selected) { onPick(id) } } }
+                DeviceCatalog.models.groupBy { it.group }.forEach { (group, list) ->
+                    item { GroupHeader(if (group == "Gaming") stringResource(R.string.device_group_gaming) else if (group == "Other") stringResource(R.string.device_group_other) else group) }
+                    list.forEach { d -> item { ModelRow(d.title, d.model, d.id == selected) { onPick(d.id) } } }
+                }
+            }
+        },
+        confirmButton = { androidx.compose.material3.TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+    )
+}
+
+@Composable
+private fun GroupHeader(text: String) {
+    Text(text, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+}
+
+@Composable
+private fun ModelRow(title: String, model: String?, selected: Boolean, onClick: () -> Unit) {
+    Row(Modifier.fillMaxWidth().clickable(onClick = onClick).padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+        androidx.compose.material3.RadioButton(selected = selected, onClick = null)
+        Spacer(Modifier.width(10.dp))
+        Column {
+            Text(title, style = MaterialTheme.typography.bodyLarge)
+            if (model != null) Text(model, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
     }
 }

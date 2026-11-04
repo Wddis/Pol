@@ -1,10 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <style name="Theme.Matryoshka" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/window_bg</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>
         <item name="android:windowLightStatusBar">true</item>
+        <!-- The app draws its own dark theme: no forced darkening by the system (MIUI). -->
+        <item name="android:forceDarkAllowed" tools:targetApi="q">false</item>
     </style>
     <!-- Launch theme: same window background as the first frame, no flash. -->
     <style name="Theme.Matryoshka.Splash" parent="Theme.Matryoshka" />

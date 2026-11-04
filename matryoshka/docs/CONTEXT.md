@@ -627,6 +627,37 @@ Matryoshka): `ro.product.{,system.,vendor.,odm.,product.,system_ext.}{manufactur
 согласию пользователя и rc-службы post-fs-data/service/boot-complete, как magiskinit), затем
 модуль подмены подписи для microG.
 
+### 14.0 (versionCode 140, по просьбе владельца — «глобальная версия 14»), по логу 0.10.1
+Лог 0.10.1: загрузка 25 с, движок 1–17 % CPU, память 700–1000 МБ свободно, ANR System UI нет.
+- **Чёрный экран до касания**: гость гасил экран по своему таймауту (+ экран блокировки с часами).
+  postBoot: `svc power stayon true`, screen_off_timeout max; один раз на устройство
+  (`settings global matryoshka_tuned=1`): `locksettings set-disabled true`, `cmd uimode night yes`,
+  `pm disable-user` для NEST_UNUSED_PACKAGES (dreams, egg, traceur, nfc, print*, se, simappdialog,
+  recorder, camera2, livepicker, boringdroid systemui, waydroidupdater, wallet). Плюс движок:
+  Wayland-сервер помнит последний кадр и отдаёт его новому/освободившемуся просмотрщику
+  (`resendLast`, POLLOUT) — после сворачивания экран сразу на месте (тест расширен).
+- Язычок панели — тёмная плашка с рамкой и стрелкой. Пустой белый snackbar: MIUI force-dark —
+  `forceDarkAllowed=false` в теме, `AppSnackbarHost` с явными цветами, inverse-цвета в схеме.
+- «С телефона»: `HostAppsDialog` — приложения телефона (base + split APK из sourceDir, без
+  разрешений), установка в гостя одним сеансом на приложение.
+- Профили устройств: `DeviceCatalog` (24 модели: Samsung, Google, Xiaomi, OnePlus, игровые,
+  другие + «этот телефон» и «Matryoshka»), `VmConfig.deviceModelId`; `ro.product.*` (все разделы:
+  manufacturer/brand/model/device/name). Отпечаток сборки init выводит из brand/name/device сам
+  (подпись test-keys остаётся — проверки целостности не обмануты, принцип). «Новые
+  идентификаторы»: новый `ro.serialno` (`VmConfig.serialNo`) и сброс SSAID
+  (`settings_ssaid.xml`) при следующем запуске (`pendingIdReset`).
+- **Magisk (экспериментально)**: `nest_run --magisk DIR` → DIR = `/debug_ramdisk` (+ fixedMounts:
+  init второго этапа его размонтирует), rc: post-fs-data/service/boot-complete/zygote-restart
+  (как magiskinit). Приложение: `Provisioner.prepareNestMagisk` — из официального APK Magisk
+  (v28: lib/<abi>/libmagisk.so) в `n/m<id8>` (magisk, magisk32, magiskpolicy, stub.apk, .magisk/,
+  ссылки su/resetprop/supolicy) и в `/data/adb/magisk` гостя, установка приложения Magisk,
+  `VmConfig.magisk=true`; действует после перезапуска. Стенд: init запускает
+  `/debug_ramdisk/magisk --post-fs-data`, но на qemu клиент видит в /proc/self/exe путь хоста
+  («Start daemon on magisk tmpfs», qemu сам отвечает за /proc/self/exe) — проверка только на
+  телефоне. Возможные следующие проблемы: демон в группе процессов exec-службы (init убивает
+  группу; демон делает setsid), magic mount = много привязок в VFS.
+- GMS: microG ставится при первой загрузке; подмена подписи — после Magisk (модуль).
+
 ---
 
 ## 4. Карта репозитория (`matryoshka/`)

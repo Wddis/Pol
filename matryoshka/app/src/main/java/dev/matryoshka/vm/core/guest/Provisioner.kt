@@ -109,6 +109,57 @@ class Provisioner(private val cacheDir: File) {
             else "microG installed, but this guest image has no signature spoofing — some apps will not work.")
     }
 
+    /**
+     * Magisk for a Nest guest, which has no boot image: the files magiskinit would put in its tmpfs
+     * (/debug_ramdisk: magisk, magisk32, magiskpolicy, stub.apk, .magisk/) and the ones the Magisk
+     * app installs in /data/adb/magisk, taken from the official Magisk APK. The engine binds
+     * [tmpDir] as /debug_ramdisk and starts Magisk's boot stages from init (nest_run --magisk).
+     */
+    suspend fun prepareNestMagisk(guest: GuestClient, tmpDir: File, guestData: File, log: (String) -> Unit) = withContext(Dispatchers.IO) {
+        log("Downloading Magisk…")
+        val apk = fetch(Components.MAGISK)
+        log("Preparing Magisk…")
+        val adb = File(guestData, "adb/magisk")
+        tmpDir.deleteRecursively()
+        File(tmpDir, ".magisk/device").mkdirs()
+        File(tmpDir, ".magisk/worker").mkdirs()
+        adb.mkdirs()
+        java.util.zip.ZipFile(apk).use { zip ->
+            fun copy(entry: String, vararg to: File): Boolean {
+                val e = zip.getEntry(entry) ?: return false
+                for (t in to) {
+                    zip.getInputStream(e).use { input -> t.outputStream().use { input.copyTo(it) } }
+                    t.setExecutable(true, false)
+                    t.setReadable(true, false)
+                }
+                return true
+            }
+            val a64 = "lib/arm64-v8a/"
+            val a32 = "lib/armeabi-v7a/"
+            if (!copy(a64 + "libmagisk.so", File(tmpDir, "magisk"), File(adb, "magisk"), File(adb, "magisk64")) &&
+                !copy(a64 + "libmagisk64.so", File(tmpDir, "magisk"), File(adb, "magisk64"))
+            ) throw IOException("This Magisk release has an unknown layout")
+            copy(a32 + "libmagisk.so", File(tmpDir, "magisk32"), File(adb, "magisk32")) ||
+                copy(a64 + "libmagisk32.so", File(tmpDir, "magisk32"), File(adb, "magisk32"))
+            copy(a64 + "libmagiskpolicy.so", File(tmpDir, "magiskpolicy"), File(adb, "magiskpolicy"))
+            copy(a64 + "libbusybox.so", File(adb, "busybox"))
+            copy(a64 + "libmagiskinit.so", File(adb, "magiskinit"))
+            copy(a64 + "libmagiskboot.so", File(adb, "magiskboot"))
+            copy("assets/stub.apk", File(tmpDir, "stub.apk"), File(adb, "stub.apk"))
+            for (sh in listOf("util_functions.sh", "boot_patch.sh", "addon.d.sh", "app_functions.sh", "module_installer.sh", "uninstaller.sh")) {
+                copy("assets/$sh", File(adb, sh))
+            }
+        }
+        for ((link, target) in listOf("su" to "./magisk", "resetprop" to "./magisk", "supolicy" to "./magiskpolicy")) {
+            val f = File(tmpDir, link)
+            f.delete()
+            java.nio.file.Files.createSymbolicLink(f.toPath(), java.nio.file.Paths.get(target))
+        }
+        log("Installing the Magisk app…")
+        guest.install(listOf(ApkSource(apk.name, apk.length()) { apk.inputStream() }))
+        log("Magisk is ready: restart the device to start it (experimental on Nest).")
+    }
+
     /** Installs a plain app component (an app store) into the guest. */
     suspend fun installApp(guest: GuestClient, c: Component, log: (String) -> Unit) {
         log("Downloading ${c.title}…")

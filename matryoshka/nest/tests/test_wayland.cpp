@@ -257,6 +257,26 @@ TEST(wayland_server_hands_frames_to_a_direct_viewer) {
     munmap(const_cast<uint32_t*>(vm), f.poolSize);
     close(pfd);
     close(v);
+    // a viewer that comes back (the app was in the background) gets the last frame at once,
+    // without the guest drawing again
+    int v2 = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0);
+    EXPECT_EQ(connect(v2, reinterpret_cast<sockaddr*>(&vaddr), sizeof(vaddr)), 0);
+    pollfd p2{v2, POLLIN, 0};
+    EXPECT_TRUE(poll(&p2, 1, 3000) == 1);
+    nest::ViewerFrame f2{};
+    iovec iov2{&f2, sizeof(f2)};
+    msghdr m2{};
+    m2.msg_iov = &iov2;
+    m2.msg_iovlen = 1;
+    m2.msg_control = cbuf;
+    m2.msg_controllen = sizeof(cbuf);
+    EXPECT_EQ(recvmsg(v2, &m2, 0), static_cast<ssize_t>(sizeof(f2)));
+    EXPECT_EQ(f2.width, 16u);
+    int pfd2 = -1;
+    for (cmsghdr* c = CMSG_FIRSTHDR(&m2); c; c = CMSG_NXTHDR(&m2, c)) memcpy(&pfd2, CMSG_DATA(c), sizeof(int));
+    EXPECT_TRUE(pfd2 >= 0);
+    if (pfd2 >= 0) close(pfd2);
+    close(v2);
     munmap(px, size);
     close(mfd);
     close(w.fd);

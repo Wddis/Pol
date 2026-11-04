@@ -55,6 +55,9 @@ private val Dark = darkColorScheme(
     surfaceContainerHighest = Color(0xFF262936),
     outline = Color(0xFF3A3D4D),
     outlineVariant = Color(0xFF262936),
+    inverseSurface = Color(0xFF262936),
+    inverseOnSurface = Color(0xFFE7E7EE),
+    inversePrimary = Color(0xFFB9A8FF),
     error = Brand.Error,
 )
 
@@ -77,6 +80,8 @@ private val Light = lightColorScheme(
     surfaceContainerHighest = Color(0xFFE0DFEA),
     outline = Color(0xFFC6C5D3),
     outlineVariant = Color(0xFFE0DFEA),
+    inverseSurface = Color(0xFF262936),
+    inverseOnSurface = Color(0xFFF2F1F8),
     error = Color(0xFFD7263D),
 )
 

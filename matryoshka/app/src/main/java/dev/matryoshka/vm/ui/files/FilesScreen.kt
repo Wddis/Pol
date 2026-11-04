@@ -128,7 +128,7 @@ fun FilesScreen(vmId: String, onBack: () -> Unit) {
                 text = { Text(stringResource(R.string.send_to_device)) },
             )
         },
-        snackbarHost = { SnackbarHost(snack) },
+        snackbarHost = { dev.matryoshka.vm.ui.AppSnackbarHost(snack) },
     ) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
             // Breadcrumbs

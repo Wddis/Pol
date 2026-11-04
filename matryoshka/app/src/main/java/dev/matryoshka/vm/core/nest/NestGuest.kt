@@ -90,6 +90,7 @@ object NestGuest {
     fun rootfs(c: Context) = File(base(c), "r")
     fun dataDir(c: Context) = File(base(c), "d")
     /** /data of one Nest VM (short: guest sockets under /data live below this path). */
+    fun magiskTmpDir(c: Context, vmId: String) = File(base(c), "m" + vmId.filter { it.isLetterOrDigit() }.take(8))
     fun vmDataDir(c: Context, vmId: String) = File(base(c), "v" + vmId.filter { it.isLetterOrDigit() }.take(8))
     fun stateDir(c: Context) = File(base(c), "s")
     private fun archive(c: Context) = File(c.filesDir, "images/nest-guest.tar.gz")
@@ -145,6 +146,8 @@ object NestGuest {
         val dataDir: File? = null,
         val props: List<String> = emptyList(),
         val adbPublicKey: String? = null,
+        /** Magisk's prepared /debug_ramdisk (Magisk without a boot image), or null. */
+        val magiskDir: File? = null,
     )
 
     /** Boots the guest's init (second stage) under the engine. */
@@ -189,6 +192,7 @@ object NestGuest {
         updateDns(app)
         opts.props.forEach { kv -> kv.split('=', limit = 2).let { if (it.size == 2) props[it[0]] = it[1] } }
         props.forEach { (k, v) -> args += listOf("--prop", "$k=$v") }
+        opts.magiskDir?.let { args += listOf("--magisk", it.absolutePath) }
         args += listOf("-B", File(st, "b.sock").absolutePath, "-v", "-s", "--", "/system/bin/init", "second_stage")
         val pb = ProcessBuilder(args)
             .redirectErrorStream(true)

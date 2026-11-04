@@ -91,6 +91,12 @@ data class VmConfig(
     /** Keep running when the UI is closed (foreground service). */
     val keepAliveInBackground: Boolean = true,
     val deviceProfile: DeviceProfile = DeviceProfile.HOST,
+    /** DeviceCatalog id ("host", "generic" or a catalogue model); null: [deviceProfile] decides. */
+    val deviceModelId: String? = null,
+    /** The guest's serial number (ro.serialno); a new one is a new device identity for apps. */
+    val serialNo: String? = null,
+    /** New Android IDs for every app at the next start (the guest's SSAID store is cleared). */
+    val pendingIdReset: Boolean = false,
     val accentColor: Long = 0xFF7C5CFF,
     val createdAt: Long = System.currentTimeMillis(),
     val lastBootAt: Long? = null,

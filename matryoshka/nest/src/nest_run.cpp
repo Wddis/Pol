@@ -48,7 +48,7 @@
 extern char** environ;
 
 static void usage() {
-    fprintf(stderr, "usage: nest-run [-b GUEST=HOST[:ro]]... [-w CWD] [-0|-n] [--pid1] [--display WxH@DPI] [--prop K=V]... [--net-agent JAR] [--gpu] [-v] [-s] [-E K=V]... [-c] -- PROG [ARGS]\n");
+    fprintf(stderr, "usage: nest-run [-b GUEST=HOST[:ro]]... [-w CWD] [-0|-n] [--pid1] [--display WxH@DPI] [--prop K=V]... [--net-agent JAR] [--magisk DIR] [--gpu] [-v] [-s] [-E K=V]... [-c] -- PROG [ARGS]\n");
 }
 
 // Shared storage (/sdcard): Android 11 serves it through a FUSE daemon (MediaProvider), which
@@ -91,6 +91,7 @@ int main(int argc, char** argv) {
     nest::DisplayConfig display;
     std::vector<std::string> guestProps;  // --prop KEY=VALUE
     std::string netAgent;  // --net-agent JAR
+    std::string magiskDir;  // --magisk DIR
     bool useGpu = false;  // --gpu: the phone's GPU driver for the guest (graphics, step 2)
     std::vector<std::string> extraEnv;
     int i = 1;
@@ -122,6 +123,8 @@ int main(int argc, char** argv) {
             androidState = argv[++i];
         } else if (a == "--prop" && i + 1 < argc) {  // guest system property (wins over the image's)
             guestProps.emplace_back(argv[++i]);
+        } else if (a == "--magisk" && i + 1 < argc) {  // Magisk without a boot image (see below)
+            magiskDir = argv[++i];
         } else if (a == "--net-agent" && i + 1 < argc) {  // nest/guest-agent dex (guest network)
             netAgent = argv[++i];
         } else if (a == "--gpu") {
@@ -289,6 +292,13 @@ int main(int argc, char** argv) {
             }
         }
         if (!netAgent.empty()) cfg.vfs.bind("/system/framework/nest-agent.jar", netAgent, true, true);
+        // Magisk: what magiskinit would set up from a patched boot image. The app prepares DIR
+        // (magisk, magisk32, magiskpolicy, stub.apk, .magisk/) from the official Magisk APK; it
+        // becomes /debug_ramdisk (Magisk's tmp), and the rc below starts its stages.
+        if (!magiskDir.empty()) {
+            cfg.vfs.bind("/debug_ramdisk", magiskDir, false, true);
+            cfg.fixedMounts.push_back("/debug_ramdisk");  // init's second stage unmounts it
+        }
         setupSharedStorage(cfg, androidState);
         // Speed: shorter UI animations once booted (software rendering draws every animation frame).
         std::string initDir;
@@ -305,6 +315,19 @@ int main(int argc, char** argv) {
                       "    setprop persist.sys.fflag.override.settings_fuse false\n"
                       "    setprop persist.sys.fuse false\n",
                       f);
+                if (!magiskDir.empty()) {
+                    fputs("\non post-fs-data\n"
+                          "    exec - 0 0 -- /debug_ramdisk/magisk --post-fs-data\n"
+                          "\non nonencrypted\n"
+                          "    exec - 0 0 -- /debug_ramdisk/magisk --service\n"
+                          "\non property:vold.decrypt=trigger_restart_framework\n"
+                          "    exec - 0 0 -- /debug_ramdisk/magisk --service\n"
+                          "\non property:sys.boot_completed=1\n"
+                          "    exec - 0 0 -- /debug_ramdisk/magisk --boot-complete\n"
+                          "\non property:init.svc.zygote=stopped\n"
+                          "    exec - 0 0 -- /debug_ramdisk/magisk --zygote-restart\n",
+                          f);
+                }
                 if (!netAgent.empty()) {
                     // The guest's network (nest/guest-agent/README.md): restarted by init when it
                     // exits (system_server restart).

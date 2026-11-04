@@ -231,14 +231,31 @@ struct WaylandServer::Impl {
             if (newPool) viewerPools.insert(buf.pool->id);
             return true;
         }
-        if (r < 0 && errno == EAGAIN) return true;  // the viewer is behind: drop this frame
+        if (r < 0 && errno == EAGAIN) {  // the viewer is behind: this frame goes again once it can take it
+            lastPending = true;
+            return true;
+        }
         close(viewer);
         viewer = -1;
         viewerPools.clear();
         return false;
     }
 
+    // The newest frame: a viewer that (re)connects, or was busy, gets it at once instead of a
+    // black screen until the guest draws again (the guest composes only when something changes).
+    Obj last{T::Buffer};
+    bool haveLast = false, lastPending = false;
+
+    void resendLast() {
+        if (!haveLast || viewer < 0) return;
+        lastPending = false;
+        presentToViewer(last);
+    }
+
     void present(const Obj& buf) {
+        last = buf;
+        haveLast = true;
+        lastPending = false;
         if (presentToViewer(buf)) {
             frameCount++;
             return;
@@ -579,7 +596,7 @@ struct WaylandServer::Impl {
             for (auto& c : clients) pf.push_back({c->fd, POLLIN, 0});
             size_t vl = pf.size();
             pf.push_back({viewerListen, POLLIN, 0});
-            pf.push_back({viewer, POLLIN, 0});
+            pf.push_back({viewer, static_cast<short>(POLLIN | (lastPending ? POLLOUT : 0)), 0});
             if (poll(pf.data(), pf.size(), -1) < 0) {
                 if (errno == EINTR) continue;
                 break;
@@ -606,8 +623,10 @@ struct WaylandServer::Impl {
                     if (viewer >= 0) close(viewer);
                     viewer = fd;
                     viewerPools.clear();
+                    resendLast();
                 }
             }
+            if (viewer >= 0 && lastPending && (pf[vl + 1].revents & POLLOUT)) resendLast();
             if (viewer >= 0 && (pf[vl + 1].revents & (POLLIN | POLLHUP | POLLERR))) {
                 char b[64];
                 if (recv(viewer, b, sizeof(b), MSG_DONTWAIT) <= 0) {

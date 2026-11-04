@@ -9,6 +9,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -31,6 +32,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Circle
 import androidx.compose.material.icons.outlined.CropSquare
@@ -337,16 +339,23 @@ private fun NestLiveDisplay(
                 modifier = Modifier.align(Alignment.Center),
             )
         }
-        // Edge handle
+        // Edge handle: a dark tab with a light rim and an arrow, visible on light and dark screens.
+        val tab = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 14.dp, bottomStart = 14.dp)
         Box(
-            Modifier.align(Alignment.CenterEnd).size(width = 22.dp, height = 96.dp)
+            Modifier.align(Alignment.CenterEnd).size(width = 26.dp, height = 64.dp)
+                .clip(tab)
+                .background(Color(0xD9181A22))
+                .border(1.dp, Color.White.copy(alpha = 0.55f), tab)
                 .pointerInput(Unit) {
                     detectHorizontalDragGestures { _, drag -> if (drag < -6f) panel = true }
                 }
                 .clickableNoIndication { panel = true },
-            contentAlignment = Alignment.CenterEnd,
+            contentAlignment = Alignment.Center,
         ) {
-            Box(Modifier.size(width = 5.dp, height = 56.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.35f)))
+            Icon(
+                Icons.AutoMirrored.Outlined.KeyboardArrowLeft, stringResource(R.string.nest_panel),
+                tint = Color.White, modifier = Modifier.size(22.dp),
+            )
         }
         // Scrim + panel
         if (panel) {

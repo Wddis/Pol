@@ -60,3 +60,17 @@ fun stateText(s: VmState): String = when (s) {
     VmState.Stopping -> stringResource(R.string.state_stopping)
     is VmState.Failed -> s.message
 }
+
+
+/** Snackbars with explicit colours (MIUI's forced dark mode otherwise blanked their text). */
+@androidx.compose.runtime.Composable
+fun AppSnackbarHost(state: androidx.compose.material3.SnackbarHostState) {
+    androidx.compose.material3.SnackbarHost(state) { data ->
+        androidx.compose.material3.Snackbar(
+            data,
+            containerColor = androidx.compose.ui.graphics.Color(0xFF262936),
+            contentColor = androidx.compose.ui.graphics.Color(0xFFF2F1F8),
+            actionColor = androidx.compose.ui.graphics.Color(0xFFB9A8FF),
+        )
+    }
+}

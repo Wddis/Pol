@@ -39,6 +39,16 @@
     <string name="device_identity">Устройство для приложений</string>
     <string name="device_identity_generic">Matryoshka</string>
     <string name="device_identity_desc">Каким устройством гостя видят приложения (производитель и модель). Применяется при следующем запуске. Сборка системы и её проверки безопасности не подменяются.</string>
+    <string name="import_from_phone">С телефона</string>
+    <string name="install_selected">Установить (%1$d)</string>
+    <string name="installed_count">Установлено приложений: %1$d</string>
+    <string name="nest_panel">Управление</string>
+    <string name="magisk_nest_experimental">Экспериментально для Nest: Magisk запускает сам движок, без boot-образа. После установки перезапустите устройство.</string>
+    <string name="new_identity">Новые идентификаторы</string>
+    <string name="new_identity_desc">Новый серийный номер и новые Android ID для приложений при следующем запуске. Сейчас: %1$s</string>
+    <string name="device_group_basic">Основные</string>
+    <string name="device_group_gaming">Игровые</string>
+    <string name="device_group_other">Другие</string>
     <string name="nest_back">Назад</string>
     <string name="nest_home">Домой</string>
     <string name="nest_recents">Недавние</string>

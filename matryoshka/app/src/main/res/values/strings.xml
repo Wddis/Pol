@@ -40,6 +40,16 @@
     <string name="device_identity">Device identity</string>
     <string name="device_identity_generic">Matryoshka</string>
     <string name="device_identity_desc">What apps inside see as the device (maker and model). Applies at the next start. The system build and its security checks are not altered.</string>
+    <string name="import_from_phone">From phone</string>
+    <string name="install_selected">Install (%1$d)</string>
+    <string name="installed_count">Installed: %1$d</string>
+    <string name="nest_panel">Controls</string>
+    <string name="magisk_nest_experimental">Experimental on Nest: Magisk is started by the engine without a boot image. Restart the device after installing.</string>
+    <string name="new_identity">New device IDs</string>
+    <string name="new_identity_desc">A new serial number and new Android IDs for apps at the next start. Now: %1$s</string>
+    <string name="device_group_basic">Basic</string>
+    <string name="device_group_gaming">Gaming phones</string>
+    <string name="device_group_other">Other</string>
     <string name="nest_back">Back</string>
     <string name="nest_home">Home</string>
     <string name="nest_recents">Recent apps</string>

@@ -3,7 +3,7 @@ package dev.matryoshka.vm.core.engine
 import android.content.pm.PackageManager
 import dev.matryoshka.vm.core.host.HostProbe
 import dev.matryoshka.vm.core.image.GuestImage
-import dev.matryoshka.vm.core.model.DeviceProfile
+import dev.matryoshka.vm.core.model.DeviceCatalog
 import dev.matryoshka.vm.core.model.EngineType
 import dev.matryoshka.vm.core.model.VmConfig
 import dev.matryoshka.vm.core.nest.NestGuest
@@ -218,6 +218,14 @@ class NestEngine(private val env: EngineEnvironment) : VmEngine {
 
     private fun adbPort(vm: VmConfig) = NestGuest.DEFAULT_ADB_PORT + vm.netIndex
 
+    private suspend fun serialOf(vm: VmConfig): String = vm.serialNo ?: newSerial().also { s ->
+        env.vms.update(vm.id) { it.copy(serialNo = s) }
+    }
+
+    /** Magisk's /debug_ramdisk for this VM, when Magisk is installed (Provisioner.prepareNestMagisk). */
+    private fun magiskDirOf(vm: VmConfig): File? =
+        NestGuest.magiskTmpDir(env.context, vm.id).takeIf { vm.magisk && File(it, "magisk").exists() }
+
     override suspend fun prepare(vm: VmConfig, image: GuestImage, log: (String) -> Unit) = withContext(Dispatchers.IO) {
         NestGuest.ensureInstalled(env.context, log)
         log("Android 11 ready")
@@ -225,11 +233,17 @@ class NestEngine(private val env: EngineEnvironment) : VmEngine {
 
     override suspend fun start(vm: VmConfig, image: GuestImage) = withContext(Dispatchers.IO) {
         if (NestGuest.isRunning) throw EngineException("Another Nest device is running: stop it first")
+        if (vm.pendingIdReset) {
+            // New identity: Android regenerates each app's ANDROID_ID when its SSAID store is gone.
+            File(NestGuest.vmDataDir(env.context, vm.id), "system/users/0/settings_ssaid.xml").delete()
+            env.vms.update(vm.id) { it.copy(pendingIdReset = false) }
+        }
         NestGuest.boot(
             env.context,
             NestGuest.BootOptions(
                 dataDir = NestGuest.vmDataDir(env.context, vm.id),
-                props = listOf(NestGuest.adbListen(adbPort(vm))) + identityProps(vm),
+                props = listOf(NestGuest.adbListen(adbPort(vm))) + identityProps(vm, serialOf(vm)),
+                magiskDir = magiskDirOf(vm),
                 adbPublicKey = env.adbKey.adbPublicKey(),
             ),
         )
@@ -239,22 +253,18 @@ class NestEngine(private val env: EngineEnvironment) : VmEngine {
         }
     }
 
-    /** The device name apps see (VmConfig.deviceProfile); partitions' copies agree with it. */
-    private fun identityProps(vm: VmConfig): List<String> {
-        fun clean(v: String?) = (v ?: "").replace(Regex("[^A-Za-z0-9 ._+-]"), "").trim().take(60)
-        val (manufacturer, brand, model, device, product) = when (vm.deviceProfile) {
-            DeviceProfile.HOST -> listOf(
-                clean(android.os.Build.MANUFACTURER), clean(android.os.Build.BRAND), clean(android.os.Build.MODEL),
-                clean(android.os.Build.DEVICE), clean(android.os.Build.PRODUCT),
-            )
-            DeviceProfile.GENERIC -> listOf("Matryoshka", "Matryoshka", "Matryoshka Virtual Device", "matryoshka", "matryoshka")
-        }
-        if (model.isEmpty()) return emptyList()
-        val out = mutableListOf("ro.product.device=$device", "ro.product.name=$product")
+    /** The device apps see (DeviceCatalog); partitions' copies agree with it. */
+    private fun identityProps(vm: VmConfig, serial: String): List<String> {
+        val d = DeviceCatalog.resolve(vm)
+        val out = mutableListOf("ro.serialno=$serial", "ro.boot.serialno=$serial")
+        if (d.model.isEmpty()) return out
+        out += listOf("ro.product.device=${d.device}", "ro.product.name=${d.product}")
         for (part in listOf("", "system.", "vendor.", "odm.", "product.", "system_ext.")) {
-            out += "ro.product.${part}manufacturer=$manufacturer"
-            out += "ro.product.${part}brand=$brand"
-            out += "ro.product.${part}model=$model"
+            out += "ro.product.${part}manufacturer=${d.manufacturer}"
+            out += "ro.product.${part}brand=${d.brand}"
+            out += "ro.product.${part}model=${d.model}"
+            out += "ro.product.${part}device=${d.device}"
+            out += "ro.product.${part}name=${d.product}"
         }
         return out
     }
@@ -284,4 +294,11 @@ class EngineRegistry(env: EngineEnvironment) {
     ).associateBy { it.type }
 
     operator fun get(type: EngineType): VmEngine = engines.getValue(type)
+}
+
+/** A serial number shaped like a phone's (12 upper-case letters and digits). */
+fun newSerial(): String {
+    val chars = "ABCDEFGHJKLMNPQRSTUVWXYZ0123456789"
+    val rnd = java.security.SecureRandom()
+    return (1..12).map { chars[rnd.nextInt(chars.length)] }.joinToString("")
 }

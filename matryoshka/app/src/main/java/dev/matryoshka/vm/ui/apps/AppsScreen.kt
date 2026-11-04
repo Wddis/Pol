@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.InstallMobile
 import androidx.compose.material.icons.outlined.Launch
 import androidx.compose.material.icons.outlined.MoreVert
+import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material3.DropdownMenu
@@ -150,6 +151,29 @@ fun AppsScreen(vmId: String, onBack: () -> Unit) {
         }
     }
 
+    var hostPicker by remember { mutableStateOf(false) }
+    if (hostPicker) {
+        HostAppsDialog(onDismiss = { hostPicker = false }) { chosen ->
+            hostPicker = false
+            if (guest == null) return@HostAppsDialog
+            scope.launch {
+                progress = 0f
+                var ok = 0
+                val errors = mutableListOf<String>()
+                chosen.forEachIndexed { i, app ->
+                    runCatching { guest.install(app.sources()) { p -> progress = (i + p) / chosen.size } }
+                        .onSuccess { ok++ }.onFailure { errors += "${app.label}: ${it.message}" }
+                }
+                progress = null
+                snack.showSnackbar(
+                    if (errors.isEmpty()) context.getString(R.string.installed_count, ok)
+                    else context.getString(R.string.install_failed, errors.joinToString("; ").take(200))
+                )
+                reload()
+            }
+        }
+    }
+
     var exportPkg by remember { mutableStateOf<GuestApp?>(null) }
     var exportSplit by remember { mutableStateOf(false) }
     val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -189,13 +213,22 @@ fun AppsScreen(vmId: String, onBack: () -> Unit) {
             )
         },
         floatingActionButton = {
-            ExtendedFloatingActionButton(
-                onClick = { installer.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream")) },
-                icon = { Icon(Icons.Outlined.InstallMobile, null) },
-                text = { Text(stringResource(R.string.import_apk)) },
-            )
+            Column(horizontalAlignment = Alignment.End, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                ExtendedFloatingActionButton(
+                    onClick = { hostPicker = true },
+                    icon = { Icon(Icons.Outlined.PhoneAndroid, null) },
+                    text = { Text(stringResource(R.string.import_from_phone)) },
+                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                ExtendedFloatingActionButton(
+                    onClick = { installer.launch(arrayOf("application/vnd.android.package-archive", "application/octet-stream")) },
+                    icon = { Icon(Icons.Outlined.InstallMobile, null) },
+                    text = { Text(stringResource(R.string.import_apk)) },
+                )
+            }
         },
-        snackbarHost = { SnackbarHost(snack) },
+        snackbarHost = { dev.matryoshka.vm.ui.AppSnackbarHost(snack) },
     ) { pad ->
         Column(Modifier.fillMaxSize().padding(pad)) {
             OutlinedTextField(
@@ -219,7 +252,7 @@ fun AppsScreen(vmId: String, onBack: () -> Unit) {
                 if (filtered.isEmpty()) {
                     Text(stringResource(R.string.no_apps), modifier = Modifier.padding(24.dp), color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                LazyColumn(contentPadding = PaddingValues(bottom = 96.dp)) {
+                LazyColumn(contentPadding = PaddingValues(bottom = 168.dp)) {
                     items(filtered, key = { it.packageName }) { app ->
                         AppRow(
                             app = app,
