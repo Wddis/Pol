@@ -36,6 +36,10 @@
     <string name="engine_container">Container</string>
     <string name="engine_nest">Nest</string>
     <string name="engine_nest_desc">Android runs as ordinary app processes on this phone: no root, native speed, the phone\'s GPU.</string>
+    <string name="nest_keyboard">Keyboard</string>
+    <string name="device_identity">Device identity</string>
+    <string name="device_identity_generic">Matryoshka</string>
+    <string name="device_identity_desc">What apps inside see as the device (maker and model). Applies at the next start. The system build and its security checks are not altered.</string>
     <string name="nest_back">Back</string>
     <string name="nest_home">Home</string>
     <string name="nest_recents">Recent apps</string>

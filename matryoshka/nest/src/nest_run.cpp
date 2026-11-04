@@ -34,6 +34,7 @@
 #include <sys/socket.h>
 #include <vector>
 
+#include <sys/prctl.h>
 #include <thread>
 
 #include "android_profile.h"
@@ -222,6 +223,9 @@ int main(int argc, char** argv) {
             }
             // the whole Android screen in one window (default "none": hwcomposer shows nothing)
             text += "waydroid.active_apps=Waydroid\n";
+            // No boot animation: it renders continuously while the system starts (CPU and GPU the
+            // boot needs); the app shows its own progress until the launcher appears.
+            text += "debug.sf.nobootanimation=1\n";
 
             // No A/B checkpoints in a VM: vold's key storage otherwise waits for the checkpoint
             // commit (vold.checkpoint_committed, set only after boot) while holding its lock, and
@@ -290,12 +294,9 @@ int main(int argc, char** argv) {
         std::string initDir;
         if (cfg.vfs.resolve("/vendor/etc/init", "/", true, initDir)) {
             if (FILE* f = fopen((initDir + "/matryoshka-nest.rc").c_str(), "we")) {
-                fputs("# Matryoshka Nest: faster UI on a software renderer\n"
-                      "on property:sys.boot_completed=1\n"
-                      "    exec - system system -- /system/bin/settings put global window_animation_scale 0.5\n"
-                      "    exec - system system -- /system/bin/settings put global transition_animation_scale 0.5\n"
-                      "    exec - system system -- /system/bin/settings put global animator_duration_scale 0.5\n",
-                      f);
+                // (UI settings such as animation scales are applied by the app over adb once booted:
+                // `settings` from an init exec action fails before the settings provider is up.)
+                fputs("# Matryoshka Nest\n", f);
                 // Shared storage without FUSE (setupSharedStorage): init.rc turns FUSE on at
                 // post-fs-data, this later action of the same trigger turns it off again before
                 // vold, zygote and StorageManager read it (the feature flag must agree, or
@@ -376,7 +377,10 @@ int main(int argc, char** argv) {
             perror("nest: binder socket");
             return 125;
         }
-        brokerThread = std::thread([&] { broker->serve(); });
+        brokerThread = std::thread([&] {
+            prctl(PR_SET_NAME, "nest-binder");  // named for the tester log's cpu profile
+            broker->serve();
+        });
     }
     // Guest display: Wayland server for the composer HAL, frames into STATE/display.fb, touch
     // input from the app as datagrams on STATE/input.sock ("d|u|m ID X Y").
@@ -397,6 +401,7 @@ int main(int argc, char** argv) {
             if (in.size() < sizeof(sa.sun_path)) memcpy(sa.sun_path, in.c_str(), in.size() + 1);
             if (inputFd >= 0 && bind(inputFd, reinterpret_cast<sockaddr*>(&sa), sizeof(sa)) == 0) {
                 inputThread = std::thread([&] {
+                    prctl(PR_SET_NAME, "nest-input");
                     char msg[64];
                     for (;;) {
                         ssize_t n = recv(inputFd, msg, sizeof(msg) - 1, 0);
@@ -420,6 +425,7 @@ int main(int argc, char** argv) {
     // the phone's own memory killer, which the guest never sees coming).
     if (!androidState.empty() && logLevel) {
         std::thread([&] {
+            prctl(PR_SET_NAME, "nest-stats");
             for (int t = 30;; t += 30) {
                 sleep(30);
                 long availKb = -1, swapFreeKb = -1;

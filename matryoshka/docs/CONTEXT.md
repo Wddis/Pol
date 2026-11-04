@@ -604,6 +604,29 @@ Android 11»: скачать образ → «Загрузить Android 11» �
 **Следующий шаг — разобрать этот лог** и чинить то, что всплывёт на настоящем ядре 4.14
 и под seccomp-политикой приложений Android.
 
+### 0.10.1 — по логу 0.10.0 (владелец: лаги чаще, ANR System UI, «Недавние» не работает)
+Лог: память телефона кончилась (MemAvailable 937 → ~400 МБ, своп 0), движок 94 % CPU (78 % в ядре,
+~26 тыс. minor faults/с — подкачка), ANR SystemUI «executing service ImageWallpaper» каждую минуту.
+**Корень:** `VmManager.postBoot` для Nest вызывал `applyDisplay` → `wm size 1080x2340 density 420`
+(из VmConfig.display): гость рисовал в ~4 раза больше пикселей, чем показывается (буферы окон,
+обои), и запоминал это в своих настройках. Теперь для Nest: `wm size reset; wm density reset`,
+анимации 0.5 и `activity_manager_constants max_cached_processes=8` — через adb после загрузки
+(rc-действие `exec settings` падало со статусом 255: провайдер настроек ещё не готов).
+Прочее: `debug.sf.nobootanimation=1` (анимация загрузки ела CPU/GPU, приложение пишет «Android
+запускается…»); «Недавние» — `input keyevent 187` через adb (клавиша 580 через wl_keyboard гостем не
+распознаётся); вместо нижней панели — боковая панель (язычок справа, тап/свайп): клавиатура,
+недавние, громкость, приложения, файлы, настройки, перезапуск, выключение, свернуть; навигация —
+своя панель гостя. Профиль устройства (`VmConfig.deviceProfile`: HOST = как этот телефон, GENERIC =
+Matryoshka): `ro.product.{,system.,vendor.,odm.,product.,system_ext.}{manufacturer,brand,model}`,
+`ro.product.device/name`; отпечаток сборки и аттестация не меняются (принцип). Потоки движка
+названы (nest-binder/-wayland/-input/-stats) для профиля в логе. Лог тестера читает отчёты гостя
+из /data текущей VM (`NestGuest.activeDataDir`). Повтор запроса manifest.json (Read timed out).
+Хранилище 0.10.0 на телефоне: ошибок external_primary нет. Сеть: self-test ok.
+**GMS/Magisk — следующий шаг:** microG ставится сам при первой загрузке, но без signature spoofing
+в образе; план — Magisk без boot-образа (движок готовит /debug_ramdisk с magisk из APK Magisk по
+согласию пользователя и rc-службы post-fs-data/service/boot-complete, как magiskinit), затем
+модуль подмены подписи для microG.
+
 ---
 
 ## 4. Карта репозитория (`matryoshka/`)

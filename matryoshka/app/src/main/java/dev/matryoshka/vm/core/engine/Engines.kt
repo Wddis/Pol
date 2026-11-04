@@ -3,6 +3,7 @@ package dev.matryoshka.vm.core.engine
 import android.content.pm.PackageManager
 import dev.matryoshka.vm.core.host.HostProbe
 import dev.matryoshka.vm.core.image.GuestImage
+import dev.matryoshka.vm.core.model.DeviceProfile
 import dev.matryoshka.vm.core.model.EngineType
 import dev.matryoshka.vm.core.model.VmConfig
 import dev.matryoshka.vm.core.nest.NestGuest
@@ -228,7 +229,7 @@ class NestEngine(private val env: EngineEnvironment) : VmEngine {
             env.context,
             NestGuest.BootOptions(
                 dataDir = NestGuest.vmDataDir(env.context, vm.id),
-                props = listOf(NestGuest.adbListen(adbPort(vm))),
+                props = listOf(NestGuest.adbListen(adbPort(vm))) + identityProps(vm),
                 adbPublicKey = env.adbKey.adbPublicKey(),
             ),
         )
@@ -236,6 +237,26 @@ class NestEngine(private val env: EngineEnvironment) : VmEngine {
         if (!NestGuest.isRunning) {
             throw EngineException("The Nest engine did not start", NestGuest.tail(NestGuest.engineOut(env.context), 30).joinToString("\n"))
         }
+    }
+
+    /** The device name apps see (VmConfig.deviceProfile); partitions' copies agree with it. */
+    private fun identityProps(vm: VmConfig): List<String> {
+        fun clean(v: String?) = (v ?: "").replace(Regex("[^A-Za-z0-9 ._+-]"), "").trim().take(60)
+        val (manufacturer, brand, model, device, product) = when (vm.deviceProfile) {
+            DeviceProfile.HOST -> listOf(
+                clean(android.os.Build.MANUFACTURER), clean(android.os.Build.BRAND), clean(android.os.Build.MODEL),
+                clean(android.os.Build.DEVICE), clean(android.os.Build.PRODUCT),
+            )
+            DeviceProfile.GENERIC -> listOf("Matryoshka", "Matryoshka", "Matryoshka Virtual Device", "matryoshka", "matryoshka")
+        }
+        if (model.isEmpty()) return emptyList()
+        val out = mutableListOf("ro.product.device=$device", "ro.product.name=$product")
+        for (part in listOf("", "system.", "vendor.", "odm.", "product.", "system_ext.")) {
+            out += "ro.product.${part}manufacturer=$manufacturer"
+            out += "ro.product.${part}brand=$brand"
+            out += "ro.product.${part}model=$model"
+        }
+        return out
     }
 
     override suspend fun stop(vm: VmConfig) = withContext(Dispatchers.IO) {

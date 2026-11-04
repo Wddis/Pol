@@ -9,6 +9,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -301,7 +305,10 @@ private fun ImmersiveEffect() {
     }
 }
 
-/** The Nest guest's own screen (engine viewer), navigation keys as the guest's keyboard keys. */
+/**
+ * The Nest guest's own screen (engine viewer). The guest has its own navigation bar; the app's
+ * controls live in a side panel that opens from the handle on the right edge (tap or swipe left).
+ */
 @Composable
 private fun NestLiveDisplay(
     vmId: String, booted: Boolean, onBack: () -> Unit, onApps: () -> Unit, onFiles: () -> Unit, onSettings: () -> Unit,
@@ -309,11 +316,12 @@ private fun NestLiveDisplay(
     val m = manager()
     val context = LocalContext.current
     var view by remember { mutableStateOf<NestDisplayView?>(null) }
-    var toolbar by remember { mutableStateOf(true) }
-    var menu by remember { mutableStateOf(false) }
+    var panel by remember { mutableStateOf(false) }
     ImmersiveEffect()
-    // The phone's back gesture is the guest's Back; leaving the device is in the menu.
-    androidx.activity.compose.BackHandler { view?.tapKey(NestDisplayView.KEY_BACK) }
+    // The phone's back gesture: closes the panel, otherwise it is the guest's Back.
+    androidx.activity.compose.BackHandler {
+        if (panel) panel = false else view?.tapKey(NestDisplayView.KEY_BACK)
+    }
     val waiting = stringResource(R.string.nest_waiting)
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
@@ -322,37 +330,76 @@ private fun NestLiveDisplay(
             modifier = Modifier.align(Alignment.Center)
                 .aspectRatio(NestGuest.displayAspect, matchHeightConstraintsFirst = true),
         )
-        Column(Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 12.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            IconButton(onClick = { toolbar = !toolbar }, modifier = Modifier.size(28.dp)) {
-                Icon(if (toolbar) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp, null, tint = Color.White.copy(alpha = 0.7f))
-            }
-            AnimatedVisibility(toolbar, enter = slideInVertically { it } + fadeIn(), exit = slideOutVertically { it } + fadeOut()) {
-                Surface(shape = CircleShape, color = Color(0xE6181A22), tonalElevation = 6.dp) {
-                    Row(Modifier.padding(horizontal = 8.dp, vertical = 4.dp), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-                        PillButton(Icons.AutoMirrored.Outlined.ArrowBack) { view?.tapKey(NestDisplayView.KEY_BACK) }
-                        PillButton(Icons.Outlined.Circle) { view?.tapKey(NestDisplayView.KEY_HOMEPAGE) }
-                        PillButton(Icons.Outlined.CropSquare) { view?.tapKey(NestDisplayView.KEY_APPSELECT) }
-                        PillButton(Icons.Outlined.Keyboard) { view?.toggleKeyboard() }
-                        Box {
-                            PillButton(Icons.Outlined.MoreHoriz) { menu = true }
-                            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                                if (booted) {
-                                    MenuItem(R.string.apps, Icons.Outlined.Apps) { menu = false; onApps() }
-                                    MenuItem(R.string.files, Icons.Outlined.Folder) { menu = false; onFiles() }
-                                }
-                                MenuItem(R.string.volume_up, Icons.Outlined.VolumeUp) { view?.tapKey(NestDisplayView.KEY_VOLUMEUP) }
-                                MenuItem(R.string.volume_down, Icons.Outlined.VolumeDown) { view?.tapKey(NestDisplayView.KEY_VOLUMEDOWN) }
-                                MenuItem(R.string.settings, Icons.Outlined.Settings) { menu = false; onSettings() }
-                                MenuItem(R.string.restart, Icons.Outlined.RestartAlt) { menu = false; m.restart(vmId) }
-                                MenuItem(R.string.power_off, Icons.Outlined.PowerSettingsNew) { menu = false; VmService.stop(context, vmId); onBack() }
-                                MenuItem(R.string.minimize, Icons.AutoMirrored.Outlined.ArrowBack) { menu = false; onBack() }
-                            }
-                        }
+        if (!booted) {
+            // No boot animation in the guest (it costs the boot time): a static note instead.
+            Text(
+                waiting, color = Color.White.copy(alpha = 0.75f), style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier.align(Alignment.Center),
+            )
+        }
+        // Edge handle
+        Box(
+            Modifier.align(Alignment.CenterEnd).size(width = 22.dp, height = 96.dp)
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures { _, drag -> if (drag < -6f) panel = true }
+                }
+                .clickableNoIndication { panel = true },
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            Box(Modifier.size(width = 5.dp, height = 56.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.35f)))
+        }
+        // Scrim + panel
+        if (panel) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.25f)).clickableNoIndication { panel = false })
+        }
+        AnimatedVisibility(
+            panel, modifier = Modifier.align(Alignment.CenterEnd),
+            enter = androidx.compose.animation.slideInHorizontally { it } + fadeIn(),
+            exit = androidx.compose.animation.slideOutHorizontally { it } + fadeOut(),
+        ) {
+            Surface(
+                shape = androidx.compose.foundation.shape.RoundedCornerShape(topStart = 22.dp, bottomStart = 22.dp),
+                color = Color(0xF2181A22), tonalElevation = 6.dp,
+                modifier = Modifier.pointerInput(Unit) {
+                    detectHorizontalDragGestures { _, drag -> if (drag > 6f) panel = false }
+                },
+            ) {
+                Column(Modifier.padding(vertical = 8.dp).width(220.dp).verticalScroll(rememberScrollState())) {
+                    PanelItem(Icons.Outlined.Keyboard, R.string.nest_keyboard) { panel = false; view?.toggleKeyboard() }
+                    PanelItem(Icons.Outlined.CropSquare, R.string.nest_recents, enabled = booted) {
+                        panel = false; m.guestKeyEvent(vmId, KeyEvent.KEYCODE_APP_SWITCH)
                     }
+                    PanelItem(Icons.Outlined.VolumeUp, R.string.volume_up) { view?.tapKey(NestDisplayView.KEY_VOLUMEUP) }
+                    PanelItem(Icons.Outlined.VolumeDown, R.string.volume_down) { view?.tapKey(NestDisplayView.KEY_VOLUMEDOWN) }
+                    PanelItem(Icons.Outlined.Apps, R.string.apps, enabled = booted) { panel = false; onApps() }
+                    PanelItem(Icons.Outlined.Folder, R.string.files, enabled = booted) { panel = false; onFiles() }
+                    PanelItem(Icons.Outlined.Settings, R.string.settings) { panel = false; onSettings() }
+                    PanelItem(Icons.Outlined.RestartAlt, R.string.restart) { panel = false; m.restart(vmId) }
+                    PanelItem(Icons.Outlined.PowerSettingsNew, R.string.power_off) { panel = false; VmService.stop(context, vmId); onBack() }
+                    PanelItem(Icons.AutoMirrored.Outlined.ArrowBack, R.string.minimize) { panel = false; onBack() }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun PanelItem(icon: ImageVector, label: Int, enabled: Boolean = true, onClick: () -> Unit) {
+    val tint = if (enabled) Color.White else Color.White.copy(alpha = 0.35f)
+    Row(
+        Modifier.fillMaxWidth().clickable(enabled = enabled, onClick = onClick).padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = tint)
+        Spacer(Modifier.width(14.dp))
+        Text(stringResource(label), color = tint, style = MaterialTheme.typography.bodyLarge)
+    }
+}
+
+@Composable
+private fun Modifier.clickableNoIndication(onClick: () -> Unit): Modifier {
+    val source = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    return this.clickable(interactionSource = source, indication = null, onClick = onClick)
 }
 
 @Composable

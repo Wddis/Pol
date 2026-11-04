@@ -159,7 +159,23 @@ class VmManager(private val context: Context) {
     private suspend fun postBoot(vm: VmConfig, guest: GuestClient) {
         val firstBoot = vm.lastBootAt == null
         repo.update(vm.id) { it.copy(lastBootAt = System.currentTimeMillis()) }
-        runCatching { guest.applyDisplay(vm.display.width, vm.display.height, vm.display.dpi) }
+        if (vm.engine == EngineType.NEST) {
+            // The Nest engine sets the guest's screen itself (the phone's aspect, 240 dpi): an
+            // override here would make the guest draw far more pixels than are shown. Undo the one
+            // earlier versions left in the guest's settings; short animations; few cached apps
+            // (the guest shares the phone's memory).
+            runCatching {
+                guest.shell(
+                    "wm size reset; wm density reset; " +
+                        "settings put global window_animation_scale 0.5; " +
+                        "settings put global transition_animation_scale 0.5; " +
+                        "settings put global animator_duration_scale 0.5; " +
+                        "settings put global activity_manager_constants max_cached_processes=8"
+                )
+            }.onFailure { log(vm.id, "Guest settings: ${it.message}") }
+        } else {
+            runCatching { guest.applyDisplay(vm.display.width, vm.display.height, vm.display.dpi) }
+        }
         if (firstBoot && vm.gms == GmsMode.MICROG) {
             runCatching { provisioner.installMicroG(guest) { log(vm.id, it) } }
                 .onFailure { log(vm.id, "microG setup failed: ${it.message}") }
@@ -183,6 +199,11 @@ class VmManager(private val context: Context) {
         runCatching { engines[vm.engine].stop(vm) }
         setState(id, VmState.Stopped)
         log(id, "Stopped")
+    }
+
+    /** An Android key event in the guest (over adb), e.g. Recent apps. */
+    fun guestKeyEvent(id: String, keyCode: Int) = scope.launch {
+        runCatching { guest(id)?.shell("input keyevent $keyCode") }
     }
 
     fun restart(id: String) = scope.launch {

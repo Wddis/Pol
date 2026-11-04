@@ -81,7 +81,7 @@ object TesterLog {
                         it.contains("UserController(") || it.contains("UserDataPreparer")
                 }.forEach { w.appendLine(it) }
             }
-            GuestLogDigest.guestReports(NestGuest.dataDir(context)).forEach { w.appendLine(it) }
+            GuestLogDigest.guestReports(NestGuest.activeDataDir ?: NestGuest.dataDir(context)).forEach { w.appendLine(it) }
             w.appendLine()
 
             w.appendLine("== Virtual devices")

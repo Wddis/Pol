@@ -77,6 +77,8 @@ object NestGuest {
     private var job: Job? = null
     @Volatile private var process: Process? = null
     @Volatile var verboseBinder = false
+    /** /data of the guest booted last (the tester log reads its crash reports). */
+    @Volatile var activeDataDir: File? = null
     @Volatile var useGpu = true
     /** Width / height of the guest's display (the viewer keeps it). */
     @Volatile var displayAspect = 0.5f
@@ -155,6 +157,7 @@ object NestGuest {
         st.mkdirs()
         val data = opts.dataDir ?: dataDir(app)
         data.mkdirs()
+        activeDataDir = data
         opts.adbPublicKey?.let { key ->
             File(data, "misc/adb").apply { mkdirs() }.resolve("adb_keys").writeText(key.trim() + "\n")
         }
@@ -328,7 +331,17 @@ object NestGuest {
         throw IOException("Too many redirects")
     }
 
-    private fun httpText(url: String): String = open(url).inputStream.use { it.readBytes().decodeToString() }
+    private suspend fun httpText(url: String): String {
+        var attempt = 0
+        while (true) {
+            try {
+                return open(url).inputStream.use { it.readBytes().decodeToString() }
+            } catch (e: IOException) {
+                if (++attempt >= 5) throw e
+                delay(2000L shl attempt)
+            }
+        }
+    }
 
     private suspend fun download(url: String, target: File, size: Long) {
         var attempt = 0

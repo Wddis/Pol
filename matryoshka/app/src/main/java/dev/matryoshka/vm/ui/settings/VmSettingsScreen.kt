@@ -48,6 +48,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import dev.matryoshka.vm.R
 import dev.matryoshka.vm.core.guest.Components
+import dev.matryoshka.vm.core.model.DeviceProfile
 import dev.matryoshka.vm.core.model.EngineType
 import dev.matryoshka.vm.core.model.GpuMode
 import dev.matryoshka.vm.core.model.VmState
@@ -79,6 +80,7 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
     var storage by remember { mutableFloatStateOf(vm.storageGb.toFloat()) }
     var gpu by remember { mutableStateOf(vm.gpu) }
     var keepAlive by remember { mutableStateOf(vm.keepAliveInBackground) }
+    var profile by remember { mutableStateOf(vm.deviceProfile) }
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmComponent by remember { mutableStateOf<String?>(null) }
     var working by remember { mutableStateOf(false) }
@@ -90,7 +92,7 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                 memoryMb = (ram * 1024).roundToInt(), cpuCores = cpus.roundToInt(),
                 // Storage can only grow: shrinking a sparse disk would corrupt the guest filesystem.
                 storageGb = maxOf(it.storageGb, storage.roundToInt()),
-                gpu = gpu, keepAliveInBackground = keepAlive,
+                gpu = gpu, keepAliveInBackground = keepAlive, deviceProfile = profile,
             )
         }
         snack.showSnackbar(context.getString(if (locked) R.string.saved_next_boot else R.string.saved))
@@ -127,6 +129,25 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                         }
                     }
                 }
+            }
+
+            if (vm.engine == EngineType.NEST) {
+                SectionTitle(stringResource(R.string.device_identity))
+                SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+                    DeviceProfile.entries.forEachIndexed { i, p ->
+                        SegmentedButton(selected = profile == p, onClick = { profile = p }, shape = SegmentedButtonDefaults.itemShape(i, DeviceProfile.entries.size)) {
+                            Text(
+                                if (p == DeviceProfile.HOST) "${android.os.Build.MANUFACTURER} ${android.os.Build.MODEL}"
+                                else stringResource(R.string.device_identity_generic),
+                                maxLines = 1,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    stringResource(R.string.device_identity_desc), style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 8.dp, start = 4.dp),
+                )
             }
 
             SectionTitle(stringResource(R.string.behavior))

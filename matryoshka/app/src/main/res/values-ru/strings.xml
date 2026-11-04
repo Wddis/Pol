@@ -35,6 +35,10 @@
     <string name="engine_container">Контейнер</string>
     <string name="engine_nest">Nest</string>
     <string name="engine_nest_desc">Android работает как обычные процессы приложения на этом телефоне: без root, на родной скорости, с видеочипом телефона.</string>
+    <string name="nest_keyboard">Клавиатура</string>
+    <string name="device_identity">Устройство для приложений</string>
+    <string name="device_identity_generic">Matryoshka</string>
+    <string name="device_identity_desc">Каким устройством гостя видят приложения (производитель и модель). Применяется при следующем запуске. Сборка системы и её проверки безопасности не подменяются.</string>
     <string name="nest_back">Назад</string>
     <string name="nest_home">Домой</string>
     <string name="nest_recents">Недавние</string>

@@ -1,3 +1,4 @@
+#include <sys/prctl.h>
 // SPDX-License-Identifier: Apache-2.0
 #include "wayland_server.h"
 
@@ -672,7 +673,10 @@ bool WaylandServer::start() {
         }
     }
     d_->running = true;
-    d_->th = std::thread([this] { d_->loop(); });
+    d_->th = std::thread([this] {
+        prctl(PR_SET_NAME, "nest-wayland");
+        d_->loop();
+    });
     return true;
 }
 

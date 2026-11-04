@@ -49,6 +49,19 @@ enum class GpuMode {
     SOFTWARE,
 }
 
+/**
+ * What apps in the guest see as the device (Build.MANUFACTURER/BRAND/MODEL/DEVICE/PRODUCT).
+ * Only names: the build fingerprint and attestation are never altered.
+ */
+@Serializable
+enum class DeviceProfile {
+    /** The phone the VM runs on (apps get a real, common device). */
+    HOST,
+
+    /** A neutral "Matryoshka virtual device". */
+    GENERIC,
+}
+
 @Serializable
 data class DisplayConfig(
     val width: Int = 1080,
@@ -77,6 +90,7 @@ data class VmConfig(
     val netIndex: Int = 1,
     /** Keep running when the UI is closed (foreground service). */
     val keepAliveInBackground: Boolean = true,
+    val deviceProfile: DeviceProfile = DeviceProfile.HOST,
     val accentColor: Long = 0xFF7C5CFF,
     val createdAt: Long = System.currentTimeMillis(),
     val lastBootAt: Long? = null,
