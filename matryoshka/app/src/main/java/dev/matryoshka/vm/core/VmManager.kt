@@ -273,6 +273,49 @@ class VmManager(private val context: Context) {
         provisioner.installMicroG(g) { log(id, it) }
     }
 
+    /**
+     * Google Play from a GApps package the user downloaded themselves (MindTheGapps layout:
+     * system/... tree, arm64, Android 11). Google's apps are proprietary: Matryoshka never
+     * downloads them. The files go into the guest system (all Nest devices share it); microG, if
+     * installed, is removed first (same package names), and the device restarts.
+     */
+    suspend fun installUserGapps(id: String, zip: android.net.Uri) = withContext(Dispatchers.IO) {
+        val vm = repo.get(id) ?: return@withContext
+        if (vm.engine != EngineType.NEST) throw EngineException("Only for Nest devices")
+        val local = File(context.cacheDir, "gapps.zip")
+        log(id, "Reading the GApps package…")
+        context.contentResolver.openInputStream(zip)!!.use { input -> local.outputStream().use { input.copyTo(it) } }
+        val entries = java.util.zip.ZipFile(local).use { z -> z.entries().toList().map { it.name } }
+        if (entries.none { it.startsWith("system/") && it.endsWith(".apk") }) {
+            local.delete()
+            throw EngineException("Unsupported package: use MindTheGapps for Android 11 (arm64), a zip with a system/ folder")
+        }
+        guest(id)?.takeIf { state(id) is VmState.Running }?.let { g ->
+            log(id, "Removing microG (Google Play replaces it)…")
+            runCatching { g.shell("pm uninstall com.google.android.gms; pm uninstall com.android.vending; true") }
+        }
+        if (state(id).isActive) stop(id).join()
+        log(id, "Installing Google Play into the system…")
+        val root = File(NestGuest.rootfs(context), "system").canonicalFile
+        java.util.zip.ZipFile(local).use { z ->
+            for (e in z.entries()) {
+                if (e.isDirectory || !e.name.startsWith("system/") || e.name.startsWith("system/addon.d/")) continue
+                val out = File(root, e.name.removePrefix("system/")).canonicalFile
+                if (!out.path.startsWith(root.path + File.separator)) continue  // never outside system/
+                out.parentFile?.mkdirs()
+                z.getInputStream(e).use { input -> out.outputStream().use { input.copyTo(it) } }
+                out.setReadable(true, false)
+            }
+        }
+        local.delete()
+        File(NestGuest.rootfs(context), ".gapps").writeText("user-provided\n")
+        repo.update(id) { it.copy(gms = GmsMode.USER_PROVIDED_GAPPS) }
+        log(id, "Google Play installed. Starting the device…")
+        start(id)
+    }
+
+    fun hasUserGapps(): Boolean = File(NestGuest.rootfs(context), ".gapps").exists()
+
     suspend fun installGoogleServices(id: String) {
         val g = guest(id) ?: throw EngineException("Start the virtual device first")
         provisioner.installGoogleServices(g) { log(id, it) }

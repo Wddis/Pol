@@ -27,6 +27,7 @@
 
 #include "fastpath.h"
 #include "netlink_emu.h"
+#include <sys/prctl.h>
 #include <netinet/in.h>
 #include "vbinder_client.h"
 #include "vfs.h"
@@ -400,7 +401,34 @@ void noteProcOpen(const char* path, long r) {
 
 // One implementation for every open entry point. Never call the libc names from here: with
 // FORTIFY, bionic's headers turn a 3-argument openat() into __openat_2(), which is ours.
+// /proc/<pid>/<file> reads that need no translation (system_server's process statistics read
+// them for every process, every few seconds): read-only, a numeric pid other than the virtual
+// init's 1, files the engine never substitutes. The kernel answers them directly.
+bool fastProcRead(const char* path, int flags) {
+    if (!path || strncmp(path, "/proc/", 6) != 0 || (flags & O_ACCMODE) != O_RDONLY || (flags & O_CREAT)) return false;
+    const char* p = path + 6;
+    const char* q = p;
+    while (*q >= '0' && *q <= '9') q++;
+    if (q == p || (q - p == 1 && *p == '1') || *q != '/') return false;
+    const char* leaf = q + 1;
+    if (strncmp(leaf, "task/", 5) == 0) {  // task/<tid>/<file>
+        const char* t = leaf + 5;
+        const char* u = t;
+        while (*u >= '0' && *u <= '9') u++;
+        if (u == t || *u != '/') return false;
+        leaf = u + 1;
+    }
+    static const char* const kLeaves[] = {"stat", "statm", "cmdline", "comm", "schedstat", "io", "smaps_rollup", "wchan", "limits"};
+    for (const char* l : kLeaves)
+        if (strcmp(leaf, l) == 0) return true;
+    return false;
+}
+
 int openImpl(int dirfd, const char* path, int flags, mode_t mode) {
+    if (fastProcRead(path, flags)) {
+        long r = ret(taggedSyscall(SYS_openat, AT_FDCWD, reinterpret_cast<long>(path), flags, mode));
+        return static_cast<int>(r);
+    }
     long v = virtualStatus(dirfd, path, flags);
     if (v != kNotStatus) {
         if (v < 0) { errno = static_cast<int>(-v); return -1; }

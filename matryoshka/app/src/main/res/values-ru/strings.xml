@@ -51,6 +51,12 @@
     <string name="device_group_other">Другие</string>
     <string name="install_google">Сервисы Google (одной кнопкой)</string>
     <string name="install_google_desc">microG (замена сервисов Google) и Aurora Store — приложения из каталога Google Play, аккаунт не нужен. Свободные программы; собственные приложения Google не скачиваются.</string>
+    <string name="gapps_title">Google Play (свой файл GApps)</string>
+    <string name="gapps_desc">Настоящие Google Play и сервисы Google из пакета GApps, который вы скачали сами: MindTheGapps для Android 11, arm64 (.zip). Заменяет microG; устройство перезапустится.</string>
+    <string name="gapps_installed">Установлено. Чтобы поставить другой пакет, выберите его файл.</string>
+    <string name="gapps_done">Google Play установлен, устройство запускается. Войдите в аккаунт Google в Play Маркете. Если Play напишет, что устройство не сертифицировано, зарегистрируйте его на google.com/android/uncertified (Android ID — из приложения Device ID).</string>
+    <string name="google_done">Готово. На рабочем столе гостя: Aurora Store ставит приложения из каталога Google Play (выберите «Anonymous», найдите приложение, установите). microG Settings — настройка push-уведомлений. Для входа в аккаунт Google нужен настоящий Google Play: пункт «Google Play (свой файл GApps)».</string>
+    <string name="magisk_done">Magisk готов, устройство перезапускается. Откройте Magisk в госте: в «Установлено» видна версия, запросы root от приложений появляются окном. Скрыть Magisk: Magisk → Настройки → «Скрыть приложение Magisk».</string>
     <string name="nest_back">Назад</string>
     <string name="nest_home">Домой</string>
     <string name="nest_recents">Недавние</string>

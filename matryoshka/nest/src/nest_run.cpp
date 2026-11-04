@@ -237,10 +237,10 @@ int main(int argc, char** argv) {
             // Codec2 linear buffers from gralloc (BLOB) instead of ION, only where the host has no
             // /dev/ion (newer kernels): Codec2 crashes its user (system_server) without one of them.
             if (access("/dev/ion", R_OK) != 0) text += "debug.stagefright.c2-poolmask=786432\n";
-            // Memory: a 4 GB phone hosts this whole Android. Low-RAM mode keeps fewer apps cached,
-            // trims caches and lightens the UI (the guest's lmkd cannot read the host's memory
-            // state, so nothing else would make room); modest Java heaps.
-            text += "ro.config.low_ram=true\ndalvik.vm.heapgrowthlimit=128m\ndalvik.vm.heapsize=256m\n";
+            // Memory: modest Java heaps; the app limits cached processes over adb once booted. Not
+            // Android Go's low-RAM mode: that disables features apps rely on ("display over
+            // other apps", picture-in-picture, notification access are "not available").
+            text += "dalvik.vm.heapgrowthlimit=128m\ndalvik.vm.heapsize=256m\n";
             if (FILE* f = fopen(copy.c_str(), "we")) {
                 fwrite(text.data(), 1, text.size(), f);
                 fclose(f);

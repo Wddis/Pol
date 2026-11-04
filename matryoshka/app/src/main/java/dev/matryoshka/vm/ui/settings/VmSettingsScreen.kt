@@ -15,6 +15,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AdminPanelSettings
+import androidx.compose.material.icons.outlined.Shop
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.Apps
@@ -90,6 +91,21 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
     var confirmDelete by remember { mutableStateOf(false) }
     var confirmComponent by remember { mutableStateOf<String?>(null) }
     var working by remember { mutableStateOf(false) }
+    var workTitle by remember { mutableStateOf("") }
+    var result by remember { mutableStateOf<Pair<String, String>?>(null) }
+    val logs by m.logs.collectAsState()
+    val gappsPicker = androidx.activity.compose.rememberLauncherForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        working = true
+        workTitle = "Google Play"
+        scope.launch {
+            val r = runCatching { m.installUserGapps(vmId, uri) }
+            working = false
+            result = "Google Play" to r.fold({ context.getString(R.string.gapps_done) }, { it.message ?: "Error" })
+        }
+    }
 
     fun save() = scope.launch {
         m.repo.update(vmId) {
@@ -211,6 +227,15 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                         Icons.Outlined.Apps, stringResource(R.string.install_fdroid), stringResource(R.string.fdroid_desc),
                         tint = Brand.Teal, onClick = if (running && !working) ({ confirmComponent = "fdroid" }) else null,
                     )
+                    if (vm.engine == EngineType.NEST) {
+                        HorizontalDivider()
+                        ListRow(
+                            Icons.Outlined.Shop, stringResource(R.string.gapps_title),
+                            stringResource(if (m.hasUserGapps()) R.string.gapps_installed else R.string.gapps_desc),
+                            tint = Brand.Teal,
+                            onClick = if (!working) ({ gappsPicker.launch(arrayOf("application/zip", "application/octet-stream")) }) else null,
+                        )
+                    }
                     if (!running) Text(stringResource(R.string.start_first), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(16.dp, 0.dp, 16.dp, 12.dp))
                 }
@@ -246,16 +271,45 @@ fun VmSettingsScreen(vmId: String, onBack: () -> Unit, onDeleted: () -> Unit) {
                 TextButton(onClick = {
                     confirmComponent = null
                     working = true
+                    workTitle = if (which == "microg") context.getString(R.string.install_google) else c.title
                     scope.launch {
                         val r = runCatching {
                             when (which) { "magisk" -> m.installMagisk(vmId); "fdroid" -> m.installAppStore(vmId); else -> m.installGoogleServices(vmId) }
                         }
                         working = false
-                        snack.showSnackbar(r.fold({ context.getString(R.string.component_done, c.title) }, { it.message ?: "Error" }))
+                        val okText = when (which) {
+                            "microg" -> context.getString(R.string.google_done)
+                            "magisk" -> context.getString(R.string.magisk_done)
+                            else -> context.getString(R.string.component_done, c.title)
+                        }
+                        result = workTitle to r.fold({ okText }, { it.message ?: "Error" })
                     }
                 }) { Text(stringResource(R.string.download_install)) }
             },
             dismissButton = { TextButton(onClick = { confirmComponent = null }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+
+    if (working) {
+        AlertDialog(
+            onDismissRequest = {},
+            title = { Text(workTitle) },
+            text = {
+                Column {
+                    Text(logs[vmId]?.lastOrNull()?.substringAfter("  ") ?: "…", style = MaterialTheme.typography.bodyMedium)
+                    Spacer(Modifier.height(16.dp))
+                    androidx.compose.material3.LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            },
+            confirmButton = {},
+        )
+    }
+    result?.let { (title, text) ->
+        AlertDialog(
+            onDismissRequest = { result = null },
+            title = { Text(title) },
+            text = { Text(text) },
+            confirmButton = { TextButton(onClick = { result = null }) { Text("OK") } },
         )
     }
 

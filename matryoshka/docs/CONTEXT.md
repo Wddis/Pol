@@ -676,6 +676,25 @@ Matryoshka): `ro.product.{,system.,vendor.,odm.,product.,system_ext.}{manufactur
 - Надпись «Android запускается…» скрывается, как только гость нарисовал первый кадр
   (`NestDisplayView.hasFrames`).
 
+### 14.2 — по логу 14.1 (Magisk/root работают по ощущению владельца; Google — «ничего не произошло»)
+- `ro.config.low_ram` убран: в режиме Android Go «Поверх других приложений» (и PiP, доступ к
+  уведомлениям) — «функция недоступна». Память держат кучи dalvik и max_cached_processes=8.
+- Установка компонентов: окно с текущим шагом (последняя строка журнала VM) и итоговое окно
+  с инструкцией (Aurora Store → Anonymous; где скрыть Magisk: Magisk → Настройки → «Скрыть
+  приложение Magisk»).
+- «Google Play (свой файл GApps)»: пакет MindTheGapps (Android 11, arm64) выбирает пользователь;
+  `VmManager.installUserGapps`: microG удаляется (pm uninstall), VM останавливается, `system/...`
+  из zip → `n/r/system` (общий для всех Nest VM, метка `n/r/.gapps`), gms=USER_PROVIDED_GAPPS,
+  запуск. Сами GApps Matryoshka не скачивает (проприетарные). Сертификация: google.com/android/uncertified.
+- Ускорение: чтения `/proc/<pid>/{stat,statm,cmdline,comm,schedstat,io,smaps_rollup,wchan,limits}`
+  (и task/<tid>/…) только на чтение, pid ≠ 1 — напрямую из preload (`fastProcRead`), без остановки.
+  Опробован и **отвергнут** быстрый `prctl(PR_GET/SET_DUMPABLE)` в preload: на стенде netd падал
+  в TrafficController::start (SIGSEGV) — не возвращать без разбора причины.
+- **Следующий большой буст (план):** нулевое копирование кадра — сейчас гость рисует GPU,
+  hwcomposer читает кадр назад (glReadPixels) в wl_shm, приложение копирует в свою поверхность.
+  Передавать буфер gralloc (dmabuf fd) напрямую в поверхность приложения (AHardwareBuffer) —
+  убирает две полные копии кадра на SD665.
+
 ---
 
 ## 4. Карта репозитория (`matryoshka/`)

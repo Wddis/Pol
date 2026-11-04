@@ -52,6 +52,12 @@
     <string name="device_group_other">Other</string>
     <string name="install_google">Google services (one tap)</string>
     <string name="install_google_desc">microG Services + Companion and Aurora Store (apps from Google Play\'s catalogue, no account needed). Free software; Google\'s own apps are not downloaded.</string>
+    <string name="gapps_title">Google Play (your GApps file)</string>
+    <string name="gapps_desc">Real Google Play and Play Services from a GApps package you download yourself: MindTheGapps for Android 11, arm64 (.zip). Replaces microG; the device restarts.</string>
+    <string name="gapps_installed">Installed. To install another package, pick its file.</string>
+    <string name="gapps_done">Google Play is installed and the device is starting. Sign in with your Google account in Play Store. If Play says the device is not certified, register this virtual device at google.com/android/uncertified (Android ID from the Device ID app).</string>
+    <string name="google_done">Done. On the guest home screen: Aurora Store installs apps from Google Play (choose \"Anonymous\", search, install). microG Settings set up push messages. Signing in to a Google account needs Google Play: see \"Google Play (your GApps file)\".</string>
+    <string name="magisk_done">Magisk is ready and the device restarts. Open Magisk in the guest: \"Installed\" shows the version; root requests from apps appear as a prompt. To hide Magisk: Magisk → Settings → Hide the Magisk app.</string>
     <string name="nest_back">Back</string>
     <string name="nest_home">Home</string>
     <string name="nest_recents">Recent apps</string>
