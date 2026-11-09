@@ -18,6 +18,14 @@
 Стиль каждый раз задаётся **примером, который я прикрепляю** (видео-референс). Повторять стиль
 именно этого примера: разобрать его по кадрам, склейкам, ритму, цвету, тексту и переходам.
 
+**База знаний уже собрана — читать в первую очередь: `knowledge/README.md`.**
+- `knowledge/tutorial_ae/INSTRUCTION.md` — инструкция по эдиту из урока (AE) + перевод каждого шага в EffectCraft;
+- `knowledge/cc_presets/README.md` — 5 готовых ЦК (Bright, Dusky, Night, Raspberry haze, Two sharp),
+  применяются одной строкой: `cc_steps("night", layer="$grade")` из `effectcraft/cc/cc_steps.py`;
+- `knowledge/reference_edits/ANALYSIS.md` — общая формула 4 эдитов людей (диалог с пословными субтитрами →
+  вспышка → склейки на каждый бит → «EDITED BY» аутро).
+Повторно смотреть урок/эдиты не нужно — всё извлечено туда.
+
 ## 3. Структура репозитория (`tiktok/`)
 
 | Путь | Что это |
@@ -28,6 +36,9 @@
 | `effectcraft/beats.json` | Биты трека (librosa) |
 | `effectcraft/aeconv/` | **Конвертер After Effects → EffectCraft** (см. раздел 6) |
 | `effectcraft/aeconv/showcase.py` | 15-сек демо всех сконвертированных эффектов |
+| `effectcraft/aeconv/mblooks.py` | декодер Magic Bullet Looks (блок `MBL2` в .ffx/.aep) |
+| `effectcraft/cc/` | **готовые ЦК** из урока: `cc_steps.py` (EffectCraft), `cc_presets.json`, `luts/*.cube`, скрипты калибровки |
+| `knowledge/` | **база знаний** (урок, ЦК, разбор эдитов) |
 | `src/` | Ранний вариант на Remotion (React) — запасной, сейчас не основной |
 | `public/` | сюда кладутся `cut.mp4`, `music.m4a` (в git не попадают) |
 | `out/` | готовые видео (в git не попадают) |
@@ -86,6 +97,10 @@ ffmpeg -framerate 30 -i frames/%05d.png -ss <старт_в_треке> -i music.
 12. Ротобраш работает: `roto.model.select classical` → `roto.stroke` (fg/bg, пиксели слоя) → `roto.propagate {wait:true}`.
 13. Пример рабочего грейда (тёплый, из эдита «Scofield»): Lumetri (temperature 55, tint 14, contrast 30, highlights −20,
     shadows −10, blacks −25, sharpen 40, vignette −1.6) + Photo Filter 30 + Curves + Glow (thr 86, r 30, i 0.3) + Add Grain 0.4.
+14. **LUT (.cube) не применяются**: `Apply Color LUT` и Lumetri `inputLut=Custom` с путём `/file.cube` молча игнорируются
+    (проверено LUT-инверсией). Файлы, добавленные драйвером, лежат в корне ФС (`/name`). ЦК — через `cc/cc_steps.py`.
+15. Формулы, проверенные рендером: Unsharp Mask = `x + amount/100·(x − gauss(σ=radius px))`; Levels по каналам (`redInBlack`…)
+    и Channel Mixer (`rr`…`bc`, целые %) — как в AE.
 
 ## 6. Конвертер After Effects → EffectCraft (`effectcraft/aeconv/`)
 
@@ -119,6 +134,8 @@ champ, velep, lemonchik), `cc_ball_action` (+ мазки ротобраша дл
 1. Remotion-проект (`src/`) — первый эдит, не используется.
 2. EffectCraft-эдит «Scofield» 74.5 c: `effectcraft/build_project.py` (монтаж по битам ~86 BPM).
 3. Конвертер AE + тесты на фото + демо 15 c (`showcase.py`, трек 55.5–70.5 c).
+4. Изучен zip «файлы для Эдита Claude code» (урок AE 13 мин + 5 ЦК + 4 эдита людей): транскрипт через ElevenLabs,
+   инструкция, декодирование ЦК (S_Sharpen, BCC Unsharp, Magic Bullet Looks) и эмуляция в EffectCraft → `knowledge/`, `effectcraft/cc/`.
 
 ## 8. Чек-лист для нового эдита
 
@@ -126,6 +143,8 @@ champ, velep, lemonchik), `cc_ball_action` (+ мазки ротобраша дл
 2. Разобрать пример: раскадровка `ffmpeg … tile`, scene-detect склеек, beat-track его звука.
 3. Биты своего трека → `beats.json`; найти тихие места и дроп (RMS по 0.25 c).
 4. Scene-detect нарезки → лист шотов с кадрами → выбрать планы и кроп (pos 0..1) под квадрат.
-5. Сгенерировать `steps` (по образцу `build_project.py`/`showcase.py`), проверить 8–12 стоп-кадров.
+5. Сгенерировать `steps` (по образцу `build_project.py`/`showcase.py`) по формуле из `knowledge/` (анимации
+   урока: velocity 200→30→200 %, зум 68→100→68 %, Exposure 0.4→−1, тряска 40→0 за 6 кадров; ЦК — `cc_steps`;
+   субтитры по словам — тайминги речи через ElevenLabs Scribe), проверить 8–12 стоп-кадров.
 6. Покадровый рендер в 2 потока → ffmpeg + музыка → прислать mp4 (и раскадровку, если надо).
 7. Закоммитить скрипты (медиа — нет).
