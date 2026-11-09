@@ -8,6 +8,7 @@ EffectCraft плагины не грузит, поэтому пресеты **р
 Кадр сравнения из урока (истина, на которую калибровали): `comparison_from_tutorial.jpg`.
 Проверка эмуляции в EffectCraft (верх — наш рендер, низ — AE из урока): `effectcraft_vs_ae.jpg`.
 Пример на кадре из «Fury» (оригинал + 5 ЦК, рендер EffectCraft): `fury_cc_comparison.jpg`.
+Пример на дневном кадре (Скофилд): `scofield_cc_comparison.jpg` — на ярких кадрах пресеты пересвечивают небо/белое (калибровка была по тёмному кадру). Любой кадр: `python3 tiktok/effectcraft/cc/demo_grid.py <img> <out.jpg>`.
 
 ## Как применить (для Claude)
 ```python
