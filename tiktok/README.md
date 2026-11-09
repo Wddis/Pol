@@ -39,3 +39,19 @@ npx remotion render TikTokEdit out/my.mp4 --props='{"title":"Мой эдит","c
 - `src/compositions/TextIntro.tsx` — короткое glitch-интро с текстом
 
 Лицензия Remotion: бесплатно для частных лиц и команд до 3 человек, см. https://www.remotion.dev/license
+
+## ScofieldEdit — эдит по референсу
+
+Квадрат 1080×1080, 74.5 с, склейки привязаны к битам трека (`src/compositions/ScofieldEdit/beats.ts`, ~86 BPM).
+Структура: медленное вступление с glow-текстом → склейки каждые 4 бита → каждые 2 бита →
+пауза-слоумо → дроп со склейкой на каждый бит → мерцающий титр.
+Эффекты (аналоги AE): flash-solid, wiggle-shake, RGB split (Shift Channels), Directional Blur,
+scale punch, beat-bounce, тёплый цветокор + виньетка, зерно.
+
+Положи в `public/` файлы `cut.mp4` (нарезка) и `music.m4a` (трек), затем:
+
+```bash
+npx remotion render ScofieldEdit out/scofield_edit.mp4
+```
+
+План монтажа и тексты — в `src/compositions/ScofieldEdit/timeline.ts`.
