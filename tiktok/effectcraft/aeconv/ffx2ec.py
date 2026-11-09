@@ -47,6 +47,13 @@ def to_ecpreset(name, steps):
 
 
 if __name__ == "__main__":
+    if "--legacy" not in sys.argv:
+        # перенос по умолчанию — новая система aefx: весь каталог эффектов, все ключи, отчёт о потерях
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+        from aefx.__main__ import main as aefx_main
+        aefx_main(["convert"] + sys.argv[1:])
+        sys.exit(0)
+    sys.argv.remove("--legacy")
     src, outdir = sys.argv[1], sys.argv[2]
     name = os.path.splitext(os.path.basename(src))[0]
     eff = ffx_effects(parse(open(src, "rb").read()))

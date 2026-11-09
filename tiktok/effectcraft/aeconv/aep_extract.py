@@ -87,6 +87,7 @@ def layers_of(item):
         tg = next((k for k in c['children'] if k.get('type') == 'tdgp'), None)
         if tg: L['props'] = propgroup(tg['children'])
         L.update(text_strings(c))
+        L['_node'] = c  # сырой узел слоя: aefx читает из него эффекты без потерь
         out.append(L)
     return out
 
@@ -107,4 +108,7 @@ def comps(tree):
 
 if __name__ == '__main__':
     t = parse(open(sys.argv[1], 'rb').read())
-    print(json.dumps(comps(t), ensure_ascii=False, indent=1))
+    cs = comps(t)
+    for c in cs:
+        for L in c['layers']: L.pop('_node', None)
+    print(json.dumps(cs, ensure_ascii=False, indent=1))

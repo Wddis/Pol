@@ -17,6 +17,9 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from rifx import parse
 from aep_extract import comps as aep_comps, TICKS
 from ae2ec import convert_effects, keys_sec
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+from aefx import ir as aefx_ir            # новый перенос эффектов: без урезаний, с отчётом (см. aefx/README.md)
+from aefx.convert import convert as aefx_convert
 
 FONT_MAP = {"Arial-BoldMT": ("Inter", "Bold"), "ArialMT": ("Inter", "Regular")}
 
@@ -73,8 +76,10 @@ def hexcol(c):
     return "#%02x%02x%02x" % tuple(int(round(x * 255)) for x in c[:3])
 
 
-def build(aep_path, footage=None, footage_src=0.0, bg=None, fps=30, roto_strokes=None):
+def build(aep_path, footage=None, footage_src=0.0, bg=None, fps=30, roto_strokes=None, legacy=False):
     tree = parse(open(aep_path, "rb").read())
+    shared = aefx_ir.shared_definitions(tree)
+    ledgers, expect = [], []
     comps = aep_comps(tree)
     docs = text_docs(tree)
     steps, notes = [], []
@@ -173,10 +178,23 @@ def build(aep_path, footage=None, footage_src=0.0, bg=None, fps=30, roto_strokes
             origin = None
             if textp is not None and tr:
                 origin = ((find(tr["children"], "ADBE Position") or {}).get("value") or [W / 2, H / 2])[:2]
-            o = convert_effects(effs, layer="$cur", t0=start, comp=(W, H), t_base=0, layer_start=start, origin=origin, roto_strokes=roto_strokes)
-            steps.extend(o.steps)
-            notes += [f"{L['name']}: {n}" for n in o.notes]
-    return {"files": files, "steps": steps, "notes": notes, "comp": {"w": W, "h": H, "dur": dur}}
+            if legacy:  # старый путь: белый список из 15 эффектов, остальное молча пропускается
+                o = convert_effects(effs, layer="$cur", t0=start, comp=(W, H), t_base=0, layer_start=start, origin=origin, roto_strokes=roto_strokes)
+                steps.extend(o.steps)
+                notes += [f"{L['name']}: {n}" for n in o.notes]
+            else:
+                lir = {"source": f"{os.path.basename(aep_path)} › {L['name']}", "kind": "aep",
+                       "effects": aefx_ir.layer_effects(L["_node"], shared)}
+                for i, e in enumerate(lir["effects"]):
+                    e["order"] = i
+                o = aefx_convert(lir, layer="$cur", t0=start, comp=(W, H), fps=fps, t_base=0, layer_start=start,
+                                 origin=origin, roto_strokes=roto_strokes)
+                steps.extend(o.steps)
+                expect.extend(o.expect)
+                ledgers.append(o.ledger)
+                notes.append(o.ledger.report())
+    return {"files": files, "steps": steps, "notes": notes, "comp": {"w": W, "h": H, "dur": dur},
+            "expect": expect, "ledger": [l.to_json() for l in ledgers], "lossless": all(l.lossless() for l in ledgers)}
 
 
 if __name__ == "__main__":
@@ -184,8 +202,12 @@ if __name__ == "__main__":
     ap.add_argument("aep"); ap.add_argument("out")
     ap.add_argument("--footage"); ap.add_argument("--footage-src", type=float, default=0.0); ap.add_argument("--bg")
     ap.add_argument("--roto", help="JSON: [[kind, [[x,y],...], radius], ...] в пикселях футажа")
+    ap.add_argument("--legacy", action="store_true", help="старый перенос эффектов (ae2ec.py)")
+    ap.add_argument("--strict", action="store_true", help="код возврата 2, если у эффектов есть потери")
     a = ap.parse_args()
     rs = json.load(open(a.roto)) if a.roto else None
-    r = build(a.aep, a.footage, a.footage_src, a.bg, roto_strokes=rs)
+    r = build(a.aep, a.footage, a.footage_src, a.bg, roto_strokes=rs, legacy=a.legacy)
     json.dump(r, open(a.out, "w"), ensure_ascii=False, indent=1)
     print(len(r["steps"]), "steps", r["comp"]); print("\n".join("  " + n for n in r["notes"]))
+    if a.strict and not r["lossless"]:
+        sys.exit(2)

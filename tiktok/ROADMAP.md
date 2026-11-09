@@ -34,7 +34,8 @@
 | `effectcraft/runner.js` | Код внутри страницы EffectCraft: исполняет `steps`, делает стоп-кадры / покадровый рендер |
 | `effectcraft/build_project.py` | Генератор эдита «Scofield» (монтаж по битам, переходы, грейд, текст) |
 | `effectcraft/beats.json` | Биты трека (librosa) |
-| `effectcraft/aeconv/` | **Конвертер After Effects → EffectCraft** (см. раздел 6) |
+| `effectcraft/aefx/` | **Перенос эффектов AE → EffectCraft без урезаний** (см. раздел 6 и `aefx/README.md`) |
+| `effectcraft/aeconv/` | разбор `.aep` (композиции, слои, текст) + старый перенос эффектов (`--legacy`) |
 | `effectcraft/aeconv/showcase.py` | 15-сек демо всех сконвертированных эффектов |
 | `effectcraft/aeconv/mblooks.py` | декодер Magic Bullet Looks (блок `MBL2` в .ffx/.aep) |
 | `effectcraft/cc/` | **готовые ЦК** из урока: `cc_steps.py` (EffectCraft), `cc_presets.json`, `luts/*.cube`, скрипты калибровки |
@@ -101,33 +102,41 @@ ffmpeg -framerate 30 -i frames/%05d.png -ss <старт_в_треке> -i music.
     (проверено LUT-инверсией). Файлы, добавленные драйвером, лежат в корне ФС (`/name`). ЦК — через `cc/cc_steps.py`.
 15. Формулы, проверенные рендером: Unsharp Mask = `x + amount/100·(x − gauss(σ=radius px))`; Levels по каналам (`redInBlack`…)
     и Channel Mixer (`rr`…`bc`, целые %) — как в AE.
+16. **`prop.set` молча обрезает значение** по диапазону параметра и возвращает обрезанное (`runner.js` это ловит → `clamped`).
+17. EffectCraft сам нумерует одинаковые эффекты («Glow 2»). На имена ссылаются выражения → задавать имя явно (`prop.renameGroup`, uid из `effect.apply`).
+18. Выражения: работают `effect("Имя")("Slider")`, `noise`, `wiggle`, `clamp`, `valueAtTime`, `thisLayer.width`; **не работает** `thisProperty.propertyGroup()`.
+19. Есть скриптовый слой как в AE (`script.run`: `app.project`, `addProperty("ADBE Glo2")`), но popup там отдаёт индекс с нуля — для значений использовать команды движка.
+20. Continuous-bezier ключ связывает скорости входа и выхода: вторая `keys.setEase` перезапишет первую.
 
-## 6. Конвертер After Effects → EffectCraft (`effectcraft/aeconv/`)
+## 6. Перенос After Effects → EffectCraft (`effectcraft/aefx/`, подробно — `aefx/README.md`)
 
-EffectCraft не открывает `.aep`/`.ffx`. Конвертер читает бинарный формат AE (RIFX) и пересобирает эффекты командами.
+EffectCraft не открывает `.aep`/`.ffx`. `aefx` читает бинарный формат AE (RIFX) и пересобирает эффекты командами.
 
 ```bash
-python3 aeconv/ffx2ec.py preset.ffx aeconv/out/          # -> .steps.json + .ecpreset + отчёт
-python3 aeconv/aep2ec.py project.aep out.json \
-        --footage clip.mp4 --footage-src 0 --roto strokes.json   # клип из .aep (если его нет) + мазки ротобраша
+cd tiktok/effectcraft
+python3 aefx_cli.py inspect preset.ffx                 # что в файле
+python3 aefx_cli.py convert preset.ffx out/ --strict   # -> out/preset.steps.json + .report.txt + .ir.json
+python3 aeconv/aep2ec.py project.aep out.json --footage clip.mp4 --footage-src 0 --roto strokes.json
+python3 aefx/tests/site_check.py preset.ffx            # применить на сайте и сверить каждое значение/ключ
 ```
+`steps` из `.steps.json` вставляются в свой проект как есть (слой — `$cur`, счётчик эффектов — `--fx-start`).
 
-- Время в AE: тики **1/30720 с**; ключи переносятся с bezier-ease (speed + influence) как есть.
-- **Стандартные эффекты AE → 1:1** (Motion Tile, Warp, Exposure, Turbulent Displace, Glow, Bevel Alpha,
-  Drop Shadow, Gaussian Blur, Hue/Saturation, CC Ball Action, Tritone, CC Block Load, Transform…).
-- **Платные → сборки из встроенных:** S_Shake → Motion Tile + Transform (ключи по кадрам из кривой амплитуды) ·
-  BCC Lens Blur → Camera Lens Blur · Deep Glow → 3×Glow · Godrays/BCC Rays → CC Light Rays ·
-  S_Emboss → Bevel Alpha · S_WarpChroma → VR Chromatic Aberrations + Radial Blur · S_ScanLines → Grid ·
-  BCC Halftone → CC Ball Action · Roto Brush → Roto Brush EffectCraft.
-- **Калибровки:** Turbulent Displace `amount × size/100`; CC Block Load `0.6·c + 80`; BCC Iris Scale → радиус ≈ px на 1080.
+- **Стандартные эффекты AE → тот же эффект EffectCraft**, поиск по всему каталогу (306 эффектов), все параметры,
+  все ключи (измерения, ease, hold, roving, касательные), выражения. Время AE: тики 1/30720 с.
+- **Сторонние плагины** (Sapphire, BCC, Deep Glow, Godrays, Looks) запустить нельзя (`wasm: false`). Каждый их
+  параметр ставится на слой контролом «Эффект › Параметр» с ключами 1:1, встроенные эффекты управляются
+  формулами от контролов. Это **эмуляция**, не копия плагина; коэффициенты подобраны на глаз.
+- **Отчёт обязателен к прочтению.** `LOSS` / `CLAMPED` / `STORED` = не перенесено. Не говорить пользователю
+  «перенесено полностью», если в отчёте есть потери или эффект помечен «эмуляция».
+- **Калибровки:** Turbulent Displace `amount × size/100` (выражением); CC Block Load `0.6·c + 80`;
+  Drop Shadow opacity `×100/255`. Точки эффектов — доли слоя, в пиксели пересчитывает `runner.js` на сайте.
 - Тексты из `.aep` (CoS-документ): строки, размер, трекинг, интерлиньяж, baseline, заливка; Arial → Inter.
 
-**Уже сконвертировано** (`aeconv/out/`): `warp_v3` (1:1), `expo_shake`, `text` (5 стилей: текст, ryani,
-champ, velep, lemonchik), `cc_ball_action` (+ мазки ротобраша для плана из нарезки).
-Демо всех эффектов: `aeconv/showcase.py` → 15 c.
+**Не проверено на настоящих файлах** (в git их нет): ключи не-1D форматов, путь `.aep`, рецепты кроме
+S_Sharpen / S_Glow / BCC Unsharp / BCC Film Glow. Получив настоящий `.ffx`/`.aep` — сначала `site_check.py`.
 
-**Что подтянуть дальше:** сходство платных эмуляций проверено только на глаз (AE для сравнения нет) —
-нужны скриншоты/видео тех же эффектов из AE, чтобы откалибровать Deep Glow, BCC, Sapphire.
+**Что подтянуть дальше:** декодер Curves (нужен `.ffx` с кривыми); инструменты Magic Bullet Looks;
+скриншоты тех же эффектов из AE, чтобы откалибровать формулы эмуляций.
 
 ## 7. Что уже сделано (история)
 
