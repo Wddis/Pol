@@ -1,0 +1,8949 @@
+{
+"steps": [
+{
+"c": "file.newProject",
+"p": {}
+},
+{
+"c": "file.import",
+"p": {
+"paths": [
+"cut.mp4",
+"music.m4a"
+]
+}
+},
+{
+"c": "comp.new",
+"p": {
+"name": "EDIT",
+"width": 1080,
+"height": 1080,
+"frameRate": 30,
+"duration": 74.5,
+"background": "#000000",
+"open": true
+}
+},
+{
+"c": "comp.settings",
+"p": {
+"shutterAngle": 360,
+"motionBlurSamples": 16
+}
+},
+{
+"c": "comp.setSwitch",
+"p": {
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "comp.setSwitch",
+"p": {
+"switch": "frameBlend",
+"value": true
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "music.m4a",
+"time": 0,
+"save": "music"
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 0,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 0,
+"in": 0,
+"out": 5.56
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 0,
+"timeBase": "comp",
+"value": 1.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 5.56,
+"timeBase": "comp",
+"value": 5.747999999999999
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 5.5267,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 0,
+"timeBase": "comp",
+"value": -4.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 1.2,
+"timeBase": "comp",
+"value": -0.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 5.3933,
+"timeBase": "comp",
+"value": -0.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 5.5267,
+"timeBase": "comp",
+"value": 1.6999999999999997
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Gaussian Blur",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 0,
+"timeBase": "comp",
+"value": 45
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 1.4,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 1.4,
+"side": "in",
+"influence": 80,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/repeatEdge",
+"value": true
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 5.56,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 5.56,
+"in": 5.56,
+"out": 8.34
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 5.56,
+"timeBase": "comp",
+"value": 14.5
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 8.34,
+"timeBase": "comp",
+"value": 16.724
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 5.56,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 8.3067,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 5.56,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 5.8267,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 8.34,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 8.34,
+"in": 8.34,
+"out": 11.122
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 8.34,
+"timeBase": "comp",
+"value": 17.85
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 11.122,
+"timeBase": "comp",
+"value": 19.574840000000002
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 8.34,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 10.9553,
+"timeBase": "comp",
+"value": [
+159.87,
+159.87,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 11.0887,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 2.6153,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+624.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 8.34,
+"timeBase": "comp",
+"value": -0.6
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 11.122,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 11.122,
+"in": 11.122,
+"out": 13.909
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 11.122,
+"timeBase": "comp",
+"value": 7.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 13.909,
+"timeBase": "comp",
+"value": 9.2722
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 11.122,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 11.3553,
+"timeBase": "comp",
+"value": [
+150.88,
+150.88,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 13.8757,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+666.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 13.909,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 13.909,
+"in": 13.909,
+"out": 16.649
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 13.909,
+"timeBase": "comp",
+"value": 9.4
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 16.649,
+"timeBase": "comp",
+"value": 12.14
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 13.909,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 16.6157,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 13.909,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 16.4823,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 16.6157,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 16.649,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 16.649,
+"in": 16.649,
+"out": 19.412
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 16.649,
+"timeBase": "comp",
+"value": 12.65
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 19.412,
+"timeBase": "comp",
+"value": 14.39069
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 16.649,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 19.3787,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+414.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 16.649,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 16.9157,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 19.412,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 19.412,
+"in": 19.412,
+"out": 22.175
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 19.412,
+"timeBase": "comp",
+"value": 19.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 22.175,
+"timeBase": "comp",
+"value": 21.257800000000003
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 19.412,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 22.1417,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 19.412,
+"timeBase": "comp",
+"value": [
+439.2,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 22.0417,
+"timeBase": "comp",
+"value": [
+439.2,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 22.1417,
+"timeBase": "comp",
+"value": [
+-710.8,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 2.6297,
+"side": "out",
+"influence": 80,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 22.175,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 22.175,
+"in": 22.175,
+"out": 24.938
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 22.175,
+"timeBase": "comp",
+"value": 21.4
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 24.938,
+"timeBase": "comp",
+"value": 24.162999999999997
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 22.175,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 24.9047,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 22.175,
+"timeBase": "comp",
+"value": [
+1606.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 22.375,
+"timeBase": "comp",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.2,
+"side": "in",
+"influence": 88,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 24.938,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 24.938,
+"in": 24.938,
+"out": 27.701
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 24.938,
+"timeBase": "comp",
+"value": 24.72
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 27.701,
+"timeBase": "comp",
+"value": 26.3778
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 24.938,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 27.6677,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+607.2,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 24.938,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 27.5343,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 27.6677,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 27.701,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 27.701,
+"in": 27.701,
+"out": 30.465
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 27.701,
+"timeBase": "comp",
+"value": 26.42
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 30.465,
+"timeBase": "comp",
+"value": 28.078400000000002
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 27.701,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 30.4317,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+607.2,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 27.701,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 27.9677,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 30.465,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 30.465,
+"in": 30.465,
+"out": 33.228
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 30.465,
+"timeBase": "comp",
+"value": 28.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 33.228,
+"timeBase": "comp",
+"value": 31.063000000000002
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 30.465,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 33.0613,
+"timeBase": "comp",
+"value": [
+159.87,
+159.87,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 33.1947,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 2.5963,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+498.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 33.228,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 33.228,
+"in": 33.228,
+"out": 34.598
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 33.228,
+"timeBase": "comp",
+"value": 31.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 34.598,
+"timeBase": "comp",
+"value": 32.97
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 33.228,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 33.4613,
+"timeBase": "comp",
+"value": [
+151.79,
+151.79,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 34.5647,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+582.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 34.598,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 34.598,
+"in": 34.598,
+"out": 35.968
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 34.598,
+"timeBase": "comp",
+"value": 33.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 35.968,
+"timeBase": "comp",
+"value": 34.67
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 34.598,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 35.9347,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+582.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 34.598,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 35.8013,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 35.9347,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 35.968,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 35.968,
+"in": 35.968,
+"out": 37.361
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 35.968,
+"timeBase": "comp",
+"value": 34.9
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 37.361,
+"timeBase": "comp",
+"value": 36.29299999999999
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 35.968,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 37.3277,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+498.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 35.968,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 36.2347,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 37.361,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 37.361,
+"in": 37.361,
+"out": 38.731
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 37.361,
+"timeBase": "comp",
+"value": 36.8
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 38.731,
+"timeBase": "comp",
+"value": 38.17
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 37.361,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 38.6977,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 37.361,
+"timeBase": "comp",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 38.5977,
+"timeBase": "comp",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 38.6977,
+"timeBase": "comp",
+"value": [
+1606.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 1.2367,
+"side": "out",
+"influence": 80,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 38.731,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 38.731,
+"in": 38.731,
+"out": 40.124
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 38.731,
+"timeBase": "comp",
+"value": 38.5
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 40.124,
+"timeBase": "comp",
+"value": 39.893
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 38.731,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 40.0907,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 38.731,
+"timeBase": "comp",
+"value": [
+-694.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 38.931,
+"timeBase": "comp",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.2,
+"side": "in",
+"influence": 88,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 40.124,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 40.124,
+"in": 40.124,
+"out": 41.494
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 40.124,
+"timeBase": "comp",
+"value": 40.2
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 41.494,
+"timeBase": "comp",
+"value": 41.57
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 40.124,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 41.3273,
+"timeBase": "comp",
+"value": [
+159.22,
+159.22,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 41.4607,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 1.2033,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+498.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 41.494,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 41.494,
+"in": 41.494,
+"out": 42.887
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 41.494,
+"timeBase": "comp",
+"value": 41.9
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 42.887,
+"timeBase": "comp",
+"value": 43.293
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 41.494,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 41.7273,
+"timeBase": "comp",
+"value": [
+151.76,
+151.76,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 42.8537,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+498.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 42.887,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 42.887,
+"in": 42.887,
+"out": 44.257
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 42.887,
+"timeBase": "comp",
+"value": 43.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 44.257,
+"timeBase": "comp",
+"value": 44.97
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 42.887,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 44.2237,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 42.887,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 44.0903,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 44.2237,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 44.257,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 44.257,
+"in": 44.257,
+"out": 45.627
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 44.257,
+"timeBase": "comp",
+"value": 46.2
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 45.627,
+"timeBase": "comp",
+"value": 47.57000000000001
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 44.257,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 45.5937,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 44.257,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 44.5237,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 45.627,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 45.627,
+"in": 45.627,
+"out": 47.02
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 45.627,
+"timeBase": "comp",
+"value": 47.2
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 47.02,
+"timeBase": "comp",
+"value": 48.593
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 45.627,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 46.9867,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 45.627,
+"timeBase": "comp",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 46.8867,
+"timeBase": "comp",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 46.9867,
+"timeBase": "comp",
+"value": [
+-694.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 1.2597,
+"side": "out",
+"influence": 80,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 47.02,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 47.02,
+"in": 47.02,
+"out": 48.39
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 47.02,
+"timeBase": "comp",
+"value": 48.7
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 48.39,
+"timeBase": "comp",
+"value": 50.07
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 47.02,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 48.3567,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 47.02,
+"timeBase": "comp",
+"value": [
+1690.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 47.22,
+"timeBase": "comp",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.2,
+"side": "in",
+"influence": 88,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 48.39,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 48.39,
+"in": 48.39,
+"out": 49.76
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 48.39,
+"timeBase": "comp",
+"value": 50.5
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 49.76,
+"timeBase": "comp",
+"value": 51.87
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 48.39,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 49.5933,
+"timeBase": "comp",
+"value": [
+159.22,
+159.22,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 49.7267,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 1.2033,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 49.76,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 49.76,
+"in": 49.76,
+"out": 51.154
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 49.76,
+"timeBase": "comp",
+"value": 53.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 51.154,
+"timeBase": "comp",
+"value": 54.394000000000005
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 49.76,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 49.9933,
+"timeBase": "comp",
+"value": [
+151.76,
+151.76,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 51.1207,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 51.154,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 51.154,
+"in": 51.154,
+"out": 52.524
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 51.154,
+"timeBase": "comp",
+"value": 54.8
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 52.524,
+"timeBase": "comp",
+"value": 56.169999999999995
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 51.154,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 52.4907,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 51.154,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 52.3573,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 52.4907,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 52.524,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 52.524,
+"in": 52.524,
+"out": 53.917
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 52.524,
+"timeBase": "comp",
+"value": 57.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 53.917,
+"timeBase": "comp",
+"value": 58.693
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 52.524,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 53.8837,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+304.8,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 52.524,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 52.7907,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 53.917,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 53.917,
+"in": 53.917,
+"out": 55.0
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 53.917,
+"timeBase": "comp",
+"value": 59.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 55.0,
+"timeBase": "comp",
+"value": 60.083
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 53.917,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 54.9667,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+304.8,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 53.917,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 54.8333,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 54.9667,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 55.0,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 55.0,
+"in": 55.0,
+"out": 58.027
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 55.0,
+"timeBase": "comp",
+"value": 62.4
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 58.027,
+"timeBase": "comp",
+"value": 63.9135
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 55.0,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 57.8603,
+"timeBase": "comp",
+"value": [
+159.92,
+159.92,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 57.9937,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 2.8603,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+355.2,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 55.0,
+"timeBase": "comp",
+"value": 1.6999999999999997
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 55.2667,
+"timeBase": "comp",
+"value": -0.6
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 58.027,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 58.027,
+"in": 58.027,
+"out": 58.723
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 58.027,
+"timeBase": "comp",
+"value": 60.8
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 58.723,
+"timeBase": "comp",
+"value": 61.669999999999995
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 0,
+"side": "out",
+"influence": 90,
+"speed": 0.15
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 58.027,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 58.2603,
+"timeBase": "comp",
+"value": [
+153.52,
+153.52,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 58.6897,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 58.027,
+"timeBase": "comp",
+"value": [
+708.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 58.5897,
+"timeBase": "comp",
+"value": [
+708.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 58.6897,
+"timeBase": "comp",
+"value": [
+-442.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.5627,
+"side": "out",
+"influence": 80,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 58.723,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 58.723,
+"in": 58.723,
+"out": 59.443
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 58.723,
+"timeBase": "comp",
+"value": 65.9
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 59.443,
+"timeBase": "comp",
+"value": 66.62
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 58.723,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 59.4097,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 58.723,
+"timeBase": "comp",
+"value": [
+1690.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 58.923,
+"timeBase": "comp",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.2,
+"side": "in",
+"influence": 88,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 59.443,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 59.443,
+"in": 59.443,
+"out": 60.093
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 59.443,
+"timeBase": "comp",
+"value": 67.5
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 60.093,
+"timeBase": "comp",
+"value": 68.3125
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 0,
+"side": "out",
+"influence": 90,
+"speed": 0.15
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 59.443,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 59.9263,
+"timeBase": "comp",
+"value": [
+157.81,
+157.81,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 60.0597,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.4833,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 60.093,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 60.093,
+"in": 60.093,
+"out": 60.79
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 60.093,
+"timeBase": "comp",
+"value": 68.45
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 60.79,
+"timeBase": "comp",
+"value": 69.14699999999999
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 60.093,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 60.3263,
+"timeBase": "comp",
+"value": [
+153.52,
+153.52,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 60.7567,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 60.093,
+"timeBase": "comp",
+"value": [
+666.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 60.6567,
+"timeBase": "comp",
+"value": [
+666.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 60.7567,
+"timeBase": "comp",
+"value": [
+1816.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.5637,
+"side": "out",
+"influence": 80,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 60.79,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 60.79,
+"in": 60.79,
+"out": 61.463
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 60.79,
+"timeBase": "comp",
+"value": 69.4
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 61.463,
+"timeBase": "comp",
+"value": 70.24125000000001
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 0,
+"side": "out",
+"influence": 90,
+"speed": 0.15
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 60.79,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 61.4297,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 60.79,
+"timeBase": "comp",
+"value": [
+-736.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 60.99,
+"timeBase": "comp",
+"value": [
+414.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.2,
+"side": "in",
+"influence": 88,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 61.463,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 61.463,
+"in": 61.463,
+"out": 62.183
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 61.463,
+"timeBase": "comp",
+"value": 70.8
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 62.183,
+"timeBase": "comp",
+"value": 71.52
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 61.463,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 62.1497,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+414.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 61.463,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 62.0163,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 62.1497,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 62.183,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 62.183,
+"in": 62.183,
+"out": 62.856
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 62.183,
+"timeBase": "comp",
+"value": 71.9
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 62.856,
+"timeBase": "comp",
+"value": 72.74125000000001
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 0,
+"side": "out",
+"influence": 90,
+"speed": 0.15
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 62.183,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 62.6893,
+"timeBase": "comp",
+"value": [
+157.9,
+157.9,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 62.8227,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.5063,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+582.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 62.183,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 62.4497,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 62.856,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 62.856,
+"in": 62.856,
+"out": 63.553
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 62.856,
+"timeBase": "comp",
+"value": 72.8
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 63.553,
+"timeBase": "comp",
+"value": 73.49699999999999
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 62.856,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 63.0893,
+"timeBase": "comp",
+"value": [
+153.52,
+153.52,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 63.5197,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 62.856,
+"timeBase": "comp",
+"value": [
+582.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 63.4197,
+"timeBase": "comp",
+"value": [
+582.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 63.5197,
+"timeBase": "comp",
+"value": [
+-568.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.5637,
+"side": "out",
+"influence": 80,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 63.553,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 63.553,
+"in": 63.553,
+"out": 64.226
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 63.553,
+"timeBase": "comp",
+"value": 73.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 64.226,
+"timeBase": "comp",
+"value": 74.44125
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 0,
+"side": "out",
+"influence": 90,
+"speed": 0.15
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 63.553,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 64.1927,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 63.553,
+"timeBase": "comp",
+"value": [
+1690.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 63.753,
+"timeBase": "comp",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.2,
+"side": "in",
+"influence": 88,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 64.226,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 64.226,
+"in": 64.226,
+"out": 64.946
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 64.226,
+"timeBase": "comp",
+"value": 74.4
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 64.946,
+"timeBase": "comp",
+"value": 75.12
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 64.226,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 64.7793,
+"timeBase": "comp",
+"value": [
+158.07,
+158.07,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 64.9127,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.5533,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+330.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 64.946,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 64.946,
+"in": 64.946,
+"out": 65.62
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 64.946,
+"timeBase": "comp",
+"value": 76.2
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 65.62,
+"timeBase": "comp",
+"value": 77.04250000000002
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 0,
+"side": "out",
+"influence": 90,
+"speed": 0.15
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 64.946,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 65.1793,
+"timeBase": "comp",
+"value": [
+153.64,
+153.64,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 65.5867,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 64.946,
+"timeBase": "comp",
+"value": [
+330.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 65.4867,
+"timeBase": "comp",
+"value": [
+330.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 65.5867,
+"timeBase": "comp",
+"value": [
+1480.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.5407,
+"side": "out",
+"influence": 80,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 65.62,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 65.62,
+"in": 65.62,
+"out": 66.316
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 65.62,
+"timeBase": "comp",
+"value": 77.9
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 66.316,
+"timeBase": "comp",
+"value": 78.596
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 65.62,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 66.2827,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 65.62,
+"timeBase": "comp",
+"value": [
+-526.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 65.82,
+"timeBase": "comp",
+"value": [
+624.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.2,
+"side": "in",
+"influence": 88,
+"speed": 0
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/master/exposure",
+"time": 65.62,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/master/exposure",
+"time": 66.1493,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/master/exposure",
+"time": 66.2827,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 66.316,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 66.316,
+"in": 66.316,
+"out": 66.99
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 66.316,
+"timeBase": "comp",
+"value": 79.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 66.99,
+"timeBase": "comp",
+"value": 80.44249999999998
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 0,
+"side": "out",
+"influence": 90,
+"speed": 0.15
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 66.316,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 66.8233,
+"timeBase": "comp",
+"value": [
+157.9,
+157.9,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 66.9567,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.5073,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Exposure",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 66.316,
+"timeBase": "comp",
+"value": 2.3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/master/exposure",
+"time": 66.5827,
+"timeBase": "comp",
+"value": 0.0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 66.99,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 66.99,
+"in": 66.99,
+"out": 67.709
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 66.99,
+"timeBase": "comp",
+"value": 81.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 67.709,
+"timeBase": "comp",
+"value": 82.319
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 66.99,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 67.2233,
+"timeBase": "comp",
+"value": [
+153.41,
+153.41,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 67.6757,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 66.99,
+"timeBase": "comp",
+"value": [
+582.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 67.5757,
+"timeBase": "comp",
+"value": [
+582.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 67.6757,
+"timeBase": "comp",
+"value": [
+-568.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.5857,
+"side": "out",
+"influence": 80,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 67.709,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 67.709,
+"in": 67.709,
+"out": 68.383
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 67.709,
+"timeBase": "comp",
+"value": 84.7
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 68.383,
+"timeBase": "comp",
+"value": 85.54249999999999
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 0,
+"side": "out",
+"influence": 90,
+"speed": 0.15
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 67.709,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 68.3497,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Motion Tile",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/outputWidth",
+"value": 400
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/mirrorEdges",
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 67.709,
+"timeBase": "comp",
+"value": [
+1606.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 67.909,
+"timeBase": "comp",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"time": 0.2,
+"side": "in",
+"influence": 88,
+"speed": 0
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 68.383,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 68.383,
+"in": 68.383,
+"out": 69.079
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 68.383,
+"timeBase": "comp",
+"value": 86.4
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 69.079,
+"timeBase": "comp",
+"value": 87.096
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 68.383,
+"timeBase": "comp",
+"value": [
+150.0,
+150.0,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 68.9123,
+"timeBase": "comp",
+"value": [
+157.99,
+157.99,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 69.0457,
+"timeBase": "comp",
+"value": [
+264.82,
+264.82,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.5293,
+"side": "out",
+"influence": 75,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+456.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.addItem",
+"p": {
+"item": "cut.mp4",
+"time": 69.079,
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 69.079,
+"in": 69.079,
+"out": 70.473
+}
+},
+{
+"c": "layer.setSwitch",
+"p": {
+"layers": [
+"$cur"
+],
+"switch": "motionBlur",
+"value": true
+}
+},
+{
+"c": "layer.frameBlending",
+"p": {
+"layers": [
+"$cur"
+],
+"mode": "frameMix"
+}
+},
+{
+"c": "layer.enableTimeRemap",
+"p": {
+"layers": [
+"$cur"
+],
+"value": true
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 69.079,
+"timeBase": "comp",
+"value": 87.2
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "timeRemap",
+"time": 70.473,
+"timeBase": "comp",
+"value": 87.897
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 69.079,
+"timeBase": "comp",
+"value": [
+247.5,
+247.5,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 69.3123,
+"timeBase": "comp",
+"value": [
+151.76,
+151.76,
+100
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 70.4397,
+"timeBase": "comp",
+"value": [
+160.5,
+160.5,
+100
+]
+}
+},
+{
+"c": "keys.setEase",
+"p": {
+"layer": "$cur",
+"path": "transform/scale",
+"time": 0.2333,
+"side": "in",
+"influence": 85,
+"speed": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "transform/position",
+"value": [
+540.0,
+540.0,
+0
+]
+}
+},
+{
+"c": "layer.newAdjustment",
+"p": {
+"name": "GRADE",
+"save": "grade"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$grade"
+],
+"start": 0,
+"in": 0,
+"out": 70.473
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Lumetri Color",
+"layers": [
+"$grade"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/basicCorrection/whiteBalance/temperature",
+"value": 30
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/basicCorrection/whiteBalance/tint",
+"value": 6
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/basicCorrection/tone/exposure",
+"value": -0.15
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/basicCorrection/tone/contrast",
+"value": 40
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/basicCorrection/tone/highlights",
+"value": -25
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/basicCorrection/tone/shadows",
+"value": -30
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/basicCorrection/tone/whites",
+"value": 10
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/basicCorrection/tone/blacks",
+"value": -40
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/basicCorrection/saturation",
+"value": 92
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/creative/adjustments/sharpen",
+"value": 40
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/creative/adjustments/shadowTint",
+"value": [
+0.47,
+0.5,
+0.52,
+1
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/creative/adjustments/highlightTint",
+"value": [
+0.6,
+0.52,
+0.42,
+1
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/vignette/vignetteAmount",
+"value": -2.0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/vignette/vignetteMidpoint",
+"value": 40
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#1/vignette/vignetteFeather",
+"value": 75
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Glow",
+"layers": [
+"$grade"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#2/threshold",
+"value": 72
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#2/radius",
+"value": 60
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#2/intensity",
+"value": 0.45
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Add Grain",
+"layers": [
+"$grade"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#3/preset",
+"value": 1
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#3/tweaking/intensity",
+"value": 0.45
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$grade",
+"path": "effects/#3/tweaking/size",
+"value": 1.1
+}
+},
+{
+"c": "layer.newText",
+"p": {
+"text": "MICHAEL SCOFIELD",
+"font": "Inter",
+"style": "Bold",
+"size": 34,
+"fill": "#ffffff",
+"tracking": 40,
+"position": [
+540.0,
+552.0
+],
+"justify": "center",
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 0,
+"in": 0.8,
+"out": 5.2
+}
+},
+{
+"c": "layer.addTextAnimator",
+"p": {
+"layer": "$cur",
+"properties": [
+"opacity",
+"blur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/opacity",
+"value": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/blur",
+"value": [
+14,
+14
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/basedOn",
+"value": 2
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/shape",
+"value": 3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 0.8,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 1.56,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Glow",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/threshold",
+"value": 20
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/radius",
+"value": 18
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"value": 1.6
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colors",
+"value": 1
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorA",
+"value": [
+1.0,
+0.945,
+0.839,
+1
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorB",
+"value": [
+1.0,
+0.945,
+0.839,
+1
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Gaussian Blur",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 4.9,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 5.2,
+"timeBase": "comp",
+"value": 18
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 4.9,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 5.2,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "layer.newText",
+"p": {
+"text": "I'M GONNA GET YOU OUT",
+"font": "Inter",
+"style": "Bold",
+"size": 34,
+"fill": "#ffe14a",
+"tracking": 40,
+"position": [
+540.0,
+552.0
+],
+"justify": "center",
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 0,
+"in": 5.9,
+"out": 8.2
+}
+},
+{
+"c": "layer.addTextAnimator",
+"p": {
+"layer": "$cur",
+"properties": [
+"opacity",
+"blur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/opacity",
+"value": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/blur",
+"value": [
+14,
+14
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/basedOn",
+"value": 2
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/shape",
+"value": 3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 5.9,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 7.165,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Glow",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/threshold",
+"value": 20
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/radius",
+"value": 18
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"value": 1.6
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colors",
+"value": 1
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorA",
+"value": [
+1.0,
+0.816,
+0.0,
+1
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorB",
+"value": [
+1.0,
+0.816,
+0.0,
+1
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Gaussian Blur",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 7.9,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 8.2,
+"timeBase": "comp",
+"value": 18
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 7.9,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 8.2,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "layer.newText",
+"p": {
+"text": "FOX RIVER",
+"font": "Inter",
+"style": "Bold",
+"size": 34,
+"fill": "#ff5a4f",
+"tracking": 40,
+"position": [
+540.0,
+552.0
+],
+"justify": "center",
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 0,
+"in": 8.6,
+"out": 11.0
+}
+},
+{
+"c": "layer.addTextAnimator",
+"p": {
+"layer": "$cur",
+"properties": [
+"opacity",
+"blur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/opacity",
+"value": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/blur",
+"value": [
+14,
+14
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/basedOn",
+"value": 2
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/shape",
+"value": 3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 8.6,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 9.36,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Glow",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/threshold",
+"value": 20
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/radius",
+"value": 18
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"value": 1.6
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colors",
+"value": 1
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorA",
+"value": [
+1.0,
+0.102,
+0.102,
+1
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorB",
+"value": [
+1.0,
+0.102,
+0.102,
+1
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Gaussian Blur",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 10.7,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 11.0,
+"timeBase": "comp",
+"value": 18
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 10.7,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 11.0,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "layer.newText",
+"p": {
+"text": "ONE WAY OUT",
+"font": "Inter",
+"style": "Bold",
+"size": 34,
+"fill": "#ff5a4f",
+"tracking": 40,
+"position": [
+540.0,
+552.0
+],
+"justify": "center",
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 0,
+"in": 55.2,
+"out": 57.977
+}
+},
+{
+"c": "layer.addTextAnimator",
+"p": {
+"layer": "$cur",
+"properties": [
+"opacity",
+"blur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/opacity",
+"value": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/blur",
+"value": [
+14,
+14
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/basedOn",
+"value": 2
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/shape",
+"value": 3
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 55.2,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 56.24,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Glow",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/threshold",
+"value": 20
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/radius",
+"value": 18
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"value": 1.6
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colors",
+"value": 1
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorA",
+"value": [
+1.0,
+0.102,
+0.102,
+1
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorB",
+"value": [
+1.0,
+0.102,
+0.102,
+1
+]
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Gaussian Blur",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 57.677,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#2/blurriness",
+"time": 57.977,
+"timeBase": "comp",
+"value": 18
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 57.677,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 57.977,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "layer.newSolid",
+"p": {
+"name": "OUTRO BG",
+"color": "#000000",
+"width": 1080,
+"height": 1080,
+"save": "bg"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$bg"
+],
+"start": 0,
+"in": 70.473,
+"out": 74.5
+}
+},
+{
+"c": "layer.newText",
+"p": {
+"text": "SCOFIELD",
+"font": "Noto Serif",
+"style": "Regular",
+"size": 92,
+"fill": "#ffffff",
+"tracking": 260,
+"vScale": 140,
+"position": [
+540.0,
+570.0
+],
+"justify": "center",
+"save": "cur"
+}
+},
+{
+"c": "layer.timing",
+"p": {
+"layers": [
+"$cur"
+],
+"start": 0,
+"in": 70.473,
+"out": 74.5
+}
+},
+{
+"c": "layer.addTextAnimator",
+"p": {
+"layer": "$cur",
+"properties": [
+"opacity",
+"blur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/opacity",
+"value": 0
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/properties/blur",
+"value": [
+6,
+6
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/randomize",
+"value": true
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/advanced/randomSeed",
+"value": 7
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 70.573,
+"timeBase": "comp",
+"value": 0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "text/animators/animator/selectors/rangeSelector/start",
+"time": 71.873,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "effect.apply",
+"p": {
+"effect": "Glow",
+"layers": [
+"$cur"
+]
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colors",
+"value": 1
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/radius",
+"value": 30
+}
+},
+{
+"c": "prop.set",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/threshold",
+"value": 10
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"time": 70.473,
+"timeBase": "comp",
+"value": 0.4
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"time": 70.623,
+"timeBase": "comp",
+"value": 2.2
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"time": 70.773,
+"timeBase": "comp",
+"value": 0.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"time": 70.923,
+"timeBase": "comp",
+"value": 2.4
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"time": 71.073,
+"timeBase": "comp",
+"value": 1.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"time": 71.273,
+"timeBase": "comp",
+"value": 2.0
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/intensity",
+"time": 71.973,
+"timeBase": "comp",
+"value": 1.6
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorA",
+"time": 71.473,
+"timeBase": "comp",
+"value": [
+1,
+1,
+1,
+1
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorA",
+"time": 72.273,
+"timeBase": "comp",
+"value": [
+1,
+0.82,
+0.35,
+1
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorB",
+"time": 71.473,
+"timeBase": "comp",
+"value": [
+1,
+1,
+1,
+1
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "effects/#1/colorB",
+"time": 72.273,
+"timeBase": "comp",
+"value": [
+1,
+0.7,
+0.2,
+1
+]
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 73.9,
+"timeBase": "comp",
+"value": 100
+}
+},
+{
+"c": "prop.addKey",
+"p": {
+"layer": "$cur",
+"path": "transform/opacity",
+"time": 74.45,
+"timeBase": "comp",
+"value": 0
+}
+}
+],
+"segments": [
+{
+"a": 0,
+"b": 5.56,
+"src": 1.3,
+"pos": 0.5,
+"rate": 0.8,
+"tr": "defocus",
+"vel": false,
+"dark": true,
+"tr_out": "dip"
+},
+{
+"a": 5.56,
+"b": 8.34,
+"src": 14.5,
+"pos": 0.5,
+"rate": 0.8,
+"tr": "dip",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 8.34,
+"b": 11.122,
+"src": 17.85,
+"pos": 0.4,
+"rate": 0.62,
+"tr": "cut",
+"vel": false,
+"dark": true,
+"tr_out": "zoom"
+},
+{
+"a": 11.122,
+"b": 13.909,
+"src": 7.6,
+"pos": 0.35,
+"rate": 0.6,
+"tr": "zoom",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 13.909,
+"b": 16.649,
+"src": 9.4,
+"pos": 0.5,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "dip"
+},
+{
+"a": 16.649,
+"b": 19.412,
+"src": 12.65,
+"pos": 0.65,
+"rate": 0.63,
+"tr": "dip",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 19.412,
+"b": 22.175,
+"src": 19.6,
+"pos": 0.62,
+"rate": 0.6,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "whipL"
+},
+{
+"a": 22.175,
+"b": 24.938,
+"src": 21.4,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "whipL",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 24.938,
+"b": 27.701,
+"src": 24.72,
+"pos": 0.42,
+"rate": 0.6,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "dip"
+},
+{
+"a": 27.701,
+"b": 30.465,
+"src": 26.42,
+"pos": 0.42,
+"rate": 0.6,
+"tr": "dip",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 30.465,
+"b": 33.228,
+"src": 28.3,
+"pos": 0.55,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "zoom"
+},
+{
+"a": 33.228,
+"b": 34.598,
+"src": 31.6,
+"pos": 0.45,
+"rate": 1.0,
+"tr": "zoom",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 34.598,
+"b": 35.968,
+"src": 33.3,
+"pos": 0.45,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "dip"
+},
+{
+"a": 35.968,
+"b": 37.361,
+"src": 34.9,
+"pos": 0.55,
+"rate": 1.0,
+"tr": "dip",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 37.361,
+"b": 38.731,
+"src": 36.8,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "whipR"
+},
+{
+"a": 38.731,
+"b": 40.124,
+"src": 38.5,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "whipR",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 40.124,
+"b": 41.494,
+"src": 40.2,
+"pos": 0.55,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "zoom"
+},
+{
+"a": 41.494,
+"b": 42.887,
+"src": 41.9,
+"pos": 0.55,
+"rate": 1.0,
+"tr": "zoom",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 42.887,
+"b": 44.257,
+"src": 43.6,
+"pos": 0.5,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "dip"
+},
+{
+"a": 44.257,
+"b": 45.627,
+"src": 46.2,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "dip",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 45.627,
+"b": 47.02,
+"src": 47.2,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "whipL"
+},
+{
+"a": 47.02,
+"b": 48.39,
+"src": 48.7,
+"pos": 0.5,
+"rate": 1.0,
+"tr": "whipL",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 48.39,
+"b": 49.76,
+"src": 50.5,
+"pos": 0.5,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "zoom"
+},
+{
+"a": 49.76,
+"b": 51.154,
+"src": 53.0,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "zoom",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 51.154,
+"b": 52.524,
+"src": 54.8,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "dip"
+},
+{
+"a": 52.524,
+"b": 53.917,
+"src": 57.3,
+"pos": 0.78,
+"rate": 1.0,
+"tr": "dip",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 53.917,
+"b": 55.0,
+"src": 59.0,
+"pos": 0.78,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "dip"
+},
+{
+"a": 55.0,
+"b": 58.027,
+"src": 62.4,
+"pos": 0.72,
+"rate": 0.5,
+"tr": "dip",
+"vel": false,
+"dark": true,
+"tr_out": "zoom"
+},
+{
+"a": 58.027,
+"b": 58.723,
+"src": 60.8,
+"pos": 0.3,
+"rate": 1.0,
+"tr": "zoom",
+"vel": true,
+"dark": false,
+"tr_out": "whipL"
+},
+{
+"a": 58.723,
+"b": 59.443,
+"src": 65.9,
+"pos": 0.5,
+"rate": 1.0,
+"tr": "whipL",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 59.443,
+"b": 60.093,
+"src": 67.5,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "cut",
+"vel": true,
+"dark": false,
+"tr_out": "zoom"
+},
+{
+"a": 60.093,
+"b": 60.79,
+"src": 68.45,
+"pos": 0.35,
+"rate": 1.0,
+"tr": "zoom",
+"vel": false,
+"dark": false,
+"tr_out": "whipR"
+},
+{
+"a": 60.79,
+"b": 61.463,
+"src": 69.4,
+"pos": 0.65,
+"rate": 1.0,
+"tr": "whipR",
+"vel": true,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 61.463,
+"b": 62.183,
+"src": 70.8,
+"pos": 0.65,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "dip"
+},
+{
+"a": 62.183,
+"b": 62.856,
+"src": 71.9,
+"pos": 0.45,
+"rate": 1.0,
+"tr": "dip",
+"vel": true,
+"dark": false,
+"tr_out": "zoom"
+},
+{
+"a": 62.856,
+"b": 63.553,
+"src": 72.8,
+"pos": 0.45,
+"rate": 1.0,
+"tr": "zoom",
+"vel": false,
+"dark": false,
+"tr_out": "whipL"
+},
+{
+"a": 63.553,
+"b": 64.226,
+"src": 73.6,
+"pos": 0.5,
+"rate": 1.0,
+"tr": "whipL",
+"vel": true,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 64.226,
+"b": 64.946,
+"src": 74.4,
+"pos": 0.75,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "zoom"
+},
+{
+"a": 64.946,
+"b": 65.62,
+"src": 76.2,
+"pos": 0.75,
+"rate": 1.0,
+"tr": "zoom",
+"vel": true,
+"dark": false,
+"tr_out": "whipR"
+},
+{
+"a": 65.62,
+"b": 66.316,
+"src": 77.9,
+"pos": 0.4,
+"rate": 1.0,
+"tr": "whipR",
+"vel": false,
+"dark": false,
+"tr_out": "dip"
+},
+{
+"a": 66.316,
+"b": 66.99,
+"src": 79.6,
+"pos": 0.5,
+"rate": 1.0,
+"tr": "dip",
+"vel": true,
+"dark": false,
+"tr_out": "zoom"
+},
+{
+"a": 66.99,
+"b": 67.709,
+"src": 81.6,
+"pos": 0.45,
+"rate": 1.0,
+"tr": "zoom",
+"vel": false,
+"dark": false,
+"tr_out": "whipL"
+},
+{
+"a": 67.709,
+"b": 68.383,
+"src": 84.7,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "whipL",
+"vel": true,
+"dark": false,
+"tr_out": "cut"
+},
+{
+"a": 68.383,
+"b": 69.079,
+"src": 86.4,
+"pos": 0.6,
+"rate": 1.0,
+"tr": "cut",
+"vel": false,
+"dark": false,
+"tr_out": "zoom"
+},
+{
+"a": 69.079,
+"b": 70.473,
+"src": 87.2,
+"pos": 0.5,
+"rate": 0.5,
+"tr": "zoom",
+"vel": false,
+"dark": false,
+"tr_out": "cut"
+}
+],
+"end": 74.5
+}
