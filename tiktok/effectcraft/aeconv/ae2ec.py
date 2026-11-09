@@ -103,11 +103,15 @@ def keys_sec(p, t_base):
 class Out:
     origin = None  # (x, y) позиция текстового слоя: точки эффектов -> координаты слоя
 
+    layer_size = (1280, 720)
+
     def pt(self, v):
-        if self.origin is None:
-            return v
+        """доля кадра AE -> пиксели слоя EffectCraft."""
         W, H = self.comp
-        return [round((v[0] * W - self.origin[0]) / W, 5), round((v[1] * H - self.origin[1]) / H, 5)]
+        if self.origin is not None:  # текстовый слой: начало координат в точке текста
+            return [round(v[0] * W - self.origin[0], 2), round(v[1] * H - self.origin[1], 2)]
+        lw, lh = self.layer_size
+        return [round(v[0] * lw, 2), round(v[1] * lh, 2)]
 
     def __init__(self, layer, t0, comp, layer_start=0.0):
         self.layer, self.t0, self.comp, self.steps, self.n = layer, t0, comp, [], 0
@@ -187,19 +191,25 @@ def native(o, e, ec_name, t_base):
         scale = 1.0
         if ec_name == "Drop Shadow" and q["id"] == "opacity":
             scale = 100 / 255
+        offset = 0.0
+        if ec_name == "CC Block Load" and q["id"] == "completion":
+            # шкала прогрессивной загрузки в EffectCraft сдвинута: первые блоки появляются ~40%
+            scale, offset = 0.6, 80.0
         if ec_name == "Turbulent Displace" and q["id"] == "amount":
             # в AE смещение растёт с Size, в EffectCraft — нет: Amount_ec = Amount_ae * Size/100
             scale = min(1.0, val(pm_all, "Size", 100) / 100)
         if p.get("keys"):
             ks = keys_sec(p, t_base)
             if q["type"] in ("scalar",):
-                o.keys(sub, ks, scale=scale)
+                o.keys(sub, ks, scale=scale, offset=offset)
             else:
                 o.keys(sub, ks, conv=lambda v, q=q: conv_value(q, [v], o.comp))
         elif p.get("value") is not None and q["type"] != "layer":
             v = conv_value(q, p["value"], o.comp)
+            if q["type"] == "vec2":
+                v = o.pt(v)
             if q["type"] == "scalar":
-                v = v * scale
+                v = v * scale + offset
             o.set(sub, v)
         if p.get("expr"):
             o.X("prop.setExpression", layer=o.layer, path=sub, expression=p["expr"])
@@ -235,6 +245,7 @@ def s_shake(o, e, t_base, fps=60):
 
     t_end = amp_keys[-1]["t"] if amp_keys else 1.0
     tile = o.add("Motion Tile")
+    o.set(f"{tile}/tileCenter", o.pt([0.5, 0.5]))
     o.set(f"{tile}/outputWidth", 300); o.set(f"{tile}/outputHeight", 300); o.set(f"{tile}/mirrorEdges", True)
     tr = o.add("Transform")
     o.set(f"{tr}/useCompositionShutterAngle", False)
@@ -252,7 +263,7 @@ def s_shake(o, e, t_base, fps=60):
                    + tilt_wave[0] * math.sin(2 * math.pi * tilt_wave[1] * F * t))
         tt = round(o.t0 + t, 5)
         o.X("prop.addKey", layer=o.layer, path=f"{tr}/position", time=tt, timeBase="comp",
-            value=[round(0.5 + dx / W, 5), round(0.5 + dy / H, 5)])
+            value=[round(o.layer_size[0] / 2 + dx * o.layer_size[0] / W, 2), round(o.layer_size[1] / 2 + dy * o.layer_size[1] / H, 2)])
         o.X("prop.addKey", layer=o.layer, path=f"{tr}/scaleHeight", time=tt, timeBase="comp", value=round(100 + dz, 3))
         o.X("prop.addKey", layer=o.layer, path=f"{tr}/rotation", time=tt, timeBase="comp", value=round(rot, 3))
     o.notes.append("S_Shake (Sapphire) → Motion Tile + Transform: тряска просчитана по кадрам из кривой амплитуды файла")
@@ -400,11 +411,12 @@ def normalize(effects):
     return effects
 
 
-def convert_effects(effects, layer="$cur", t0=0.0, comp=(1080, 1080), t_base=None, layer_start=0.0, origin=None, roto_strokes=None):
+def convert_effects(effects, layer="$cur", t0=0.0, comp=(1080, 1080), t_base=None, layer_start=0.0, origin=None, roto_strokes=None, layer_size=(1280, 720)):
     effects = normalize(effects)
     o = Out(layer, t0, comp, layer_start)
     o.origin = origin
     o.roto_strokes = roto_strokes
+    o.layer_size = layer_size
     tb = first_tick(effects) if t_base is None else t_base
     for e in effects:
         m = match_of(e)
