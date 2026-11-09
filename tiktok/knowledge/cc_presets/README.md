@@ -7,6 +7,7 @@ EffectCraft плагины не грузит, поэтому пресеты **р
 
 Кадр сравнения из урока (истина, на которую калибровали): `comparison_from_tutorial.jpg`.
 Проверка эмуляции в EffectCraft (верх — наш рендер, низ — AE из урока): `effectcraft_vs_ae.jpg`.
+Пример на кадре из «Fury» (оригинал + 5 ЦК, рендер EffectCraft): `fury_cc_comparison.jpg`.
 
 ## Как применить (для Claude)
 ```python
