@@ -116,9 +116,8 @@ champ, velep, lemonchik), `cc_ball_action` (+ мазки ротобраша дл
 
 ## 7. Что уже сделано (история)
 
-1. Remotion-проект (`src/`) — первый эдит, отвергнут («телефонный стиль»).
-2. EffectCraft-эдит «Scofield» 74.5 c по референсу: `effectcraft/build_project.py` (монтаж по битам ~86 BPM,
-   пауза 55–58 c, дроп 58 c, zoom/whip/exposure-dip, velocity, грейд, субтитры, титр).
+1. Remotion-проект (`src/`) — первый эдит, не используется.
+2. EffectCraft-эдит «Scofield» 74.5 c: `effectcraft/build_project.py` (монтаж по битам ~86 BPM).
 3. Конвертер AE + тесты на фото + демо 15 c (`showcase.py`, трек 55.5–70.5 c).
 
 ## 8. Чек-лист для нового эдита
