@@ -7,7 +7,7 @@ for (let i = 0; i < proj.steps.length; i++) {
   const st = proj.steps[i]; const p = sub(st.p); const save = p.save; delete p.save;
   try {
     const r = await ec.execute(st.c, p);
-    if (save) saved[save] = r && (r.layer ?? r.id);
+    if (save) saved[save] = r && (r.layer ?? r.animator ?? r.id);
   } catch (e) { errs++; if (errs < 40) log.push([i, st.c, JSON.stringify(p).slice(0, 200), String(e).slice(0, 300)]); }
 }
 log.push(['errors', errs, 'of', proj.steps.length]);
