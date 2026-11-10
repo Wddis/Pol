@@ -16,7 +16,7 @@
 | Описание | «Записи стримов Twitch, где стримеры смотрят фильмы и сериалы — с реакцией стримера. Все части по порядку, удобный поиск по хэштегам. Обсуждение — в комментариях 💬» |
 | Группа комментариев | «КиноВайб \| Обсуждение фильмов со стримерами», id `3894241069`, привязана к каналу. **Никого туда не приглашать** (особенно контакты из личных чатов). |
 | Закреп | пост **id 4**: о проекте + блок «📚 Каталоги стримеров» (ссылки на каталоги) + «Как найти нужное» + «Обсуждение» |
-| Каталоги стримеров | отдельные сообщения в канале, id в `catalogs.json` (Fruktozka 194, zubarefff 195, Jeens 196, …) |
+| Каталог | страница Telegraph https://telegra.ph/KinoVajb--katalog-zapisej-11-10 (`catalog_page.js` + `telegraph_page.py`); в закрепе — ссылки на разделы стримеров |
 | Реестр постов | `posts.json` — id видео, название, мета, стример, рейтинги (для обложек) |
 | Источники записей | папка **Twitch** в аккаунте (21 канал-архив стримов: Zubarefff Vods, ВОД ФаСоЛи, POISONIKA, lizabaktt, Fruktozka и др.); журнал стримов с названиями фильмов и годами — @twitch_vods |
 
@@ -26,13 +26,13 @@
 1. Клиент: папка `tg/` из ветки `ccr-a37e2040-aq2eun` (`git show origin/ccr-a37e2040-aq2eun:tg/tg.js` и т.д.), `npm install` (GramJS через WebSocket `*.web.telegram.org`).
 2. Нужны переменные `TG_API_ID`, `TG_API_HASH` (my.telegram.org). Если их нет в окружении — спросить владельца. **В репозиторий не класть.**
 3. Вход: `NODE_EXTRA_CA_CERTS=/root/.ccr/ca-bundle.crt node tg.js qr` → `qr.png` обновляется каждые ~30 с, сразу отправлять владельцу; он сканирует: Telegram → Настройки → Устройства → Подключить устройство. Сессия — `session.txt` (**не коммитить**).
-4. Скрипты запускать как `node tg.js run <script.js>` из рабочей папки, куда скопированы `kinovibe/*.js`, `posts.json`, `catalogs.json`, `covers/`.
+4. Скрипты запускать как `node tg.js run <script.js>` из рабочей папки, куда скопированы `kinovibe/*.js`, `posts.json`, `covers_done.json`, `covers/`.
 
 ### Рабочий цикл для новой партии постов (подробно — STYLE.md §4–§7)
 1. Посмотреть новые посты (id, альбомы, пересланные ли, подписи владельца).
 2. Стример: ник проверять через Twitch GQL (`gql.twitch.tv`, Client-Id `kimne78kx3ncx6brgo4mv6wki5h1ko`, `user(login:"…"){displayName followers{totalCount}}`). Не угадывать — если не подтверждён, спросить.
 3. Фильм: Wikidata (IMDb id P345, Kinopoisk id P2603, длительность P2047) → рейтинги `https://rating.kinopoisk.ru/<kp>.xml`.
-4. `new.json` → (`REPOST_FROM=…`) `repost_styled.js` для пересланных постов и для разделения альбомов с несколькими фильмами → `style_posts.js` → `build_catalogs.js` → `make_covers.py` → `apply_covers.js`.
+4. `new.json` → (`REPOST_FROM=…`) `repost_styled.js` для пересланных постов и для разделения альбомов с несколькими фильмами → `style_posts.js` → каталог (`catalog_page.js`/`telegraph_page.py`) → `make_covers.py` → `apply_covers.js`.
 5. Проверить: у каждого видео есть обложка, у каждого поста — комментарии, ссылки каталогов живые.
 
 ### Договорённости с владельцем
@@ -111,8 +111,8 @@
 | `apply_covers.js` | ставит обложки (и автостарт) на видео в канале |
 | `style_posts.js` | подписи по шаблону из `new.json` + запись в `posts.json` |
 | `repost_styled.js` | перевыкладка пересланных постов / разделение альбомов (`REPOST_FROM`) |
-| `build_catalogs.js` | каталоги стримеров + закреп (`DRY=1` — предпросмотр) |
-| `posts.json`, `catalogs.json` | реестр постов и id каталогов |
+| `catalog_page.js`, `telegraph_page.py` | каталог на Telegraph + блок в закрепе (токен Telegraph — вне репо) |
+| `posts.json`, `covers_done.json`, `page.json` | реестр постов, видео с нашими обложками, адрес страницы каталога |
 | `buffer.sh` | запросы к Buffer API |
 | `brand/` | аватар и оформление TikTok |
 | `tiktok/` | стиль роликов, рендер, расшифровка, загрузка из TG, расписание Buffer, журнал |

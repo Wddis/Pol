@@ -1,5 +1,5 @@
 // Restyle channel posts from a JSON spec (default new.json) and append them to posts.json (for covers).
-// Streamer catalogs + pinned post are rebuilt separately by build_catalogs.js.  Run:  SPEC=new.json node tg.js run style_posts.js
+// Catalog page + pinned post are rebuilt separately (catalog_page.js / telegraph_page.py).  Run:  SPEC=new.json node tg.js run style_posts.js
 //
 // Spec item: {
 //   "ids": [72,73,74], "emoji": "🧬", "title": "…", "year": 2006,
@@ -55,7 +55,7 @@ module.exports = async (client, Api) => {
       console.log("caption already ok:", p.ids[0], p.title);
     }
   }
-  // navigator: catalogs per streamer are rebuilt by build_catalogs.js (run it after this script)
+  // navigator: catalog page is rebuilt by catalog_page.js + telegraph_page.py (run after this script)
   // registry for covers
   const reg = JSON.parse(fs.readFileSync("posts.json", "utf8"));
   const have = new Set(reg.flatMap((x) => x.ids));
@@ -67,6 +67,6 @@ module.exports = async (client, Api) => {
     reg.push(r);
   }
   fs.writeFileSync("posts.json", "[\n" + reg.map((x) => "  " + JSON.stringify(x)).join(",\n") + "\n]\n");
-  console.log("done. Next: build_catalogs.js, make_covers.py, apply_covers.js");
+  console.log("done. Next: catalog_page.js collect, telegraph_page.py, catalog_page.js pin, make_covers.py, apply_covers.js");
 };
 module.exports.caption = caption;
