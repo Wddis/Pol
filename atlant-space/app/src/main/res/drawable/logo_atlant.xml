@@ -1,0 +1,31 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="48"
+    android:viewportHeight="48">
+    <!-- Orbit ring -->
+    <path
+        android:strokeColor="#293029"
+        android:strokeWidth="2"
+        android:fillColor="#00000000"
+        android:pathData="M24,8 A16,16 0 1,1 23.99,8" />
+    <!-- Accent orbit arc -->
+    <path
+        android:strokeColor="#B7F34A"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M10,30 A16,16 0 0,0 38,30" />
+    <!-- Stylised A -->
+    <path
+        android:strokeColor="#FFFFFF"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000"
+        android:pathData="M17,32 L24,15 L31,32 M19.5,26 L28.5,26" />
+    <!-- Node -->
+    <path
+        android:fillColor="#B7F34A"
+        android:pathData="M38,30 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0" />
+</vector>

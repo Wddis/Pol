@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="atlant_bg">#080A08</color>
+    <color name="atlant_accent">#B7F34A</color>
+
+    <style name="Theme.AtlantSpace" parent="@android:style/Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/atlant_bg</item>
+        <item name="android:statusBarColor">@color/atlant_bg</item>
+        <item name="android:navigationBarColor">@color/atlant_bg</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar">false</item>
+    </style>
+</resources>

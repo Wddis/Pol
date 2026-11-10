@@ -28,34 +28,35 @@ class RedirectContext(
     private val obbDir: File,
 ) : ContextWrapper(base) {
 
-    private val filesDir get() = ensure(File(dataDir, "files"))
-    private val cacheDir get() = ensure(File(dataDir, "cache"))
-    private val codeCacheDir get() = ensure(File(dataDir, "code_cache"))
-    private val prefsDir get() = ensure(File(dataDir, "shared_prefs"))
-    private val dbDir get() = ensure(File(dataDir, "databases"))
-    private val noBackupDir get() = ensure(File(dataDir, "no_backup"))
+    // Named so they do not generate getters that clash with the ContextWrapper overrides below.
+    private val vFiles get() = ensure(File(dataDir, "files"))
+    private val vCache get() = ensure(File(dataDir, "cache"))
+    private val vCodeCache get() = ensure(File(dataDir, "code_cache"))
+    private val vPrefs get() = ensure(File(dataDir, "shared_prefs"))
+    private val vDb get() = ensure(File(dataDir, "databases"))
+    private val vNoBackup get() = ensure(File(dataDir, "no_backup"))
 
     private fun ensure(f: File) = f.also { Files.ensureDir(it) }
 
     override fun getPackageName(): String = packageName
     override fun getDataDir(): File = ensure(dataDir)
-    override fun getFilesDir(): File = filesDir
-    override fun getCacheDir(): File = cacheDir
-    override fun getCodeCacheDir(): File = codeCacheDir
-    override fun getNoBackupFilesDir(): File = noBackupDir
+    override fun getFilesDir(): File = vFiles
+    override fun getCacheDir(): File = vCache
+    override fun getCodeCacheDir(): File = vCodeCache
+    override fun getNoBackupFilesDir(): File = vNoBackup
     override fun getDir(name: String, mode: Int): File = ensure(File(dataDir, "app_$name"))
 
-    override fun getFileStreamPath(name: String): File = File(filesDir, name)
-    override fun fileList(): Array<String> = filesDir.list() ?: emptyArray()
-    override fun openFileInput(name: String) = File(filesDir, name).inputStream()
+    override fun getFileStreamPath(name: String): File = File(vFiles, name)
+    override fun fileList(): Array<String> = vFiles.list() ?: emptyArray()
+    override fun openFileInput(name: String) = File(vFiles, name).inputStream()
     override fun openFileOutput(name: String, mode: Int) =
-        java.io.FileOutputStream(File(filesDir, name), mode and Context.MODE_APPEND != 0)
+        java.io.FileOutputStream(File(vFiles, name), mode and Context.MODE_APPEND != 0)
 
     override fun getDatabasePath(name: String): File =
-        if (File(name).isAbsolute) File(name) else File(dbDir, name)
+        if (File(name).isAbsolute) File(name) else File(vDb, name)
 
     override fun databaseList(): Array<String> =
-        dbDir.list { _, n -> !n.endsWith("-journal") && !n.endsWith("-wal") && !n.endsWith("-shm") } ?: emptyArray()
+        vDb.list { _, n -> !n.endsWith("-journal") && !n.endsWith("-wal") && !n.endsWith("-shm") } ?: emptyArray()
 
     override fun deleteDatabase(name: String): Boolean {
         val db = getDatabasePath(name)
@@ -77,14 +78,14 @@ class RedirectContext(
 
     override fun getSharedPreferences(name: String, mode: Int): SharedPreferences {
         // Keep SharedPreferences files under the space so they are isolated and backed up with it.
-        val file = File(prefsDir, "$name.xml")
+        val file = File(vPrefs, "$name.xml")
         return RedirectPrefs.get(baseContext, file, name, mode)
     }
 
     override fun moveSharedPreferencesFrom(sourceContext: Context, name: String): Boolean = false
     override fun deleteSharedPreferences(name: String): Boolean {
-        RedirectPrefs.forget(File(prefsDir, "$name.xml"))
-        return File(prefsDir, "$name.xml").delete()
+        RedirectPrefs.forget(File(vPrefs, "$name.xml"))
+        return File(vPrefs, "$name.xml").delete()
     }
 
     override fun getExternalFilesDir(type: String?): File =

@@ -1,8 +1,34 @@
 # ATLANT SPACE — Handoff для продолжения в новой сессии
 
-> Этот файл — ввод в курс дела. Смена модели произошла по системным причинам,
-> код не потерян и лежит в ветке `ccr-7aa21a7f-tffwj1`. Ниже — что это, что уже
-> сделано, что делать дальше и как собрать/запустить.
+> Этот файл — ввод в курс дела. Ниже — что это, что уже сделано, что делать
+> дальше и как собрать/запустить.
+
+## Статус на 2026-11-10 (сессия продолжения)
+
+Доведено до собираемого и запускаемого состояния:
+- **Исправлена сборка `:engine`**: скрытое поле `ApplicationInfo.credentialProtectedDataDir`
+  теперь ставится через reflection; устранён clash геттеров в `RedirectContext`.
+- **Дописан рантайм** (`runtime/`): `VClient` (bootstrap гостевого процесса), hook-слой
+  `VInstrumentation` + `HCallbackHook` + `HookManager` (AMS/PM-хуки, stub→guest swap),
+  сгенерирован пул stub-компонентов (`runtime/stub/`, 6×8 активностей + сервисы/провайдеры).
+- **Добавлены модули**: `AtlantEngine` (фасад), `ipc/AtlantEngineService` (binder),
+  `proc/ProcessManager` + `proc/MemoryInfo`, `pm/AppRepository`, `root/VirtualRoot`,
+  `gms/GmsSupport`, `backup/BackupManager`, `diag/Diagnostics`.
+- **Создан модуль `:app`** (Jetpack Compose, Material3, тёмная тема по палитре ТЗ): все экраны
+  из ТЗ, оригинальный логотип + адаптивная иконка, пул stub-компонентов в манифесте, R8 для release.
+- **Проверено**: `:engine` компилируется, unit-тесты парсера зелёные; `:app` собирается в debug и
+  release, ставится и запускается на эмуляторе API 33, движок инициализируется, UI рендерится и
+  навигируется (проверено дампом иерархии — ATD-образ не отдаёт кадры в screencap, экран чёрный,
+  но компоненты реальны). **Release APK ≈ 1.2 МБ** (цель ≤ 100 МБ достигнута с запасом).
+
+Осталось для полной функциональности (требует реального устройства):
+- сквозной запуск гостевого APK: hook-слой полагается на приватные поля `ActivityThread`,
+  различающиеся между версиями/OEM — нужна отладка на железе;
+- нативный IO-redirector (`cpp/` пустой) для приложений с хардкод-путями `/data/data/<pkg>`;
+- расширить PM-хук (queryIntentActivities/resolveService) и settings-провайдер (per-space ANDROID_ID).
+
+Зеркало Maven Central при 429 (создаётся вне репозитория):
+`~/.gradle/init.d/mirror.gradle` → репозиторий `https://maven-central.storage-download.googleapis.com/maven2/`.
 
 ## Что это за проект
 
@@ -176,5 +202,5 @@ echo "sdk.dir=/opt/android-sdk" > local.properties   # если нет
 
 ## Git
 
-Ветка разработки: **`ccr-7aa21a7f-tffwj1`** (push только туда,
-`git push -u origin ccr-7aa21a7f-tffwj1`). PR не создавать без явной просьбы.
+Ветка разработки текущей сессии: **`ccr-46aba5f9-woj0sv`** (в неё влит предыдущий код из
+`ccr-94d6d7b8-bam516`). PR не создавать без явной просьбы.

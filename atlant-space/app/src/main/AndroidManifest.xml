@@ -1,0 +1,365 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE"/>
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE"/>
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.RECORD_AUDIO"/>
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION"/>
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION"/>
+    <uses-permission android:name="android.permission.READ_CONTACTS"/>
+    <uses-permission android:name="android.permission.WRITE_CONTACTS"/>
+    <uses-permission android:name="android.permission.GET_ACCOUNTS"/>
+    <uses-permission android:name="android.permission.READ_CALENDAR"/>
+    <uses-permission android:name="android.permission.WRITE_CALENDAR"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_AUDIO"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT"/>
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN"/>
+    <uses-permission android:name="android.permission.VIBRATE"/>
+    <uses-permission android:name="android.permission.WAKE_LOCK"/>
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES"/>
+
+    <application
+        android:name="com.atlant.space.app.AtlantApp"
+        android:label="@string/app_name"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher"
+        android:allowBackup="false"
+        android:supportsRtl="true"
+        android:hardwareAccelerated="true"
+        android:largeHeap="true"
+        android:theme="@style/Theme.AtlantSpace">
+
+        <activity android:name="com.atlant.space.app.MainActivity"
+            android:exported="true"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode"
+            android:windowSoftInputMode="adjustResize">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- Engine binder served to guest processes. -->
+        <service android:name="com.atlant.space.app.EngineService"
+            android:exported="false"/>
+
+        <!-- Stub component pool: one process slot per guest process. -->
+        <!-- slot 0 (:vproc0) -->
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P0$A0"
+            android:process=":vproc0"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p0.a0"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P0$A1"
+            android:process=":vproc0"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p0.a1"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P0$A2"
+            android:process=":vproc0"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p0.a2"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P0$A3"
+            android:process=":vproc0"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p0.a3"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P0$A4"
+            android:process=":vproc0"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p0.a4"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P0$A5"
+            android:process=":vproc0"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p0.a5"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P0$A6"
+            android:process=":vproc0"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p0.a6"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P0$A7"
+            android:process=":vproc0"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p0.a7"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <service android:name="com.atlant.space.engine.runtime.stub.StubService$P0" android:process=":vproc0" android:exported="false"/>
+        <provider android:name="com.atlant.space.engine.runtime.stub.StubProvider$P0" android:authorities="com.atlant.space.stub.p0" android:process=":vproc0" android:exported="false" android:enabled="true"/>
+
+        <!-- slot 1 (:vproc1) -->
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P1$A0"
+            android:process=":vproc1"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p1.a0"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P1$A1"
+            android:process=":vproc1"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p1.a1"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P1$A2"
+            android:process=":vproc1"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p1.a2"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P1$A3"
+            android:process=":vproc1"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p1.a3"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P1$A4"
+            android:process=":vproc1"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p1.a4"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P1$A5"
+            android:process=":vproc1"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p1.a5"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P1$A6"
+            android:process=":vproc1"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p1.a6"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P1$A7"
+            android:process=":vproc1"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p1.a7"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <service android:name="com.atlant.space.engine.runtime.stub.StubService$P1" android:process=":vproc1" android:exported="false"/>
+        <provider android:name="com.atlant.space.engine.runtime.stub.StubProvider$P1" android:authorities="com.atlant.space.stub.p1" android:process=":vproc1" android:exported="false" android:enabled="true"/>
+
+        <!-- slot 2 (:vproc2) -->
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P2$A0"
+            android:process=":vproc2"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p2.a0"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P2$A1"
+            android:process=":vproc2"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p2.a1"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P2$A2"
+            android:process=":vproc2"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p2.a2"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P2$A3"
+            android:process=":vproc2"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p2.a3"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P2$A4"
+            android:process=":vproc2"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p2.a4"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P2$A5"
+            android:process=":vproc2"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p2.a5"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P2$A6"
+            android:process=":vproc2"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p2.a6"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P2$A7"
+            android:process=":vproc2"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p2.a7"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <service android:name="com.atlant.space.engine.runtime.stub.StubService$P2" android:process=":vproc2" android:exported="false"/>
+        <provider android:name="com.atlant.space.engine.runtime.stub.StubProvider$P2" android:authorities="com.atlant.space.stub.p2" android:process=":vproc2" android:exported="false" android:enabled="true"/>
+
+        <!-- slot 3 (:vproc3) -->
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P3$A0"
+            android:process=":vproc3"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p3.a0"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P3$A1"
+            android:process=":vproc3"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p3.a1"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P3$A2"
+            android:process=":vproc3"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p3.a2"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P3$A3"
+            android:process=":vproc3"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p3.a3"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P3$A4"
+            android:process=":vproc3"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p3.a4"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P3$A5"
+            android:process=":vproc3"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p3.a5"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P3$A6"
+            android:process=":vproc3"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p3.a6"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P3$A7"
+            android:process=":vproc3"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p3.a7"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <service android:name="com.atlant.space.engine.runtime.stub.StubService$P3" android:process=":vproc3" android:exported="false"/>
+        <provider android:name="com.atlant.space.engine.runtime.stub.StubProvider$P3" android:authorities="com.atlant.space.stub.p3" android:process=":vproc3" android:exported="false" android:enabled="true"/>
+
+        <!-- slot 4 (:vproc4) -->
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P4$A0"
+            android:process=":vproc4"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p4.a0"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P4$A1"
+            android:process=":vproc4"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p4.a1"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P4$A2"
+            android:process=":vproc4"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p4.a2"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P4$A3"
+            android:process=":vproc4"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p4.a3"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P4$A4"
+            android:process=":vproc4"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p4.a4"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P4$A5"
+            android:process=":vproc4"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p4.a5"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P4$A6"
+            android:process=":vproc4"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p4.a6"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P4$A7"
+            android:process=":vproc4"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p4.a7"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <service android:name="com.atlant.space.engine.runtime.stub.StubService$P4" android:process=":vproc4" android:exported="false"/>
+        <provider android:name="com.atlant.space.engine.runtime.stub.StubProvider$P4" android:authorities="com.atlant.space.stub.p4" android:process=":vproc4" android:exported="false" android:enabled="true"/>
+
+        <!-- slot 5 (:vproc5) -->
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P5$A0"
+            android:process=":vproc5"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p5.a0"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P5$A1"
+            android:process=":vproc5"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p5.a1"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P5$A2"
+            android:process=":vproc5"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p5.a2"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P5$A3"
+            android:process=":vproc5"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p5.a3"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P5$A4"
+            android:process=":vproc5"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p5.a4"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P5$A5"
+            android:process=":vproc5"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p5.a5"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P5$A6"
+            android:process=":vproc5"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p5.a6"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <activity android:name="com.atlant.space.engine.runtime.stub.StubActivity$P5$A7"
+            android:process=":vproc5"
+            android:exported="false"
+            android:taskAffinity="com.atlant.space.task.p5.a7"
+            android:configChanges="orientation|screenSize|keyboardHidden|screenLayout|density|uiMode|locale|fontScale|smallestScreenSize|navigation|touchscreen|keyboard"
+            android:theme="@android:style/Theme.DeviceDefault"/>
+        <service android:name="com.atlant.space.engine.runtime.stub.StubService$P5" android:process=":vproc5" android:exported="false"/>
+        <provider android:name="com.atlant.space.engine.runtime.stub.StubProvider$P5" android:authorities="com.atlant.space.stub.p5" android:process=":vproc5" android:exported="false" android:enabled="true"/>
+
+    </application>
+</manifest>

@@ -18,19 +18,33 @@ Android-проект на Gradle: платформа изолированных 
 
 ### Состояние
 
-Готово (модуль `:engine`):
+Модуль `:engine` (логика виртуализации):
 - модель пространств и менеджер (`space/`): создание, переименование, архив, клон, удаление, реконсиляция с диском;
 - раскладка хранилища и проверка целостности (`storage/`);
 - парсер бинарного `AndroidManifest.xml` с unit-тестами (`pm/ManifestParser.kt`);
 - установщик APK / split / XAPK / APKS / APKM с атомарной заменой и откатом (`pm/PackageInstaller.kt`);
-- виртуальный слой разрешений (`perm/`), журнал событий (`log/`), утилиты (`util/`).
+- каталог установленных приложений (`pm/AppRepository.kt`);
+- виртуальный слой разрешений (`perm/`), журнал событий (`log/`), утилиты (`util/`);
+- рантайм запуска гостя (`runtime/`): bootstrap гостевого процесса (`VClient`), hook-слой
+  (instrumentation, `mH`-callback, AMS/PM-хуки), пул stub-компонентов, перенаправление хранилища;
+- менеджер процессов и чтение памяти (`proc/`), фасад движка и IPC (`AtlantEngine`, `ipc/`);
+- Virtual Root (`root/`), совместимость с GMS (`gms/`), бэкап/восстановление пространства
+  (`backup/`), самодиагностика (`diag/`).
 
-Не готово:
-- рантайм запуска гостевых приложений (`runtime/`): начат, не закончен;
-- модуль `:app` и UI (Compose, палитра из ТЗ), бэкапы, диагностика, release-сборка.
+Модуль `:app` (приложение, Jetpack Compose, тёмная тема по палитре ТЗ):
+- экраны: главный, пространства, менеджер приложений и карточка приложения, установка APK (с прогрессом),
+  монитор процессов/памяти, файловый менеджер, менеджер разрешений, Root-менеджер, бэкапы,
+  диагностика, журнал, настройки пространства;
+- оригинальный векторный логотип ATLANT SPACE и адаптивная иконка;
+- пул stub-компонентов (6 процессов `:vprocN`) объявлен в манифесте, R8/shrinkResources для release.
 
-Известная проблема: `:engine` сейчас **не собирается**. В `runtime/GuestLoadedApk.kt:43` используется скрытое поле
-`ApplicationInfo.credentialProtectedDataDir`, его нет в публичном SDK.
+Проверено в этой сборке: `:engine` компилируется, unit-тесты парсера проходят на реальном APK;
+`:app` собирается в debug и release, устанавливается и запускается на эмуляторе (API 33), движок
+инициализируется, UI рендерится и навигируется. **Release APK ≈ 1.2 МБ** (лимит ТЗ — ≤ 100 МБ).
+
+Требует проверки на реальном устройстве: сквозной запуск гостевого приложения (hook-слой полагается
+на приватные поля `ActivityThread`, которые различаются между версиями/OEM); нативный IO-redirector
+(`cpp/`) для приложений с хардкод-путями `/data/data/<pkg>` пока не реализован.
 
 ### Сборка
 
@@ -39,8 +53,11 @@ Android-проект на Gradle: платформа изолированных 
 ```bash
 cd atlant-space
 echo "sdk.dir=/path/to/android-sdk" > local.properties
-./gradlew :engine:assembleDebug
-./gradlew :engine:testDebugUnitTest -Datlant.testApk=/path/to/any.apk
+./gradlew :engine:testDebugUnitTest -Datlant.testApk=/path/to/any.apk   # тесты парсера
+./gradlew :app:assembleDebug                                            # debug APK приложения
+./gradlew :app:assembleRelease                                          # release APK (R8), ≤100 МБ
 ```
+
+При сетевых 429 от Maven Central помогает зеркало Google в `~/.gradle/init.d/` (см. HANDOFF).
 
 Версии: Gradle 8.14.3 (wrapper в репозитории), AGP 8.11.1, Kotlin 2.2.0, compileSdk 36, minSdk 26.

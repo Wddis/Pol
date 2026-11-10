@@ -38,13 +38,11 @@ object GuestLoadedApk {
         ai.className = g.manifest.applicationClass
         ai.flags = ApplicationInfo.FLAG_HAS_CODE or ApplicationInfo.FLAG_ALLOW_BACKUP
         if (Build.VERSION.SDK_INT >= 24) {
-            Reflect.quietly {
-                ai.deviceProtectedDataDir = g.dataDir
-                ai.credentialProtectedDataDir = g.dataDir
-            }
-        }
-        Reflect.quietly {
-            ai.javaClass.getField("deviceStorageDataDir")?.let { /* legacy field, ignore */ }
+            // deviceProtectedDataDir / credentialProtectedDataDir are hidden fields, absent from
+            // the public SDK. Set them reflectively so the guest's protected-storage paths also
+            // point inside the space instead of leaking to the host's real data directory.
+            Reflect.quietly { Reflect.set(ai, "deviceProtectedDataDir", g.dataDir) }
+            Reflect.quietly { Reflect.set(ai, "credentialProtectedDataDir", g.dataDir) }
         }
         return ai
     }
