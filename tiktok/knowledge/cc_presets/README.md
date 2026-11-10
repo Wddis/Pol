@@ -1,5 +1,10 @@
 # Готовые ЦК из урока (папка «готовая ЦК / Edit_CC»)
 
+> **Действующий способ — статичные ЦК:** `effectcraft/cc/apply_cc.py` → `cc("night", layer="$grade")`.
+> Набор эффектов каждого ЦК заморожен в `effectcraft/cc/static/`, эталон вида — `reference/fury_grid.jpg` и
+> `reference/scofield_grid.jpg`. Всё, что ниже про `cc_steps` и калибровку по кадру, — **старый способ**
+> (другая картинка), оставлен для справки.
+
 Пять пресетов автора урока для After Effects: `ffx/Bright CC.ffx`, `Dusky CC.ffx`, `Night CC.ffx`,
 `Raspberry haze CC.ffx`, `Two sharp CC.ffx` (в оригинале имя `Bright СС.ffx` было с кириллической «СС»).
 В AE они требуют плагинов **Sapphire (S_Sharpen, S_Glow)**, **BCC (Unsharp Mask, Fast Film Glow)**, **Magic Bullet Looks**.

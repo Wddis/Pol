@@ -1,0 +1,32 @@
+{
+ "bright": {
+  "effects": 21,
+  "file": "bright.json",
+  "sha256": "8ffd55f50aed52b9dee5ad7444124939fe29b2803970a4f41174fb2b7c9b518a",
+  "source": "Bright CC.ffx"
+ },
+ "dusky": {
+  "effects": 17,
+  "file": "dusky.json",
+  "sha256": "41bc2c16c0c504129b65fd5350e281a5c9fbd75abad2bd678187cfbcb1a47650",
+  "source": "Dusky CC.ffx"
+ },
+ "night": {
+  "effects": 20,
+  "file": "night.json",
+  "sha256": "1bccbb6faac2ed30b0226fdb99fbcfc882831fe6580176d24e4e7ac3f8a22e67",
+  "source": "Night CC.ffx"
+ },
+ "raspberry_haze": {
+  "effects": 31,
+  "file": "raspberry_haze.json",
+  "sha256": "3f9ec76d9efc81a1f22e64bf80924fe74ec9a38b703aeea93314bface50f63e6",
+  "source": "Raspberry haze CC.ffx"
+ },
+ "two_sharp": {
+  "effects": 48,
+  "file": "two_sharp.json",
+  "sha256": "77da132e28ebbb55191d46e0d5d9e744ac848ef359d18288a41875254bda0645",
+  "source": "Two sharp CC.ffx"
+ }
+}

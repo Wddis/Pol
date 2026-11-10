@@ -1,0 +1,886 @@
+{
+ "cc": "night",
+ "effects": 20,
+ "expect": [
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen · Unsharp Mask",
+   "path": "effects/#1"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Small Detail Size",
+   "path": "effects/#2"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#2/slider",
+   "type": "scalar",
+   "value": 3.399994
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 0.5 * thisComp.height / 1080)",
+   "layer": "$cur",
+   "path": "effects/#1/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Sharpen Amp",
+   "path": "effects/#3"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#3/slider",
+   "type": "scalar",
+   "value": 0.68
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Scale Tiny Details",
+   "path": "effects/#4"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#4/slider",
+   "type": "scalar",
+   "value": 3.0
+  },
+  {
+   "expr": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Tiny Details\")(\"Slider\") - 1) / 4)",
+   "layer": "$cur",
+   "path": "effects/#1/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen · Unsharp Mask 2",
+   "path": "effects/#5"
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 1 * thisComp.height / 1080)",
+   "layer": "$cur",
+   "path": "effects/#5/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Scale Small Details",
+   "path": "effects/#6"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#6/slider",
+   "type": "scalar",
+   "value": 2.0
+  },
+  {
+   "expr": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Small Details\")(\"Slider\") - 1) / 4)",
+   "layer": "$cur",
+   "path": "effects/#5/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen · Unsharp Mask 3",
+   "path": "effects/#7"
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 2 * thisComp.height / 1080)",
+   "layer": "$cur",
+   "path": "effects/#7/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Scale Medium Details",
+   "path": "effects/#8"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#8/slider",
+   "type": "scalar",
+   "value": 1.0
+  },
+  {
+   "expr": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Medium Details\")(\"Slider\") - 1) / 4)",
+   "layer": "$cur",
+   "path": "effects/#7/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen · Unsharp Mask 4",
+   "path": "effects/#9"
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 4 * thisComp.height / 1080)",
+   "layer": "$cur",
+   "path": "effects/#9/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Scale Large Details",
+   "path": "effects/#10"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#10/slider",
+   "type": "scalar",
+   "value": 2.0
+  },
+  {
+   "expr": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Large Details\")(\"Slider\") - 1) / 4)",
+   "layer": "$cur",
+   "path": "effects/#9/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask · Unsharp Mask",
+   "path": "effects/#11"
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Amount",
+   "path": "effects/#12"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#12/slider",
+   "type": "scalar",
+   "value": 8.0
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Mix with Original",
+   "path": "effects/#13"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#13/slider",
+   "type": "scalar",
+   "value": 0.0
+  },
+  {
+   "expr": "effect(\"BCC Unsharp Mask › Amount\")(\"Slider\") * (1 - (effect(\"BCC Unsharp Mask › Mix with Original\")(\"Slider\")) / 100)",
+   "layer": "$cur",
+   "path": "effects/#11/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Radius",
+   "path": "effects/#14"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#14/slider",
+   "type": "scalar",
+   "value": 30.0
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"BCC Unsharp Mask › Radius\")(\"Slider\"))",
+   "layer": "$cur",
+   "path": "effects/#11/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Threshold",
+   "path": "effects/#15"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#15/slider",
+   "type": "scalar",
+   "value": 0.0
+  },
+  {
+   "expr": "effect(\"BCC Unsharp Mask › Threshold\")(\"Slider\")",
+   "layer": "$cur",
+   "path": "effects/#11/threshold",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Point 1",
+   "path": "effects/#16"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/point",
+   "type": "vec2",
+   "value": {
+    "$frac": [
+     0.140625,
+     0.30092592592592593
+    ]
+   }
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Point 2",
+   "path": "effects/#17"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/point",
+   "type": "vec2",
+   "value": {
+    "$frac": [
+     0.2671875,
+     0.5717592592592593
+    ]
+   }
+  },
+  {
+   "layer": "$cur",
+   "name": "Looks 2 · Exposure",
+   "path": "effects/#18"
+  },
+  {
+   "layer": "$cur",
+   "name": "Looks 2 › Strength",
+   "path": "effects/#19"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#19/slider",
+   "type": "scalar",
+   "value": 100.0
+  },
+  {
+   "expr": "-0.5 * (effect(\"Looks 2 › Strength\")(\"Slider\")) / 100",
+   "layer": "$cur",
+   "path": "effects/#18/master/exposure",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "Looks 2 · Hue/Saturation",
+   "path": "effects/#20"
+  },
+  {
+   "expr": "0 * (effect(\"Looks 2 › Strength\")(\"Slider\")) / 100",
+   "layer": "$cur",
+   "path": "effects/#20/hue",
+   "type": "scalar"
+  },
+  {
+   "expr": "clamp((106 - 100) * (effect(\"Looks 2 › Strength\")(\"Slider\")) / 100, -100, 100)",
+   "layer": "$cur",
+   "path": "effects/#20/saturation",
+   "type": "scalar"
+  }
+ ],
+ "ledger": {
+  "approx": 13,
+  "loss": 11,
+  "ok": 104
+ },
+ "source": "Night CC.ffx",
+ "source_sha256": "85b857a0b0923d4da3f65e7cd8c12251f3e4be5970fff2f4b3deb55f4c2f6e15",
+ "steps": [
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx1"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen · Unsharp Mask",
+    "prop": "$aefx1"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx2"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Small Detail Size",
+    "prop": "$aefx2"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#2/slider",
+    "value": 3.399994
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 0.5 * thisComp.height / 1080)",
+    "layer": "$cur",
+    "path": "effects/#1/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx3"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Sharpen Amp",
+    "prop": "$aefx3"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#3/slider",
+    "value": 0.68
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx4"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Scale Tiny Details",
+    "prop": "$aefx4"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#4/slider",
+    "value": 3.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Tiny Details\")(\"Slider\") - 1) / 4)",
+    "layer": "$cur",
+    "path": "effects/#1/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx5"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen · Unsharp Mask 2",
+    "prop": "$aefx5"
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 1 * thisComp.height / 1080)",
+    "layer": "$cur",
+    "path": "effects/#5/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx6"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Scale Small Details",
+    "prop": "$aefx6"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#6/slider",
+    "value": 2.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Small Details\")(\"Slider\") - 1) / 4)",
+    "layer": "$cur",
+    "path": "effects/#5/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx7"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen · Unsharp Mask 3",
+    "prop": "$aefx7"
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 2 * thisComp.height / 1080)",
+    "layer": "$cur",
+    "path": "effects/#7/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx8"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Scale Medium Details",
+    "prop": "$aefx8"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#8/slider",
+    "value": 1.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Medium Details\")(\"Slider\") - 1) / 4)",
+    "layer": "$cur",
+    "path": "effects/#7/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx9"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen · Unsharp Mask 4",
+    "prop": "$aefx9"
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 4 * thisComp.height / 1080)",
+    "layer": "$cur",
+    "path": "effects/#9/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx10"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Scale Large Details",
+    "prop": "$aefx10"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#10/slider",
+    "value": 2.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Large Details\")(\"Slider\") - 1) / 4)",
+    "layer": "$cur",
+    "path": "effects/#9/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx11"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask · Unsharp Mask",
+    "prop": "$aefx11"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx12"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Amount",
+    "prop": "$aefx12"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#12/slider",
+    "value": 8.0
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx13"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Mix with Original",
+    "prop": "$aefx13"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#13/slider",
+    "value": 0.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "effect(\"BCC Unsharp Mask › Amount\")(\"Slider\") * (1 - (effect(\"BCC Unsharp Mask › Mix with Original\")(\"Slider\")) / 100)",
+    "layer": "$cur",
+    "path": "effects/#11/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx14"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Radius",
+    "prop": "$aefx14"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#14/slider",
+    "value": 30.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"BCC Unsharp Mask › Radius\")(\"Slider\"))",
+    "layer": "$cur",
+    "path": "effects/#11/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx15"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Threshold",
+    "prop": "$aefx15"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#15/slider",
+    "value": 0.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "effect(\"BCC Unsharp Mask › Threshold\")(\"Slider\")",
+    "layer": "$cur",
+    "path": "effects/#11/threshold"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Point Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx16"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Point 1",
+    "prop": "$aefx16"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/point",
+    "value": {
+     "$frac": [
+      0.140625,
+      0.30092592592592593
+     ]
+    }
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Point Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx17"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Point 2",
+    "prop": "$aefx17"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/point",
+    "value": {
+     "$frac": [
+      0.2671875,
+      0.5717592592592593
+     ]
+    }
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Exposure",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx18"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "Looks 2 · Exposure",
+    "prop": "$aefx18"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx19"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "Looks 2 › Strength",
+    "prop": "$aefx19"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#19/slider",
+    "value": 100.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "-0.5 * (effect(\"Looks 2 › Strength\")(\"Slider\")) / 100",
+    "layer": "$cur",
+    "path": "effects/#18/master/exposure"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Hue/Saturation",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx20"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "Looks 2 · Hue/Saturation",
+    "prop": "$aefx20"
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "0 * (effect(\"Looks 2 › Strength\")(\"Slider\")) / 100",
+    "layer": "$cur",
+    "path": "effects/#20/hue"
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "clamp((106 - 100) * (effect(\"Looks 2 › Strength\")(\"Slider\")) / 100, -100, 100)",
+    "layer": "$cur",
+    "path": "effects/#20/saturation"
+   }
+  }
+ ]
+}

@@ -1,0 +1,1720 @@
+{
+ "cc": "dusky",
+ "effects": 17,
+ "expect": [
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen · Unsharp Mask",
+   "path": "effects/#1"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Small Detail Size",
+   "path": "effects/#2"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#2/slider",
+   "type": "scalar",
+   "value": 5.0
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 0.5 * thisComp.height / 1080)",
+   "layer": "$cur",
+   "path": "effects/#1/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Sharpen Amp",
+   "path": "effects/#3"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#3/slider",
+   "type": "scalar",
+   "value": 0.5
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Scale Tiny Details",
+   "path": "effects/#4"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#4/slider",
+   "type": "scalar",
+   "value": 2.5
+  },
+  {
+   "expr": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Tiny Details\")(\"Slider\") - 1) / 4)",
+   "layer": "$cur",
+   "path": "effects/#1/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen · Unsharp Mask 2",
+   "path": "effects/#5"
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 1 * thisComp.height / 1080)",
+   "layer": "$cur",
+   "path": "effects/#5/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Scale Small Details",
+   "path": "effects/#6"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#6/slider",
+   "type": "scalar",
+   "value": 2.0
+  },
+  {
+   "expr": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Small Details\")(\"Slider\") - 1) / 4)",
+   "layer": "$cur",
+   "path": "effects/#5/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen · Unsharp Mask 3",
+   "path": "effects/#7"
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 2 * thisComp.height / 1080)",
+   "layer": "$cur",
+   "path": "effects/#7/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Scale Medium Details",
+   "path": "effects/#8"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#8/slider",
+   "type": "scalar",
+   "value": 1.5
+  },
+  {
+   "expr": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Medium Details\")(\"Slider\") - 1) / 4)",
+   "layer": "$cur",
+   "path": "effects/#7/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen · Unsharp Mask 4",
+   "path": "effects/#9"
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 4 * thisComp.height / 1080)",
+   "layer": "$cur",
+   "path": "effects/#9/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "S_Sharpen › Scale Large Details",
+   "path": "effects/#10"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#10/slider",
+   "type": "scalar",
+   "value": 3.0
+  },
+  {
+   "expr": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Large Details\")(\"Slider\") - 1) / 4)",
+   "layer": "$cur",
+   "path": "effects/#9/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask · Unsharp Mask",
+   "path": "effects/#11"
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Amount",
+   "path": "effects/#12"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#12/slider",
+   "type": "scalar",
+   "value": 12.0
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Mix with Original",
+   "path": "effects/#13"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#13/slider",
+   "type": "scalar",
+   "value": 0.0
+  },
+  {
+   "expr": "effect(\"BCC Unsharp Mask › Amount\")(\"Slider\") * (1 - (effect(\"BCC Unsharp Mask › Mix with Original\")(\"Slider\")) / 100)",
+   "layer": "$cur",
+   "path": "effects/#11/amount",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Radius",
+   "path": "effects/#14"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#14/slider",
+   "type": "scalar",
+   "value": 15.0
+  },
+  {
+   "expr": "Math.max(0.1, effect(\"BCC Unsharp Mask › Radius\")(\"Slider\"))",
+   "layer": "$cur",
+   "path": "effects/#11/radius",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "BCC Unsharp Mask › Threshold",
+   "path": "effects/#15"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#15/slider",
+   "type": "scalar",
+   "value": 0.0
+  },
+  {
+   "expr": "effect(\"BCC Unsharp Mask › Threshold\")(\"Slider\")",
+   "layer": "$cur",
+   "path": "effects/#11/threshold",
+   "type": "scalar"
+  },
+  {
+   "layer": "$cur",
+   "name": "4-Color Gradient",
+   "path": "effects/#16"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/positionsColors/point1",
+   "type": "vec2",
+   "value": {
+    "$frac": [
+     0.1,
+     0.1
+    ]
+   }
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/positionsColors/color1",
+   "type": "color",
+   "value": [
+    0.0,
+    0.564706,
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/positionsColors/point2",
+   "type": "vec2",
+   "value": {
+    "$frac": [
+     0.9,
+     0.1
+    ]
+   }
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/positionsColors/color2",
+   "type": "color",
+   "value": [
+    0.0,
+    0.564706,
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/positionsColors/point3",
+   "type": "vec2",
+   "value": {
+    "$frac": [
+     0.1,
+     0.9
+    ]
+   }
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/positionsColors/color3",
+   "type": "color",
+   "value": [
+    0.0,
+    0.564706,
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/positionsColors/point4",
+   "type": "vec2",
+   "value": {
+    "$frac": [
+     0.9,
+     0.9
+    ]
+   }
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/positionsColors/color4",
+   "type": "color",
+   "value": [
+    0.0,
+    0.564706,
+    1.0,
+    1.0
+   ]
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/blend",
+   "type": "scalar",
+   "value": 100.0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/jitter",
+   "type": "scalar",
+   "value": 0.0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/opacity",
+   "type": "scalar",
+   "value": 8.0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#16/blendingMode",
+   "type": "enum",
+   "value": 5
+  },
+  {
+   "layer": "$cur",
+   "name": "Hue/Saturation",
+   "path": "effects/#17"
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/hue",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/saturation",
+   "type": "scalar",
+   "value": 10
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/lightness",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/redsRangeStart",
+   "type": "scalar",
+   "value": -15
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/redsRangeEnd",
+   "type": "scalar",
+   "value": 15
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/redsStartFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/redsEndFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/redsHue",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/redsSaturation",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/redsLightness",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/yellowsRangeStart",
+   "type": "scalar",
+   "value": 45
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/yellowsRangeEnd",
+   "type": "scalar",
+   "value": 75
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/yellowsStartFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/yellowsEndFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/yellowsHue",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/yellowsSaturation",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/yellowsLightness",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/greensRangeStart",
+   "type": "scalar",
+   "value": 105
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/greensRangeEnd",
+   "type": "scalar",
+   "value": 135
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/greensStartFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/greensEndFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/greensHue",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/greensSaturation",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/greensLightness",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/cyansRangeStart",
+   "type": "scalar",
+   "value": 165
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/cyansRangeEnd",
+   "type": "scalar",
+   "value": 195
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/cyansStartFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/cyansEndFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/cyansHue",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/cyansSaturation",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/cyansLightness",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/bluesRangeStart",
+   "type": "scalar",
+   "value": 225
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/bluesRangeEnd",
+   "type": "scalar",
+   "value": 255
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/bluesStartFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/bluesEndFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/bluesHue",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/bluesSaturation",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/bluesLightness",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/magentasRangeStart",
+   "type": "scalar",
+   "value": 285
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/magentasRangeEnd",
+   "type": "scalar",
+   "value": 315
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/magentasStartFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/magentasEndFalloff",
+   "type": "scalar",
+   "value": 30
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/magentasHue",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/magentasSaturation",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/magentasLightness",
+   "type": "scalar",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/channelControl",
+   "type": "enum",
+   "value": 0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/colorize",
+   "type": "bool",
+   "value": false
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/colorizeHue",
+   "type": "scalar",
+   "value": 0.0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/colorizeSaturation",
+   "type": "scalar",
+   "value": 25.0
+  },
+  {
+   "clamped": false,
+   "layer": "$cur",
+   "path": "effects/#17/colorizeLightness",
+   "type": "scalar",
+   "value": 0.0
+  }
+ ],
+ "ledger": {
+  "approx": 10,
+  "loss": 7,
+  "ok": 127
+ },
+ "source": "Dusky CC.ffx",
+ "source_sha256": "db057198e4567119abd28ee72adef7cd4ac0aae303d97202dd3498f0c355d1b5",
+ "steps": [
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx1"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen · Unsharp Mask",
+    "prop": "$aefx1"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx2"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Small Detail Size",
+    "prop": "$aefx2"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#2/slider",
+    "value": 5.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 0.5 * thisComp.height / 1080)",
+    "layer": "$cur",
+    "path": "effects/#1/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx3"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Sharpen Amp",
+    "prop": "$aefx3"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#3/slider",
+    "value": 0.5
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx4"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Scale Tiny Details",
+    "prop": "$aefx4"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#4/slider",
+    "value": 2.5
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Tiny Details\")(\"Slider\") - 1) / 4)",
+    "layer": "$cur",
+    "path": "effects/#1/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx5"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen · Unsharp Mask 2",
+    "prop": "$aefx5"
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 1 * thisComp.height / 1080)",
+    "layer": "$cur",
+    "path": "effects/#5/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx6"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Scale Small Details",
+    "prop": "$aefx6"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#6/slider",
+    "value": 2.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Small Details\")(\"Slider\") - 1) / 4)",
+    "layer": "$cur",
+    "path": "effects/#5/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx7"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen · Unsharp Mask 3",
+    "prop": "$aefx7"
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 2 * thisComp.height / 1080)",
+    "layer": "$cur",
+    "path": "effects/#7/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx8"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Scale Medium Details",
+    "prop": "$aefx8"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#8/slider",
+    "value": 1.5
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Medium Details\")(\"Slider\") - 1) / 4)",
+    "layer": "$cur",
+    "path": "effects/#7/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx9"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen · Unsharp Mask 4",
+    "prop": "$aefx9"
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"S_Sharpen › Small Detail Size\")(\"Slider\") * 4 * thisComp.height / 1080)",
+    "layer": "$cur",
+    "path": "effects/#9/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx10"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "S_Sharpen › Scale Large Details",
+    "prop": "$aefx10"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#10/slider",
+    "value": 3.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0, 100 * effect(\"S_Sharpen › Sharpen Amp\")(\"Slider\") * (effect(\"S_Sharpen › Scale Large Details\")(\"Slider\") - 1) / 4)",
+    "layer": "$cur",
+    "path": "effects/#9/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Unsharp Mask",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx11"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask · Unsharp Mask",
+    "prop": "$aefx11"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx12"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Amount",
+    "prop": "$aefx12"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#12/slider",
+    "value": 12.0
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx13"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Mix with Original",
+    "prop": "$aefx13"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#13/slider",
+    "value": 0.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "effect(\"BCC Unsharp Mask › Amount\")(\"Slider\") * (1 - (effect(\"BCC Unsharp Mask › Mix with Original\")(\"Slider\")) / 100)",
+    "layer": "$cur",
+    "path": "effects/#11/amount"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx14"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Radius",
+    "prop": "$aefx14"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#14/slider",
+    "value": 15.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "Math.max(0.1, effect(\"BCC Unsharp Mask › Radius\")(\"Slider\"))",
+    "layer": "$cur",
+    "path": "effects/#11/radius"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Slider Control",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx15"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "BCC Unsharp Mask › Threshold",
+    "prop": "$aefx15"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#15/slider",
+    "value": 0.0
+   }
+  },
+  {
+   "c": "prop.setExpression",
+   "p": {
+    "expression": "effect(\"BCC Unsharp Mask › Threshold\")(\"Slider\")",
+    "layer": "$cur",
+    "path": "effects/#11/threshold"
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "4-Color Gradient",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx16"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "4-Color Gradient",
+    "prop": "$aefx16"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/positionsColors/point1",
+    "value": {
+     "$frac": [
+      0.1,
+      0.1
+     ]
+    }
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/positionsColors/color1",
+    "value": [
+     0.0,
+     0.564706,
+     1.0,
+     1.0
+    ]
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/positionsColors/point2",
+    "value": {
+     "$frac": [
+      0.9,
+      0.1
+     ]
+    }
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/positionsColors/color2",
+    "value": [
+     0.0,
+     0.564706,
+     1.0,
+     1.0
+    ]
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/positionsColors/point3",
+    "value": {
+     "$frac": [
+      0.1,
+      0.9
+     ]
+    }
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/positionsColors/color3",
+    "value": [
+     0.0,
+     0.564706,
+     1.0,
+     1.0
+    ]
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/positionsColors/point4",
+    "value": {
+     "$frac": [
+      0.9,
+      0.9
+     ]
+    }
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/positionsColors/color4",
+    "value": [
+     0.0,
+     0.564706,
+     1.0,
+     1.0
+    ]
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/blend",
+    "value": 100.0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/jitter",
+    "value": 0.0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/opacity",
+    "value": 8.0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#16/blendingMode",
+    "value": 5
+   }
+  },
+  {
+   "c": "effect.apply",
+   "p": {
+    "effect": "Hue/Saturation",
+    "layers": [
+     "$cur"
+    ],
+    "save": "aefx17"
+   }
+  },
+  {
+   "c": "prop.renameGroup",
+   "p": {
+    "layer": "$cur",
+    "name": "Hue/Saturation",
+    "prop": "$aefx17"
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/hue",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/saturation",
+    "value": 10
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/lightness",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/redsRangeStart",
+    "value": -15
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/redsRangeEnd",
+    "value": 15
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/redsStartFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/redsEndFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/redsHue",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/redsSaturation",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/redsLightness",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/yellowsRangeStart",
+    "value": 45
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/yellowsRangeEnd",
+    "value": 75
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/yellowsStartFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/yellowsEndFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/yellowsHue",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/yellowsSaturation",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/yellowsLightness",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/greensRangeStart",
+    "value": 105
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/greensRangeEnd",
+    "value": 135
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/greensStartFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/greensEndFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/greensHue",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/greensSaturation",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/greensLightness",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/cyansRangeStart",
+    "value": 165
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/cyansRangeEnd",
+    "value": 195
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/cyansStartFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/cyansEndFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/cyansHue",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/cyansSaturation",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/cyansLightness",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/bluesRangeStart",
+    "value": 225
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/bluesRangeEnd",
+    "value": 255
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/bluesStartFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/bluesEndFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/bluesHue",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/bluesSaturation",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/bluesLightness",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/magentasRangeStart",
+    "value": 285
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/magentasRangeEnd",
+    "value": 315
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/magentasStartFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/magentasEndFalloff",
+    "value": 30
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/magentasHue",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/magentasSaturation",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/magentasLightness",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/channelControl",
+    "value": 0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/colorize",
+    "value": false
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/colorizeHue",
+    "value": 0.0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/colorizeSaturation",
+    "value": 25.0
+   }
+  },
+  {
+   "c": "prop.set",
+   "p": {
+    "layer": "$cur",
+    "path": "effects/#17/colorizeLightness",
+    "value": 0.0
+   }
+  }
+ ]
+}

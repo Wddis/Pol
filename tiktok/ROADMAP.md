@@ -20,8 +20,8 @@
 
 **База знаний уже собрана — читать в первую очередь: `knowledge/README.md`.**
 - `knowledge/tutorial_ae/INSTRUCTION.md` — инструкция по эдиту из урока (AE) + перевод каждого шага в EffectCraft;
-- `knowledge/cc_presets/README.md` — 5 готовых ЦК (Bright, Dusky, Night, Raspberry haze, Two sharp),
-  применяются одной строкой: `cc_steps("night", layer="$grade")` из `effectcraft/cc/cc_steps.py`;
+- 5 готовых ЦК (Bright, Dusky, Night, Raspberry haze, Two sharp) — статичные, одной строкой:
+  `cc("night", layer="$grade")` из `effectcraft/cc/apply_cc.py` (раздел 6, «ЦК — статичные»);
 - `knowledge/reference_edits/ANALYSIS.md` — общая формула 4 эдитов людей (диалог с пословными субтитрами →
   вспышка → склейки на каждый бит → «EDITED BY» аутро).
 Повторно смотреть урок/эдиты не нужно — всё извлечено туда.
@@ -99,7 +99,7 @@ ffmpeg -framerate 30 -i frames/%05d.png -ss <старт_в_треке> -i music.
 13. Пример рабочего грейда (тёплый, из эдита «Scofield»): Lumetri (temperature 55, tint 14, contrast 30, highlights −20,
     shadows −10, blacks −25, sharpen 40, vignette −1.6) + Photo Filter 30 + Curves + Glow (thr 86, r 30, i 0.3) + Add Grain 0.4.
 14. **LUT (.cube) не применяются**: `Apply Color LUT` и Lumetri `inputLut=Custom` с путём `/file.cube` молча игнорируются
-    (проверено LUT-инверсией). Файлы, добавленные драйвером, лежат в корне ФС (`/name`). ЦК — через `cc/cc_steps.py`.
+    (проверено LUT-инверсией). Файлы, добавленные драйвером, лежат в корне ФС (`/name`). ЦК — через `cc/apply_cc.py`.
 15. Формулы, проверенные рендером: Unsharp Mask = `x + amount/100·(x − gauss(σ=radius px))`; Levels по каналам (`redInBlack`…)
     и Channel Mixer (`rr`…`bc`, целые %) — как в AE.
 16. **`prop.set` молча обрезает значение** по диапазону параметра и возвращает обрезанное (`runner.js` это ловит → `clamped`).
@@ -138,20 +138,32 @@ S_Sharpen / S_Glow / BCC Unsharp / BCC Film Glow. Получив настоящ�
 **Что подтянуть дальше:** декодер Curves (нужен `.ffx` с кривыми); инструменты Magic Bullet Looks;
 скриншоты тех же эффектов из AE, чтобы откалибровать формулы эмуляций.
 
-### Как просить ЦК (названия, которые я понимаю)
+### ЦК — статичные, применяются одной командой (`effectcraft/cc/apply_cc.py`)
 
-| Скажи | Пресет (`knowledge/cc_presets/ffx/`) | Характер |
+Каждый ЦК заморожен в `effectcraft/cc/static/<имя>.json` — готовый набор эффектов и настроек.
+**Применять только так, ничего не пересчитывая и не подбирая:**
+```python
+import sys; sys.path.insert(0, "tiktok/effectcraft/cc")
+from apply_cc import cc
+X("layer.newAdjustment", name="GRADE", save="grade")
+steps += cc("night", layer="$grade")       # fx_start=N, если на слое уже есть эффекты
+```
+
+| Пользователь говорит | Имя | Характер |
 |---|---|---|
-| «брайт», «bright», «светлый» | `Bright CC.ffx` | светлый, чистый, холодноватый фон, сильная резкость |
-| «даски», «dusky», «сумеречный» | `Dusky CC.ffx` | приглушённый, голубые тени, диффузия |
-| «найт», «night», «тёмный» | `Night CC.ffx` | тёмный, контрастный, тёплые тени |
-| «малиновый», «raspberry», «хейз» | `Raspberry haze CC.ffx` | малиновая дымка, свечение, приподнятые чёрные |
-| «ту шарп», «two sharp», «резкий» | `Two sharp CC.ffx` | очень резкий, тёплый/красноватый |
+| «брайт», «bright», «светлый» | `bright` | светлый, чистый, сильная резкость |
+| «даски», «dusky», «сумеречный» | `dusky` | приглушённый, голубые тени, диффузия |
+| «найт», «night», «тёмный» | `night` | самый мягкий, цвет почти не меняет |
+| «малиновый», «raspberry», «хейз» | `raspberry_haze` | дымка, свечение, приподнятые чёрные |
+| «ту шарп», «two sharp», «резкий» | `two_sharp` | очень резкий, тёплый/красноватый |
 
-Два способа применения: **перенос из .ffx** — `python3 aefx_cli.py convert "<пресет>.ffx" out/ --fx-start N`
-(параметры плагинов живые, по отчёту видно, что не перенеслось) или **подгонка по кадру** —
-`cc_steps("night", …)` из `cc/cc_steps.py`. Если не сказано иначе — перенос из .ffx.
-Пример всех пяти на кадре из «Fury»: `knowledge/cc_presets/aefx_fury_grid.jpg`.
+- Эталон, как ЦК обязаны выглядеть: `knowledge/cc_presets/reference/fury_grid.jpg`, `scofield_grid.jpg`
+  (исходные кадры лежат рядом). Повторный рендер того же кадра совпадает пиксель в пиксель.
+- Проверить ЦК на любом кадре: `python3 cc/preview_cc.py <кадр> <out.jpg>`.
+- `python3 cc/freeze.py --check` — файлы ЦК не менялись. **`freeze.py` без флага не запускать** и `static/` руками
+  не править, если пользователь прямо не попросил изменить сам ЦК (тогда обновить и эталонные сетки).
+- `cc/cc_steps.py`, `cc_presets.json`, `luts/` и картинки `fury_cc_comparison.jpg` / `scofield_cc_comparison.jpg` —
+  **старая подгонка по кадру, выглядит иначе. Не использовать**, если пользователь прямо не попросит «старый ЦК».
 
 ## 7. Что уже сделано (история)
 
@@ -168,7 +180,7 @@ S_Sharpen / S_Glow / BCC Unsharp / BCC Film Glow. Получив настоящ�
 3. Биты своего трека → `beats.json`; найти тихие места и дроп (RMS по 0.25 c).
 4. Scene-detect нарезки → лист шотов с кадрами → выбрать планы и кроп (pos 0..1) под квадрат.
 5. Сгенерировать `steps` (по образцу `build_project.py`/`showcase.py`) по формуле из `knowledge/` (анимации
-   урока: velocity 200→30→200 %, зум 68→100→68 %, Exposure 0.4→−1, тряска 40→0 за 6 кадров; ЦК — `cc_steps`;
+   урока: velocity 200→30→200 %, зум 68→100→68 %, Exposure 0.4→−1, тряска 40→0 за 6 кадров; ЦК — `cc("имя")` из `cc/apply_cc.py`;
    субтитры по словам — тайминги речи через ElevenLabs Scribe), проверить 8–12 стоп-кадров.
 6. Покадровый рендер в 2 потока → ffmpeg + музыка → прислать mp4 (и раскадровку, если надо).
 7. Закоммитить скрипты (медиа — нет).
