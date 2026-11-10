@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "fastclip": {
+      "type": "http",
+      "url": "https://api.fastclip.it/mcp"
+    }
+  }
+}

@@ -9,3 +9,4 @@
 
 Секреты в репозиторий не класть (он публичный): ключи Telegram API, `session.txt`, ключ Buffer.
 Ключ Buffer хранится как секрет окружения для `api.buffer.com`.
+Токен FastClip — секрет окружения для `api.fastclip.it`; сам сервер — в `.mcp.json`.
