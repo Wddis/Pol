@@ -76,6 +76,17 @@
    поста в «пачке» — посты нужно публиковать с паузой 10–15 с. Если ветки нет — перевыложить пост
    (тот же document по id, та же подпись, `silent`), дождаться ветки, затем удалить старый и поправить ссылку в навигаторе.
 
+## 4a. Быстрый путь (скрипты)
+
+1. Описать новые посты в `new.json` (формат — в шапке `style_posts.js`).
+2. **Пересланные посты** (с плашкой «Переслано из…») редактировать нельзя →
+   `node tg.js run repost_styled.js` — перевыкладывает их как наши (тот же файл, наша подпись, без звука),
+   ждёт ветку комментариев, удаляет оригинал и обновляет id в `new.json`.
+3. `node tg.js run style_posts.js` — подписи (для своих постов), навигатор в закрепе, запись в `posts.json`.
+4. `python3 make_covers.py <ids>` → проверить картинки → `ONLY=<ids> node tg.js run apply_covers.js`.
+
+Закреп ограничен 4096 символами — следить за длиной навигатора (скрипт печатает её).
+
 ## 5. Технические данные
 
 - Канал: @kinovibetwitch, группа обсуждения: «КиноВайб | Обсуждение фильмов со стримерами» (в неё никого не приглашать).
@@ -93,3 +104,7 @@
 | [poisonika](https://www.twitch.tv/poisonika) | #poisonika |
 | [lizabaktt](https://www.twitch.tv/lizabaktt) | #lizabaktt |
 | [GAECHKATM](https://www.twitch.tv/gaechkatm) | #gaechkatm |
+| [zubarefff](https://www.twitch.tv/zubarefff) | #zubarefff |
+| [AhriNyan](https://www.twitch.tv/ahrinyan) | #ahrinyan |
+| [GUACAMOLEMOLLY](https://www.twitch.tv/guacamolemolly) | #guacamolemolly |
+| [bratishkinoff](https://www.twitch.tv/bratishkinoff) | #bratishkinoff |
