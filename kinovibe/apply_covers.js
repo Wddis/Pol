@@ -13,6 +13,7 @@ module.exports = async (client, Api) => {
       const path = `covers/${mid}.jpg`;
       const m = (await client.getMessages(ch, { ids: [mid] }))[0];
       if (!m || !m.media || !m.media.document) { console.log(mid, "SKIP: no video"); continue; }
+      if (m.media.videoCover && !process.env.FORCE) { console.log(mid, "already has cover"); continue; }
       const up = await client.uploadFile({ file: new CustomFile(`cover${mid}.jpg`, fs.statSync(path).size, path), workers: 1 });
       const ph = (await client.invoke(new Api.messages.UploadMedia({ peer: ch, media: new Api.InputMediaUploadedPhoto({ file: up }) }))).photo;
       const d = m.media.document;
@@ -21,10 +22,20 @@ module.exports = async (client, Api) => {
         videoCover: new Api.InputPhoto({ id: ph.id, accessHash: ph.accessHash, fileReference: ph.fileReference }),
         ...(i === 0 && p.start ? { videoTimestamp: p.start } : {}),
       });
-      await client.invoke(new Api.messages.EditMessage({ peer: ch, id: mid, media, message: m.message || "", entities: m.entities || [] }));
+      for (let attempt = 0; ; attempt++) {
+        try {
+          await client.invoke(new Api.messages.EditMessage({ peer: ch, id: mid, media, message: m.message || "", entities: m.entities || [] }));
+          break;
+        } catch (e) {
+          const wait = e.seconds || (/FLOOD/.test(e.errorMessage || e.message) ? 60 : 0);
+          if (!wait || attempt > 5) throw e;
+          console.log(mid, `flood wait ${wait}s`);
+          await sleep((wait + 2) * 1000);
+        }
+      }
       const chk = (await client.getMessages(ch, { ids: [mid] }))[0];
       console.log(mid, "cover:", !!chk.media.videoCover, "start:", chk.media.videoTimestamp || "-", "caption kept:", (chk.message || "") === (m.message || ""));
-      await sleep(1500);
+      await sleep(3000);
     }
   }
 };
