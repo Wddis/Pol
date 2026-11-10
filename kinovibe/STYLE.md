@@ -66,6 +66,7 @@
 2. **Стример**: найти источник (каналы папки Twitch — совпадение по `document.id` или названию),
    проверить ник через Twitch GQL (`user(login:"…"){displayName followers{totalCount}}`).
    Не угадывать — если не подтверждён, спросить владельца.
+   Канал @twitch_vods публикует журнал стримов с заголовками — там видно название и год фильма.
 3. **Рейтинги**: Kinopoisk id через Wikidata (P2603 по IMDb id P345 или по русскому названию),
    затем `https://rating.kinopoisk.ru/<kp_id>.xml` → kp_rating и imdb_rating. Длительность — Wikidata P2047.
 4. Отредактировать подпись по шаблону (§1).
@@ -90,3 +91,5 @@
 | [skywhywalker](https://www.twitch.tv/skywhywalker) | #skywhywalker |
 | [Jeens](https://www.twitch.tv/jeens) | #jeens |
 | [poisonika](https://www.twitch.tv/poisonika) | #poisonika |
+| [lizabaktt](https://www.twitch.tv/lizabaktt) | #lizabaktt |
+| [GAECHKATM](https://www.twitch.tv/gaechkatm) | #gaechkatm |
