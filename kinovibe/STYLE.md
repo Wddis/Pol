@@ -108,3 +108,12 @@
 | [AhriNyan](https://www.twitch.tv/ahrinyan) | #ahrinyan |
 | [GUACAMOLEMOLLY](https://www.twitch.tv/guacamolemolly) | #guacamolemolly |
 | [bratishkinoff](https://www.twitch.tv/bratishkinoff) | #bratishkinoff |
+| [Fruktozka](https://www.twitch.tv/fruktozka) | #fruktozka |
+
+## 7. Несколько фильмов в одном посте
+
+Если в посте/альбоме несколько **разных** фильмов (например, «Тачки 1–3») — каждый фильм отдельным постом
+со своей подписью и обложкой. Части **одного** фильма остаются одним альбомом.
+Чтобы сохранить порядок в ленте, перевыкладываются все посты начиная с первого разделяемого:
+`REPOST_FROM=<id> node tg.js run repost_styled.js` (каждому фильму — свой элемент в new.json с id его видео).
+У франшиз — общий хэштег серии в последней строке: `#человекпаук`, `#тачки`, `#достатьножи`, `#великийуравнитель`…
