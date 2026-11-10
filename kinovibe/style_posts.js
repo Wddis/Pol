@@ -1,5 +1,5 @@
-// Restyle channel posts from a JSON spec (default new.json), add them to the pinned navigator
-// and append them to posts.json (for covers).  Run:  SPEC=new.json node tg.js run style_posts.js
+// Restyle channel posts from a JSON spec (default new.json) and append them to posts.json (for covers).
+// Streamer catalogs + pinned post are rebuilt separately by build_catalogs.js.  Run:  SPEC=new.json node tg.js run style_posts.js
 //
 // Spec item: {
 //   "ids": [72,73,74], "emoji": "🧬", "title": "…", "year": 2006,
@@ -54,23 +54,7 @@ module.exports = async (client, Api) => {
       console.log("caption already ok:", p.ids[0], p.title);
     }
   }
-  // navigator
-  const pin = (await client.getMessages(ch, { ids: [NAV_PIN] }))[0];
-  let lines = HTMLParser.unparse(pin.message, pin.entities).split("\n");
-  for (const p of spec) {
-    const link = `• <a href="https://t.me/kinovibetwitch/${p.ids[0]}">${p.title} (${p.year})</a>`;
-    if (lines.some((l) => l.includes(`kinovibetwitch/${p.ids[0]}"`))) continue;
-    const head = lines.findIndex((l) => l.includes(`twitch.tv/${p.login}"`));
-    if (head >= 0) {
-      let end = head + 1;
-      while (end < lines.length && lines[end].startsWith("•")) end++;
-      lines.splice(end, 0, link);
-    } else {
-      const nav = lines.findIndex((l) => l.includes("Как найти нужное"));
-      lines.splice(nav - 1, 0, "", `🎙 <a href="https://www.twitch.tv/${p.login}"><b>${p.display}</b></a> #${p.login.toLowerCase()}`, link);
-    }
-  }
-  await withFlood(() => client.editMessage(ch, { message: NAV_PIN, text: lines.join("\n"), parseMode: "html", linkPreview: false }));
+  // navigator: catalogs per streamer are rebuilt by build_catalogs.js (run it after this script)
   // registry for covers
   const reg = JSON.parse(fs.readFileSync("posts.json", "utf8"));
   const have = new Set(reg.flatMap((x) => x.ids));
@@ -82,10 +66,6 @@ module.exports = async (client, Api) => {
     reg.push(r);
   }
   fs.writeFileSync("posts.json", "[\n" + reg.map((x) => "  " + JSON.stringify(x)).join(",\n") + "\n]\n");
-  // verify
-  const pm = (await client.getMessages(ch, { ids: [NAV_PIN] }))[0];
-  const live = new Set((await client.getMessages(ch, { limit: 200 })).map((m) => m.id));
-  const urls = pm.entities.filter((e) => e.url && e.url.includes("t.me/")).map((e) => Number(e.url.split("/").pop()));
-  console.log("navigator links:", urls.length, "broken:", urls.filter((u) => !live.has(u)), "pinned length:", pm.message.length);
+  console.log("done. Next: build_catalogs.js, make_covers.py, apply_covers.js");
 };
 module.exports.caption = caption;
