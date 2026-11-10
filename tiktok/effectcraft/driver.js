@@ -15,6 +15,9 @@ const fs = require('fs'), path = require('path');
     const f = decodeURIComponent(route.request().url().split('/__local/')[1]);
     route.fulfill({ body: fs.readFileSync(f), headers: { 'access-control-allow-origin': '*' } });
   });
+  // крупные результаты (съёмка aexact) пишутся на диск сразу, а не копятся в памяти страницы
+  fs.mkdirSync(outDir, { recursive: true });
+  await p.exposeFunction('saveOutput', (name, b64) => fs.writeFileSync(path.join(outDir, path.basename(name)), Buffer.from(b64, 'base64')));
   if (cfg.frames) {
     const fd = abs(cfg.framesDir || 'frames'); fs.mkdirSync(fd, { recursive: true });
     await p.exposeFunction('saveFrame', (n, b64) => fs.writeFileSync(path.join(fd, String(n).padStart(5, '0') + '.png'), Buffer.from(b64, 'base64')));
