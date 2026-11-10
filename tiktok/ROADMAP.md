@@ -101,6 +101,11 @@ ffmpeg -framerate 30 -i frames/%05d.png -ss <старт_в_треке> -i music.
     (проверено LUT-инверсией). Файлы, добавленные драйвером, лежат в корне ФС (`/name`). ЦК — через `cc/cc_steps.py`.
 15. Формулы, проверенные рендером: Unsharp Mask = `x + amount/100·(x − gauss(σ=radius px))`; Levels по каналам (`redInBlack`…)
     и Channel Mixer (`rr`…`bc`, целые %) — как в AE.
+16. **Плавное слоумо 60 fps работает** (проверено замером): комп `frameRate:60` + `layer.enableTimeRemap` + ключи `timeRemap`
+    + `layer.frameBlending {mode:"pixelMotion"}` + `comp.setSwitch frameBlending true` → оптический поток, как Twixtor/AE Pixel Motion:
+    каждый кадр новый, шаг движения ровный, без двоения. `frameMix` — двоение и рывки, `off` — повтор кадров.
+    Покадровый рендер 60 fps: в конфиге `"frames": {"from":0, "to":N, "fps":60}`; сборка `ffmpeg -framerate 60`.
+    Тест: `knowledge/slowmo_60fps_test.mp4`. Ограничение: на сложном движении (руки, перекрытия) возможны артефакты потока.
 
 ## 6. Конвертер After Effects → EffectCraft (`effectcraft/aeconv/`)
 

@@ -24,7 +24,7 @@ if (cfg.frames) {
   // покадровый рендер через render.frame (Render Queue в 0.9.2 теряет анимацию ключей)
   const t0 = Date.now();
   for (let n = cfg.frames.from; n < cfg.frames.to; n++) {
-    const f = await ec.renderFrame({ comp: 'EDIT', time: n / 30 + 1e-4 });
+    const f = await ec.renderFrame({ comp: 'EDIT', time: n / (cfg.frames.fps || 30) + 1e-4 });
     await window.saveFrame(n, f.png);
   }
   log.push(['framesSec', (Date.now() - t0) / 1000, cfg.frames]);

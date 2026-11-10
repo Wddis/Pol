@@ -20,7 +20,7 @@
 
 | Что | Ключи (начало → середина → конец клипа) | Как в EffectCraft | Точность |
 |---|---|---|---|
-| Скорость (Twixtor Pro) | 200 % → 30 % → 200 %, Easy Ease (F9) + кривая автора: резкий провал в слоумо, плавный разгон | `layer.enableTimeRemap`; кривая скорости интегрируется в ключи `timeRemap` (по кадру), слоумо — `layer.frameBlending pixelMotion` (оптический поток) | ключи 1:1; плавность слоумо близка к Twixtor (без его настроек Motion Vectors) |
+| Скорость (Twixtor Pro) | 200 % → 30 % → 200 %, Easy Ease (F9) + кривая автора: резкий провал в слоумо, плавный разгон | `layer.enableTimeRemap`; кривая скорости интегрируется в ключи `timeRemap`; комп **60 fps** + `layer.frameBlending pixelMotion` (оптический поток) | ключи 1:1; **плавное слоумо 60 fps проверено замером** (каждый кадр новый, шаг ровный, без двоения — `tiktok/knowledge/slowmo_60fps_test.mp4`); на сложном движении поток может давать артефакты, Twixtor/Topaz чуть чище |
 | Зум (Sapphire S_BlurMoCurves, Z Dist) | 68 % → 100 % → 68 % от базового масштаба, F9 + плавный пик | `transform/scale` + `keys.easyEase` / `keys.setEase` (speed, influence) | 1:1 |
 | Затухание (Exposure) | 0.4 → −1, F9 | эффект **Exposure** (тот же, что в AE) | 1:1 |
 | Прозрачность | 0 в начале → 100 через 7 кадров; так же в конце | `transform/opacity` | 1:1 |
