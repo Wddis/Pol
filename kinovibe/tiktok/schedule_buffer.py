@@ -35,7 +35,8 @@ def post_input(service, p, due):
             "assets": [{"video": {"url": p["url"], "metadata": {"title": p["hook"][:100]}}}], "metadata": meta, "source": "kinovibe-claude"}
 
 
-services = [s for s in os.environ.get("SERVICES", "tiktok,youtube").split(",") if s]
+# YouTube paused 11.11.2026 (blocks film clips) — default TikTok only; SERVICES=tiktok,youtube to enable again
+services = [s for s in os.environ.get("SERVICES", "tiktok").split(",") if s]
 for p in json.load(open(sys.argv[1], encoding="utf-8")):
     due = (dt.datetime.strptime(p["due_msk"], "%Y-%m-%d %H:%M") - dt.timedelta(hours=3)).strftime("%Y-%m-%dT%H:%M:00Z")
     for s in services:
