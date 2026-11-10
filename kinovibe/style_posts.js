@@ -3,7 +3,7 @@
 //
 // Spec item: {
 //   "ids": [72,73,74], "emoji": "🧬", "title": "…", "year": 2006,
-//   "login": "zubarefff", "display": "zubarefff",
+//   "login": "zubarefff", "display": "zubarefff", "ft": [["fruktozka","Fruktozka"]]? (co-streamers),
 //   "date": "24.02.2024"?, "event": "Киногонка · сезон 5 · день 5"?, "eventTag": "#киногонка — сезон 5, день 5"?,
 //   "genres": ["фантастика","боевик"], "film": "1 ч 44 мин", "rec": "3 части (45 + 43 + 41 мин)",
 //   "start": "1:06:50"?, "imdb": "6.6", "kp": "7.3", "desc": "…", "tags": "#фильм", "age": "18+"?
@@ -30,6 +30,7 @@ function caption(p) {
     "",
     `🎙 Стример: <a href="https://www.twitch.tv/${p.login}"><b>${p.display}</b></a> #${p.login.toLowerCase()}`,
   ];
+  if (p.ft && p.ft.length) lines.push(`🤝 Вместе с: ${p.ft.map(([l, d]) => `<a href="https://www.twitch.tv/${l}"><b>${d}</b></a>`).join(", ")}`);
   if (p.eventTag) lines.push(`🏁 Ивент: ${p.eventTag}`);
   if (p.date) lines.push(`📅 Стрим: ${p.date}`);
   lines.push(`🎭 Жанр: ${p.genres.map((g) => "#" + g).join(" ")}`);

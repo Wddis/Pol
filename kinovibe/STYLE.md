@@ -110,6 +110,16 @@
 | [GUACAMOLEMOLLY](https://www.twitch.tv/guacamolemolly) | #guacamolemolly |
 | [bratishkinoff](https://www.twitch.tv/bratishkinoff) | #bratishkinoff |
 | [Fruktozka](https://www.twitch.tv/fruktozka) | #fruktozka |
+| [dasha228play](https://www.twitch.tv/dasha228play) | #dasha228play |
+| [ekatze007](https://www.twitch.tv/ekatze007) | #ekatze007 |
+| [korya_mc](https://www.twitch.tv/korya_mc) | #korya_mc |
+| [Danila_Gorilla](https://www.twitch.tv/danila_gorilla) | #danila_gorilla |
+| [by_Owl](https://www.twitch.tv/by_owl) | #by_owl |
+| [uraniumrr](https://www.twitch.tv/uraniumrr) | #uraniumrr |
+| [morphe_ya](https://www.twitch.tv/morphe_ya) | #morphe_ya |
+| [rostikfacekid](https://www.twitch.tv/rostikfacekid) | #rostikfacekid |
+| [dianarice](https://www.twitch.tv/dianarice) | #dianarice |
+| [morphilina](https://www.twitch.tv/morphilina) | #morphilina |
 
 ## 7. Несколько фильмов в одном посте
 
@@ -118,3 +128,10 @@
 Чтобы сохранить порядок в ленте, перевыкладываются все посты начиная с первого разделяемого:
 `REPOST_FROM=<id> node tg.js run repost_styled.js` (каждому фильму — свой элемент в new.json с id его видео).
 У франшиз — общий хэштег серии в последней строке: `#человекпаук`, `#тачки`, `#достатьножи`, `#великийуравнитель`…
+
+## 8. Совместные просмотры и мусор в исходных подписях
+
+- Несколько стримеров: основной — в строке «🎙 Стример», остальные — строка «🤝 Вместе с: …» (поле `ft` в new.json).
+- Из исходных подписей не переносить служебные пометки («Урезанное качество», «урезка», ссылки на чужие каналы).
+- Опечатки ников исправлять по Twitch (пример: «AhniNyan» → AhriNyan). Имя в файле может не совпадать со стримером
+  (источники переименовывают) — верить подписи источника, дату стрима брать из имени файла только если ник в нём совпадает.
