@@ -1,0 +1,9 @@
+node_modules/
+session.txt
+state.json
+state/
+*.png
+webapp_url*.txt
+*.log
+*.json
+!package.json

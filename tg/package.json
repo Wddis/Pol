@@ -1,0 +1,6 @@
+{
+  "name": "pol-tg",
+  "private": true,
+  "description": "Telegram user-account tooling for giveaway automation (GramJS over WebSocket)",
+  "dependencies": { "telegram": "^2.26.21", "global-agent": "^3.0.0", "qrcode": "^1.5.4" }
+}
