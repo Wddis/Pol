@@ -11,6 +11,18 @@
 const fs = require("fs");
 const { HTMLParser } = require("telegram/extensions/html");
 const NAV_PIN = 4;
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Retries a call when Telegram answers FLOOD_WAIT / FLOOD (waits as long as asked).
+async function withFlood(fn) {
+  for (let attempt = 0; ; attempt++) {
+    try { return await fn(); } catch (e) {
+      const wait = e.seconds || (/FLOOD/.test(e.errorMessage || e.message || "") ? 60 : 0);
+      if (!wait || attempt > 8) throw e;
+      console.log(`flood wait ${wait}s`);
+      await sleep((wait + 2) * 1000);
+    }
+  }
+}
 
 function caption(p) {
   const lines = [
@@ -34,7 +46,8 @@ module.exports = async (client, Api) => {
   const ch = await client.getEntity("kinovibetwitch");
   for (const p of spec) {
     try {
-      await client.editMessage(ch, { message: p.ids[0], text: caption(p), parseMode: "html", linkPreview: false });
+      await withFlood(() => client.editMessage(ch, { message: p.ids[0], text: caption(p), parseMode: "html", linkPreview: false }));
+      await sleep(2000);
       console.log("caption:", p.ids[0], p.title);
     } catch (e) {
       if (e.errorMessage !== "MESSAGE_NOT_MODIFIED") throw e;
@@ -57,7 +70,7 @@ module.exports = async (client, Api) => {
       lines.splice(nav - 1, 0, "", `🎙 <a href="https://www.twitch.tv/${p.login}"><b>${p.display}</b></a> #${p.login.toLowerCase()}`, link);
     }
   }
-  await client.editMessage(ch, { message: NAV_PIN, text: lines.join("\n"), parseMode: "html", linkPreview: false });
+  await withFlood(() => client.editMessage(ch, { message: NAV_PIN, text: lines.join("\n"), parseMode: "html", linkPreview: false }));
   // registry for covers
   const reg = JSON.parse(fs.readFileSync("posts.json", "utf8"));
   const have = new Set(reg.flatMap((x) => x.ids));
