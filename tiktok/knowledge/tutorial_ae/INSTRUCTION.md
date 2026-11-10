@@ -12,8 +12,8 @@
 |---|---|---|
 | 1 | Препродакшн | найти футаж (фильм/аниме в лучшем качестве или «сцен-пак») и музыку |
 | 2 | Проект и нарезка | композиция, маркеры по битам, нарезка клипов по маркерам, кадрирование, стабилизация, Topaz |
-| 3 | Анимации | Twixtor (скорость), BCC Curves/Scale (зум), Exposure (затухание), Twitch (тряска) |
-| 4 | Стилизация (ЦК) | шарпы (Sharpen + Unsharp Mask) → цвет (Magic Bullet Looks) + Flicker, готовые пресеты |
+| 3 | Анимации | Twixtor (скорость), Sapphire S_BlurMoCurves (зум с моушен-блюром), Exposure (затухание), Video Copilot Twitch (тряска) |
+| 4 | Стилизация (ЦК) | шарпы (Sharpen + Unsharp Mask) → цвет (Magic Bullet Looks) + Flicker (Sapphire S_Flicker), готовые пресеты |
 | 5 | Текст и финал | титры по словам героя, Fade Up, Bevel Alpha + Deep Glow + Drop Shadow, RSMB, рендер |
 
 ---
@@ -48,13 +48,15 @@
 
 ## 3. Анимации (на каждый клип, ключи копируются на все клипы)
 Клипы предварительно пре-компоновать (`Ctrl+Shift+C`, «Move all attributes»).
+Порядок эффектов на клипе (по панели Effect Controls): **Twixtor Pro → S_BlurMoCurves → Exposure → Twitch**, плюс Opacity.
+Подробно (ключи по кадрам, переходы, слои проекта, разбор итогового эдита) — `STRUCTURE.md`; полный текст урока — `TRANSCRIPT.md`, субтитры — `subtitles_ru.srt`.
 
 | Эффект | Ключи (начало → середина → конец клипа) | Кривая |
 |---|---|---|
 | **Twixtor Pro** (скорость) | Input Frame Rate = fps исходника; Speed **200% → 30% → 200%** | `F9` (Easy Ease) + Graph Editor: резкое падение скорости в слоумо в начале, плавный разгон к концу (кадр ~6:50, `frames/sheet_2`) |
-| **BCC Curves / Scale** (зум) | ≈ **0.68 → 1.0 → 0.68** (масштаб, т.е. отъезд-наезд-отъезд) | `F9` + кривая «как у автора» (плавный пик в середине) |
+| **S_BlurMoCurves** (Sapphire) → Z Dist (зум) | **0.68 → 1.0 → 0.68** (отъезд-наезд-отъезд; вместо него можно обычный Scale) | `F9` + кривая «как у автора» (плавный пик в середине) |
 | **Exposure** (затухание) | в начале **0.4**, в конце **−1** | `F9`; плюс Opacity: через **7 кадров** от начала — ключ, в начале **0**; так же в конце (вход/выход из черного) |
-| **Twitch** (тряска) | в начале **40**, через **6 кадров** **0**, так же в конце | удар-тряска на склейке |
+| **Twitch** (Video Copilot; Amount) (тряска) | в начале **40**, через **6 кадров** **0**, так же в конце | удар-тряска на склейке |
 
 Перенос: скопировать эффекты и ключи на другие клипы; `Shift` — сдвинуть ключи к началу клипа,
 `Alt`-растяжка — подогнать под длину клипа, не ломая кривые. Регулярно просматривать эдит и править сразу.
@@ -73,7 +75,7 @@
 Автор раздаёт 5 своих пресетов — они в `../cc_presets/` (Bright, Dusky, Night, Raspberry haze, Two sharp;
 для работы в AE нужны плагины Sapphire, BCC, Magic Bullet).
 
-В проекте: (продублировать клипы, если нужно) → `Ctrl+Alt+Y` ×2 → два **adjustment layer**: для ЦК и для **Flicker**
+В проекте: (продублировать клипы, если нужно) → `Ctrl+Alt+Y` ×2 → два **adjustment layer**: **CC** (ЦК) и **Flicker** (эффект Sapphire S_Flicker)
 (Flicker можно с дефолтом; автор анимировал его под интро). Можно ещё adjustment под **Shake** (автор убрал — не подошло).
 
 ## 5. Текст
@@ -102,7 +104,7 @@
 | Stabilize Motion на нос + Motion Tile | Warp Stabilizer / ручной `transform/position` по ключам; **Motion Tile** есть (vec2 в пикселях) |
 | Topaz (60 fps, Enhance) | нет; частично: `layer.frameBlending frameMix`, Detail-preserving Upscale, Unsharp Mask |
 | **Twixtor** 200→30→200 | `layer.enableTimeRemap` + ключи `timeRemap` с bezier-ease (velocity: быстро → слоумо → быстро) |
-| BCC Curves/Scale 0.68→1→0.68 | `transform/scale` ключи (68%→100%→68% от базового) + `keys.setEase` |
+| S_BlurMoCurves Z Dist 0.68→1→0.68 | `transform/scale` ключи (68%→100%→68% от базового) + `keys.setEase` |
 | Exposure 0.4 → −1, Opacity 0 за 7 кадров | эффект **Exposure** (1:1) + `transform/opacity` |
 | Twitch 40 → 0 за 6 кадров | Transform/Motion Tile shake по кадрам (как эмуляция S_Shake в `aeconv`) или выражение `wiggle` |
 | S_Sharpen + BCC Unsharp + Looks | **`effectcraft/cc/cc_steps.py`** — готовые 5 ЦК (Unsharp Mask + Channel Mixer + Levels), откалиброваны по кадру урока |
