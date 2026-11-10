@@ -1,33 +1,15 @@
-# Конвертер After Effects → EffectCraft
+# aeconv — разбор `.aep` (композиции, слои, текст)
 
-> **Перенос эффектов переехал в `../aefx/`** (весь каталог эффектов, все ключи, отчёт о потерях, проверка на сайте —
-> см. `../aefx/README.md`). `ffx2ec.py` и `aep2ec.py` вызывают его по умолчанию; старое поведение — флаг `--legacy`.
-> Здесь остаются: парсер RIFX, разбор `.aep` (композиции, слои, текст), декодер Looks, демо `showcase.py`.
-
-EffectCraft не открывает `.aep`/`.ffx` и не грузит плагины AE (веб-сборка: `effect.plugins.list → wasm: false`).
-Этот конвертер читает бинарный формат AE (RIFX) и пересобирает эффекты командами EffectCraft.
+Перенос **эффектов** делает `../aefx/` (см. `../aefx/README.md`). Здесь — то, что вокруг эффектов:
 
 | Файл | Что делает |
 |---|---|
-| `rifx.py` | парсер контейнера RIFX (.ffx/.aep) |
-| `extract_ffx.py` | эффекты/параметры/ключи из `.ffx` |
+| `rifx.py` | парсер контейнера RIFX (.ffx/.aep) — общий для aefx |
 | `aep_extract.py` | композиции, слои, тайминг, свойства, текст из `.aep` |
-| `ae2ec.py` | перенос эффектов: стандартные 1:1, платные — сборки из встроенных |
-| `ffx2ec.py file.ffx out/` | `.ffx` → `*.steps.json` + `*.ecpreset` + отчёт |
-| `aep2ec.py file.aep out.json [--footage clip.mp4 --roto strokes.json]` | `.aep` → проект EffectCraft |
-| `ec_effects.json` | справочник эффектов/параметров EffectCraft 0.9.2 |
+| `aep2ec.py file.aep out.json [--footage clip.mp4 --roto strokes.json --strict]` | `.aep` → проект EffectCraft; эффекты слоёв — через aefx, с отчётом |
+| `ffx2ec.py file.ffx out/` | то же, что `python3 aefx_cli.py convert` |
+| `mblooks.py` | декодер Magic Bullet Looks (блок `MBL2`) |
+| `showcase.py` | демо-эдит |
 
-Время: тики AE 1/30720 с; ключи переносятся с bezier-ease (speed + influence) как есть.
-
-## Калибровки (поведение EffectCraft отличается от AE)
-- точки эффектов в EffectCraft — пиксели слоя (в AE-пресетах — доли кадра);
-- Turbulent Displace: в AE смещение растёт с Size → `Amount_ec = Amount_ae × Size/100`;
-- CC Block Load: шкала Completion сдвинута → `0.6×c + 80`;
-- BCC Lens Blur Iris Scale → Camera Lens Blur radius (1 ед. ≈ 1px на 1080).
-
-## Платные плагины → встроенные
-S_Shake → Motion Tile + Transform (ключи по кадрам из кривой амплитуды, моушен-блюр) ·
-BCC Lens Blur → Camera Lens Blur · Deep Glow → 3×Glow · Crate's Godrays / BCC Rays Puffy → CC Light Rays ·
-S_Emboss → Bevel Alpha · S_WarpChroma → VR Chromatic Aberrations + Radial Blur · S_ScanLines → Grid ·
-BCC Halftone → CC Ball Action · Roto Brush → Roto Brush EffectCraft (мазки задаются для своего клипа).
-Шрифт Arial → Inter (свои шрифты EffectCraft не подгружает).
+Время AE: тики 1/30720 с. Тексты из `.aep` (CoS-документ): строки, размер, трекинг, интерлиньяж, baseline, заливка;
+Arial → Inter (свои шрифты EffectCraft не подгружает).

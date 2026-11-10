@@ -36,10 +36,10 @@
 | `effectcraft/beats.json` | Биты трека (librosa) |
 | `effectcraft/aefx/` | **Перенос эффектов AE → EffectCraft без урезаний** (см. раздел 6 и `aefx/README.md`) |
 | `effectcraft/aexact/` | **Идентичный перенос ЦК «по эталону»**: съёмка с хоста → точные таблицы → свой движок (`aexact/README.md`) |
-| `effectcraft/aeconv/` | разбор `.aep` (композиции, слои, текст) + старый перенос эффектов (`--legacy`) |
+| `effectcraft/aeconv/` | разбор `.aep` (композиции, слои, текст), парсер RIFX, декодер Looks |
 | `effectcraft/aeconv/showcase.py` | 15-сек демо всех сконвертированных эффектов |
 | `effectcraft/aeconv/mblooks.py` | декодер Magic Bullet Looks (блок `MBL2` в .ffx/.aep) |
-| `effectcraft/cc/` | **готовые ЦК** из урока: `cc_steps.py` (EffectCraft), `cc_presets.json`, `luts/*.cube`, скрипты калибровки |
+| `effectcraft/cc/` | **5 готовых ЦК**: `apply_cc.py` (применить), `static/` (замороженные), `check_cc.py` (сверка с эталоном), `preview_cc.py` |
 | `knowledge/` | **база знаний** (урок, ЦК, разбор эдитов) |
 | `src/` | Ранний вариант на Remotion (React) — запасной, сейчас не основной |
 | `public/` | сюда кладутся `cut.mp4`, `music.m4a` (в git не попадают) |
@@ -139,32 +139,28 @@ S_Sharpen / S_Glow / BCC Unsharp / BCC Film Glow. Получив настоящ�
 **Что подтянуть дальше:** декодер Curves (нужен `.ffx` с кривыми); инструменты Magic Bullet Looks;
 скриншоты тех же эффектов из AE, чтобы откалибровать формулы эмуляций.
 
-### ЦК — статичные, применяются одной командой (`effectcraft/cc/apply_cc.py`)
+### ЦК — ДОЛЖНЫ ВЫГЛЯДЕТЬ КАК НА ЭТАЛОНЕ (`knowledge/cc_presets/reference/ETALON.jpg`)
 
-Каждый ЦК заморожен в `effectcraft/cc/static/<имя>.json` — готовый набор эффектов и настроек.
-**Применять только так, ничего не пересчитывая и не подбирая:**
-```python
-import sys; sys.path.insert(0, "tiktok/effectcraft/cc")
-from apply_cc import cc
-X("layer.newAdjustment", name="GRADE", save="grade")
-steps += cc("night", layer="$grade")       # fx_start=N, если на слое уже есть эффекты
-```
+![эталон ЦК](knowledge/cc_presets/reference/ETALON.jpg)
+
+**Эталон утверждён пользователем. Каждый ЦК в каждом эдите — ровно такой.** Особое внимание **Raspberry haze**:
+мягкое белое свечение вокруг светлого (рубашка, края), приподнятые чёрные, дымка. Нет свечения — ЦК применён неверно.
+
+Как добиться (подробно — `knowledge/cc_presets/README.md`):
+1. Только `cc("<имя>", layer="$clip")` из `effectcraft/cc/apply_cc.py`. Ничего не подбирать и не пересчитывать.
+2. **ЦК — на слой с видео, не на adjustment-слой** (на adjustment свечение Raspberry haze у краёв кадра темнее).
+   Много клипов — ЦК на каждый клип или на прекомпоз всех клипов.
+3. Порядок и имена эффектов ЦК не трогать — формулы свечения ссылаются на контролы «S_Glow › …», «BCC Fast Film Glow › …».
+4. Перед рендером: `python3 effectcraft/cc/check_cc.py` → все пять «OK — совпадает с эталоном» (сверка бит в бит).
+5. `static/` не менять и `freeze.py` без `--check` не запускать, пока пользователь прямо не попросит изменить сам ЦК.
 
 | Пользователь говорит | Имя | Характер |
 |---|---|---|
-| «брайт», «bright», «светлый» | `bright` | светлый, чистый, сильная резкость |
-| «даски», «dusky», «сумеречный» | `dusky` | приглушённый, голубые тени, диффузия |
+| «брайт», «bright», «светлый» | `bright` | светлее, тёплая кожа, сильная резкость |
+| «даски», «dusky», «сумеречный» | `dusky` | приглушённый, холодные голубые тени |
 | «найт», «night», «тёмный» | `night` | самый мягкий, цвет почти не меняет |
-| «малиновый», «raspberry», «хейз» | `raspberry_haze` | дымка, свечение, приподнятые чёрные |
-| «ту шарп», «two sharp», «резкий» | `two_sharp` | очень резкий, тёплый/красноватый |
-
-- Эталон, как ЦК обязаны выглядеть: `knowledge/cc_presets/reference/fury_grid.jpg`, `scofield_grid.jpg`
-  (исходные кадры лежат рядом). Повторный рендер того же кадра совпадает пиксель в пиксель.
-- Проверить ЦК на любом кадре: `python3 cc/preview_cc.py <кадр> <out.jpg>`.
-- `python3 cc/freeze.py --check` — файлы ЦК не менялись. **`freeze.py` без флага не запускать** и `static/` руками
-  не править, если пользователь прямо не попросил изменить сам ЦК (тогда обновить и эталонные сетки).
-- `cc/cc_steps.py`, `cc_presets.json`, `luts/` и картинки `fury_cc_comparison.jpg` / `scofield_cc_comparison.jpg` —
-  **старая подгонка по кадру, выглядит иначе. Не использовать**, если пользователь прямо не попросит «старый ЦК».
+| «малиновый», «raspberry», «хейз» | `raspberry_haze` | **белое свечение вокруг светлого**, дымка |
+| «ту шарп», «two sharp», «резкий» | `two_sharp` | очень резкий, контрастный, тёплый |
 
 ### Идентичный ЦК — `effectcraft/aexact/` (подробно — `aexact/README.md`)
 
@@ -177,7 +173,7 @@ steps += cc("night", layer="$grade")       # fx_start=N, если на слое 
   прислать нужно папку `capture/`. Скрипт в настоящем AE ещё не запускался.
 - Когда съёмка есть: `python3 -m aexact compile capture/<ЦК> cc/exact/<имя>` → `python3 -m aexact apply cc/exact/<имя> clip.mp4 graded.mp4`
   → в EffectCraft импортировать уже покрашенный клип (ЦК-эффекты на слой не ставить).
-- Пока съёмки нет, ЦК по умолчанию — статичные (`cc/apply_cc.py`). Не называть их идентичными After Effects.
+- Пока съёмки нет, ЦК — по эталону выше (`cc/apply_cc.py`). Не называть их идентичными After Effects.
 
 ## 7. Что уже сделано (история)
 
@@ -185,7 +181,9 @@ steps += cc("night", layer="$grade")       # fx_start=N, если на слое 
 2. EffectCraft-эдит «Scofield» 74.5 c: `effectcraft/build_project.py` (монтаж по битам ~86 BPM).
 3. Конвертер AE + тесты на фото + демо 15 c (`showcase.py`, трек 55.5–70.5 c).
 4. Изучен zip «файлы для Эдита Claude code» (урок AE 13 мин + 5 ЦК + 4 эдита людей): транскрипт через ElevenLabs,
-   инструкция, декодирование ЦК (S_Sharpen, BCC Unsharp, Magic Bullet Looks) и эмуляция в EffectCraft → `knowledge/`, `effectcraft/cc/`.
+   инструкция, декодирование ЦК (S_Sharpen, BCC Unsharp, Magic Bullet Looks) → `knowledge/`.
+5. Системы переноса AE → EffectCraft: `aefx` (настройки, без молчаливых потерь) и `aexact` (по эталону с хоста);
+   5 ЦК перенесены aefx и заморожены, эталон вида утверждён пользователем (`reference/ETALON.jpg`).
 
 ## 8. Чек-лист для нового эдита
 

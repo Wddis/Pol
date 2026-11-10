@@ -18,12 +18,11 @@ https://www.mediafire.com/file/anz7p4ls2zoj50v/файлы+для+Эдита+Clau
 | `tutorial_ae/transcript.txt` | полный текст урока (ElevenLabs Scribe, речь → текст) |
 | `tutorial_ae/words_1.2x.json` | пословные тайминги (аудио ×1.2 без пауз: время в оригинале ≈ t×1.2) |
 | `tutorial_ae/frames/` | раскадровка урока (кадр / 10 с) |
-| `cc_presets/README.md` | **5 готовых ЦК**: что внутри (декодировано), как применить в EffectCraft, точность |
+| `cc_presets/README.md` | **5 готовых ЦК: эталон (`reference/ETALON.jpg`) и как его добиться** |
 | `cc_presets/ffx/` | оригинальные `.ffx` пресеты автора урока |
 | `cc_presets/looks_decoded.json` | декодированные цепочки Magic Bullet Looks (инструменты + числа) |
 | `reference_edits/ANALYSIS.md` | **разбор 4 эдитов людей**: структура, темп, текст, цвет, аутро |
 
 Код:
-- `tiktok/effectcraft/cc/cc_steps.py` — готовые ЦК → команды EffectCraft (одна строка в генераторе эдита);
-- `tiktok/effectcraft/cc/luts/*.cube` — те же ЦК как LUT для CapCut/Premiere/DaVinci;
+- `tiktok/effectcraft/cc/apply_cc.py` — готовые ЦК → команды EffectCraft: `cc("night", layer="$clip")`;
 - `tiktok/effectcraft/aeconv/mblooks.py` — декодер Magic Bullet Looks из `.ffx/.aep`.

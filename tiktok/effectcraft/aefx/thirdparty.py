@@ -279,5 +279,4 @@ def looks(c, e):
     c.ledger.add(p, "DECODED" if done == len(look["tools"]) else "LOSS",
                  f"MBL2: инструментов {len(look['tools'])}, перенесено {done}")
     inert(c, "кнопка редактора Looks", "Edit Look...")
-    c.ledger.note("Magic Bullet Looks: калиброванная по кадру замена всего Look — effectcraft/cc/cc_steps.py "
-                  "(Unsharp + Channel Mixer + Levels); это подгонка под картинку, а не перенос параметров")
+    c.ledger.note("Magic Bullet Looks: точный перенос всего Look — съёмкой из After Effects (aexact)")

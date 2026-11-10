@@ -104,11 +104,11 @@
 | **Twixtor** 200→30→200 | `layer.enableTimeRemap` + ключи `timeRemap` с bezier-ease (velocity: быстро → слоумо → быстро) |
 | BCC Curves/Scale 0.68→1→0.68 | `transform/scale` ключи (68%→100%→68% от базового) + `keys.setEase` |
 | Exposure 0.4 → −1, Opacity 0 за 7 кадров | эффект **Exposure** (1:1) + `transform/opacity` |
-| Twitch 40 → 0 за 6 кадров | Transform/Motion Tile shake по кадрам (как эмуляция S_Shake в `aeconv`) или выражение `wiggle` |
-| S_Sharpen + BCC Unsharp + Looks | **`effectcraft/cc/cc_steps.py`** — готовые 5 ЦК (Unsharp Mask + Channel Mixer + Levels), откалиброваны по кадру урока |
+| Twitch 40 → 0 за 6 кадров | Transform/Motion Tile shake по кадрам (как эмуляция S_Shake в `aefx/thirdparty.py`) или выражение `wiggle` |
+| S_Sharpen + BCC Unsharp + Looks | **`effectcraft/cc/apply_cc.py`** — готовые 5 ЦК, `cc("имя", layer="$clip")`; эталон вида — `knowledge/cc_presets/reference/ETALON.jpg` |
 | Flicker | ключи Exposure/opacity adjustment-слоя по кадрам (случайные ±) |
 | Fade Up по словам | текстовый аниматор (opacity/position по символам), `text/animators/...` |
-| Bevel Alpha + Deep Glow + Drop Shadow | Bevel Alpha, Drop Shadow — 1:1; Deep Glow → 3×Glow (уже в `aeconv`) |
+| Bevel Alpha + Deep Glow + Drop Shadow | Bevel Alpha, Drop Shadow — 1:1; Deep Glow → 3×Glow (`aefx/thirdparty.py`) |
 | CC Burn | CC Burn Film (есть) |
 | RSMB | `comp.setSwitch motionBlur` + `layer.setSwitch motionBlur`, shutter 360, 16 samples |
 | рендер H.264 15 Мбит | покадровый `renderFrame` → ffmpeg `libx264 -crf 19` |
