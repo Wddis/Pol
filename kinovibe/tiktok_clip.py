@@ -50,6 +50,18 @@ def ass_time(t):
     return f"{int(t // 3600)}:{int(t % 3600 // 60):02d}:{t % 60:05.2f}"
 
 
+MAT = ("бля", "хуй", "хуе", "хуё", "хуя", "хул", "пизд", "еба", "ёба", "ебл", "ебн", "ебу", "уеб", "заеб", "сук", "мудак", "пидор", "охуе")
+
+
+def censor(word):
+    """Masks swear words in captions for TikTok: 'блять' -> 'Б**ТЬ' (audio is left as is)."""
+    core = word.strip()
+    low = core.lower()
+    if any(m in low for m in MAT) and len(core) > 2:
+        return core[0] + "*" * (len(core) - 3) + core[-2:] if len(core) > 4 else core[0] + "*" * (len(core) - 1)
+    return core
+
+
 def captions_ass(path, words, start, end):
     """Groups words into short lines (<=3 words), current word highlighted in brand pink."""
     ws = [w for w in words if w["end"] > start and w["start"] < end]
@@ -70,7 +82,7 @@ def captions_ass(path, words, start, end):
         for i, w in enumerate(ln):
             s = w["start"] - start
             e = (ln[i + 1]["start"] if i + 1 < len(ln) else w["end"]) - start
-            txt = " ".join(("{\\c&H8C3CFF&}" + x["word"].strip().upper() + "{\\c&HFFFFFF&}") if j == i else x["word"].strip().upper()
+            txt = " ".join(("{\\c&H8C3CFF&}" + censor(x["word"]).upper() + "{\\c&HFFFFFF&}") if j == i else censor(x["word"]).upper()
                            for j, x in enumerate(ln))
             out.append(f"Dialogue: 0,{ass_time(s)},{ass_time(max(e, s + 0.15))},Cap,,0,0,0,,{{\\pos({W // 2},{y})}}{txt}")
     open(path, "w", encoding="utf-8").write("\n".join(out) + "\n")
