@@ -1,4 +1,13 @@
-# TikTok @kinovibetwitch — стиль роликов и конвейер
+# TikTok @kinovibetwitch + YouTube Shorts «Фильмы со стримерами» — стиль роликов и конвейер
+
+## Регламент публикации (с 11.11.2026, 01:00 МСК)
+
+Каждый ролик публикуется **одновременно в TikTok и YouTube Shorts** — в одно и то же время (время задаёт владелец, МСК).
+`schedule_buffer.py` по умолчанию создаёт оба поста (`SERVICES=tiktok,youtube`). Уже вышедшие в TikTok ролики на YouTube не перезаливаем.
+- TikTok: текст = цитата-хук + «Полная запись в био 🍿» + теги.
+- YouTube Shorts: заголовок = хук (≤100 символов); описание = хук + «Полная запись — в Telegram: t.me/kinovibetwitch 🍿» + `#shorts` + теги;
+  public, категория 24 (Entertainment), не для детей, уведомлять подписчиков.
+- Buffer: TikTok `6af35ed662b70b94b0e6430d`, YouTube `6af3934362b70b94b0e99c8d`.
 
 ## Стиль ролика (утверждён владельцем 10.11.2026)
 
@@ -49,7 +58,7 @@
      публикации должны попасть в это окно; для поздних постов — загрузка ближе ко времени (напоминание через send_later);
    - catbox.moe / litterbox — 403 для этого сервера, 0x0.st и tmpfiles.org — обрыв соединения, pixeldrain — нужен ключ.
    - Альтернатива: FastClip (`.mcp.json`) отдаёт публичный `download_url`, но импортирует видео только с YouTube/X/Twitch/Google Drive.
-6. **Расписание**: `python3 schedule_buffer.py plan.json` (время МСК) → проверить очередь:
-   `../buffer.sh 'query($o: OrganizationId!){ posts(input:{organizationId:$o, filter:{channelIds:["6af35ed662b70b94b0e6430d"]}}, first: 10) { edges { node { id status dueAt text } } } }' '{"o":"6af35dd6f71fd9215f39b2bf"}'`.
+6. **Расписание**: `python3 schedule_buffer.py plan.json` (время МСК, сразу TikTok + YouTube) → проверить очередь (оба канала):
+   `../buffer.sh 'query($o: OrganizationId!){ posts(input:{organizationId:$o, filter:{channelIds:["6af35ed662b70b94b0e6430d","6af3934362b70b94b0e99c8d"]}}, first: 10) { edges { node { id status dueAt text } } } }' '{"o":"6af35dd6f71fd9215f39b2bf"}'`.
 
 ## Журнал публикаций — `posts_tiktok.json`

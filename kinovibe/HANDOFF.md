@@ -70,7 +70,8 @@
 | Кабинет | https://publish.buffer.com/channels/6af35ed662b70b94b0e6430d/schedule |
 | API | GraphQL `POST https://api.buffer.com`, заголовок `Authorization: Bearer <ключ>` |
 | Организация | `6af35dd6f71fd9215f39b2bf` («My organization») |
-| Канал | `6af35ed662b70b94b0e6430d` — TikTok `kinovibetwitch`, часовой пояс Europe/Berlin |
+| Каналы | `6af35ed662b70b94b0e6430d` — TikTok `kinovibetwitch`; `6af3934362b70b94b0e99c8d` — YouTube «Фильмы со стримерами» (Shorts) |
+| Регламент | каждый ролик — одновременно TikTok + YouTube Shorts (с 11.11.2026), см. `tiktok/TIKTOK_STYLE.md` |
 | Ключ | **НЕ в репозитории** (репозиторий публичный). Сохранён как секрет окружения для хоста `api.buffer.com` — прокси подставляет его сам; в скриптах можно передавать любой фиктивный `BUFFER_TOKEN`. Если секрета нет — попросить владельца (через форму request_credential, не в чат). |
 
 Помощник: `buffer.sh '<graphql>' '<variables json>'`. Примеры:
