@@ -4,7 +4,7 @@ import json, sys, urllib.request
 def call(tool, args):
     req = urllib.request.Request("https://www.indiepost.app/api/mcp", method="POST",
         data=json.dumps({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {"name": tool, "arguments": args}}).encode(),
-        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream"})
+        headers={"Content-Type": "application/json", "Accept": "application/json, text/event-stream", "User-Agent": "curl/8.5.0"})
     body = urllib.request.urlopen(req, timeout=120).read().decode()
     for line in body.splitlines():
         if line.startswith("data:"): body = line[5:]
