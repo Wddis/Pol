@@ -6,7 +6,9 @@
   2. живая проверка (probe_s секунд): лучшие номера перепроверяются повторно —
      кто перестал отвечать, отсекается; если за это время пришло новое SMS,
      номер помечается «работает прямо сейчас»;
-  3. сторожевой таймер во время ожидания SMS: номер периодически перепроверяется,
+  3. проверка доставкой (по запросу): на номер отправляется SMS со случайным кодом;
+     дошло — номер получает статус «проверенный» и попадает в отдельную категорию;
+  4. сторожевой таймер во время ожидания SMS: номер периодически перепроверяется,
      и если он «умер», скрипт сам переключается на следующий из резерва.
 """
 from __future__ import annotations
@@ -21,12 +23,13 @@ from typing import Callable, Iterator, Optional
 
 import requests
 
-from . import registry
+from . import registry, sender, verify
 from .core import Candidate, ProviderError, Sms
 from .providers import all_providers
 from .services import service_matchers
 
 MODES = {
+    "verified": "Проверенные: тестовое SMS дошло до номера",
     "niche": "Нишевые и премиум: редко используемые + приватные",
     "premium": "Только премиум: приватные платные номера",
     "popular": "Все рабочие: максимум активности",
@@ -98,7 +101,8 @@ class Activation:
                 self._baseline = {m.key for m in self.provider.messages(self.state)}
             except Exception:
                 self._baseline = set(self.cand.extra.get("keys") or [])
-        self.log(f"выдан номер {self.number} ({self.cand.provider}, {self.cand.tier})")
+        self.log(f"выдан номер {self.number} ({self.cand.provider}, {self.cand.tier})"
+                 + (" — доставка подтверждена тестовым SMS" if self.cand.tier == "verified" else ""))
 
     def start(self) -> "Activation":
         self._acquire()
@@ -196,6 +200,7 @@ class Engine:
         self.candidates: dict[str, Candidate] = {}
         self.activations: dict[str, Activation] = {}
         self.last_order: list[str] = []
+        self.verifications: dict[str, verify.Verification] = {}
 
     def provider_info(self) -> list[dict]:
         out = []
@@ -207,18 +212,23 @@ class Engine:
 
     # --- подбор ----------------------------------------------------------
     def find_stream(self, service: str, country: str = "", providers: Optional[list[str]] = None,
-                    limit: int = 15, mode: str = "niche", probe_s: int = 20) -> Iterator[dict]:
+                    limit: int = 15, mode: str = "niche", probe_s: int = 20,
+                    verify_n: int = 0, verify_wait: int = 180) -> Iterator[dict]:
         """Генератор событий проверки; последнее событие — {'type': 'done', ...}."""
         names = providers or [p["name"] for p in self.provider_info() if p["enabled"]]
         if mode == "premium":
             names = [n for n in names if self.providers[n].paid]
+        elif mode == "verified":
+            names = [n for n in names if not self.providers[n].paid]  # платный номер до покупки не проверить
+            verify_n = verify_n or 2
         t0, q = time.time(), queue.Queue()
         results: dict[str, list[Candidate]] = {}
         errors: dict[str, str] = {}
 
         def run(name):
             try:
-                results[name] = self.providers[name].find(service, country, limit * 2, mode, q.put)
+                pmode = "popular" if mode == "verified" else mode
+                results[name] = self.providers[name].find(service, country, limit * 2, pmode, q.put)
             except Exception as e:
                 errors[name] = str(e)
                 q.put({"type": "error", "provider": name, "text": str(e)})
@@ -280,6 +290,42 @@ class Engine:
                     alive.append(c)
                 free = alive
 
+        # этап 3: проверка доставкой тестового SMS
+        for c in cands:
+            rec = verify.cached(c.number) if c.public else None
+            if rec:
+                verify.mark(c, rec)
+        todo = [c for c in sorted(cands, key=lambda c: c.score, reverse=True)
+                if c.public and c.tier != "verified"][:verify_n]
+        if todo:
+            info = sender.describe()
+            yield {"type": "stage", "text": f"Этап 3: проверка доставкой — тестовое SMS на {len(todo)} номер(а) "
+                                            f"через {info['via']}" + (f", квота: {info['quota']}"
+                                                                      if info["quota"] is not None else "")
+                                            + f", ждём до {verify_wait} с"}
+            vq: queue.Queue = queue.Queue()
+            jobs = [verify.Verification(self, c, verify_wait, vq.put) for c in todo]
+
+            def run_v(j):
+                try:
+                    j.run()
+                finally:
+                    vq.put({"type": "_vdone"})
+            for j in jobs:
+                self.verifications[j.id] = j
+                threading.Thread(target=run_v, args=(j,), daemon=True).start()
+            left = len(jobs)
+            while left:
+                ev = vq.get()
+                if ev["type"] == "_vdone":
+                    left -= 1
+                else:
+                    yield ev
+        if mode == "verified":
+            dropped = [c for c in cands if c.tier != "verified"]
+            cands = [c for c in cands if c.tier == "verified"]
+            yield {"type": "stage", "text": f"Проверенных: {len(cands)}, без подтверждения доставки: {len(dropped)}"}
+
         for c in cands:
             if not c.public:
                 c.score = round(c.score + 15, 1)  # приватный номер надёжнее
@@ -297,6 +343,17 @@ class Engine:
             last = ev
         return last
 
+    def verify(self, cand_id: str, wait: int = 180) -> verify.Verification:
+        """Проверить один номер доставкой тестового SMS (в фоне)."""
+        cand = self.candidates.get(cand_id)
+        if not cand:
+            raise ProviderError("кандидат не найден — выполните поиск заново")
+        if not cand.public:
+            raise ProviderError("платный номер можно проверить только после покупки")
+        job = verify.Verification(self, cand, wait).start()
+        self.verifications[job.id] = job
+        return job
+
     # --- выдача и ожидание -------------------------------------------------
     def start(self, cand_id: str, service: str, timeout: int = 600, poll: float = 5.0) -> Activation:
         cand = self.candidates.get(cand_id)
@@ -313,9 +370,10 @@ class Engine:
         return act
 
     def auto(self, service: str, country: str = "", providers: Optional[list[str]] = None,
-             timeout: int = 600, mode: str = "niche", probe_s: int = 20, tries: int = 3) -> Activation:
+             timeout: int = 600, mode: str = "niche", probe_s: int = 20, tries: int = 3,
+             verify_n: int = 0) -> Activation:
         """Подобрать лучший номер и занять его; при ошибке покупки — следующий."""
-        res = self.find(service, country, providers, 15, mode, probe_s)
+        res = self.find(service, country, providers, 15, mode, probe_s, verify_n)
         last_err = None
         for c in [c for c in res.get("candidates", []) if c["extra"].get("can_buy")][:tries]:
             try:

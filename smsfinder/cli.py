@@ -29,7 +29,10 @@ def main(argv=None):
         p.add_argument("--country", default="", help="ISO2 (de), название (germany) или код")
         p.add_argument("--providers", default="", help="через запятую: receivesms,onlinesim,5sim,smsactivate")
         p.add_argument("--limit", type=int, default=15)
-        p.add_argument("--mode", default="niche", choices=["niche", "premium", "popular"])
+        p.add_argument("--mode", default="niche", choices=["verified", "niche", "premium", "popular"])
+        p.add_argument("--verify", type=int, default=0,
+                       help="сколько лучших номеров проверить тестовым SMS (тратит квоту отправки)")
+        p.add_argument("--verify-wait", type=int, default=180, help="сколько ждать доставки тестового SMS, сек")
         p.add_argument("--probe", type=int, default=20, help="длительность живой проверки, сек")
         p.add_argument("-v", "--verbose", action="store_true", help="показывать каждую проверку")
         if name == "get":
@@ -40,9 +43,11 @@ def main(argv=None):
     eng = Engine()
     provs = [x.strip() for x in a.providers.split(",") if x.strip()] or None
     res = {}
-    for ev in eng.find_stream(a.service, a.country, provs, a.limit, a.mode, a.probe):
+    for ev in eng.find_stream(a.service, a.country, provs, a.limit, a.mode, a.probe, a.verify, a.verify_wait):
         if ev["type"] == "stage":
             print(f"» {ev['text']}" + (f" [{ev['provider']}]" if ev.get("provider") else ""))
+        elif ev["type"] == "verify":
+            print(f"  {'✓' if ev['ok'] else '✗'} SMS-проверка {ev['number']}: {ev['reason']}")
         elif ev["type"] == "check" and (a.verbose or ev["ok"] is False and "перестал" in ev["reason"]):
             print(f"  {'✓' if ev['ok'] else '✗'} {ev['provider']:<12} {ev['number']:<16} {ev['reason']}")
         elif ev["type"] == "done":

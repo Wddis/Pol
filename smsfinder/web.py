@@ -13,6 +13,7 @@ import json
 from flask import Flask, Response, abort, jsonify, request, stream_with_context
 
 from .core import ProviderError
+from . import sender
 from .engine import MODES, Engine
 from .services import SERVICES
 
@@ -40,7 +41,8 @@ def index():
 @app.get("/api/meta")
 @guarded
 def meta():
-    return jsonify(providers=engine.provider_info(), services=list(SERVICES), modes=MODES)
+    return jsonify(providers=engine.provider_info(), services=list(SERVICES), modes=MODES,
+                   sender=sender.describe())
 
 
 def _find_args():
@@ -48,7 +50,9 @@ def _find_args():
     return dict(service=a.get("service", "other"), country=a.get("country", ""),
                 providers=[p for p in a.get("providers", "").split(",") if p] or None,
                 limit=int(a.get("limit", 15)), mode=a.get("mode", "niche"),
-                probe_s=max(0, min(int(a.get("probe", 20)), 120)))
+                probe_s=max(0, min(int(a.get("probe", 20)), 120)),
+                verify_n=max(0, min(int(a.get("verify", 0)), 5)),
+                verify_wait=max(30, min(int(a.get("vwait", 180)), 600)))
 
 
 @app.get("/api/find")
@@ -88,10 +92,29 @@ def auto():
     d = request.get_json(force=True)
     try:
         act = engine.auto(d.get("service", "other"), d.get("country", ""), d.get("providers") or None,
-                          int(d.get("timeout", 600)), d.get("mode", "niche"), int(d.get("probe", 20)))
+                          int(d.get("timeout", 600)), d.get("mode", "niche"), int(d.get("probe", 20)),
+                          verify_n=min(int(d.get("verify", 0)), 5))
     except ProviderError as e:
         return jsonify(error=str(e)), 400
     return jsonify(act.to_dict())
+
+
+@app.post("/api/verify")
+@guarded
+def verify_start():
+    d = request.get_json(force=True)
+    try:
+        job = engine.verify(d["id"], max(30, min(int(d.get("wait", 180)), 600)))
+    except ProviderError as e:
+        return jsonify(error=str(e)), 400
+    return jsonify(job.to_dict())
+
+
+@app.get("/api/verify/<vid>")
+@guarded
+def verify_get(vid):
+    job = engine.verifications.get(vid) or abort(404)
+    return jsonify(job.to_dict())
 
 
 @app.get("/api/activation/<aid>")
