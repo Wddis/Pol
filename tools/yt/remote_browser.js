@@ -50,14 +50,20 @@ setInterval(r,1200);r();
   const cur = () => { const ps = ctx.pages(); return ps.find(x => /accounts\.google\.com|gds\.google\.com/.test(x.url())) || ps[ps.length - 1] || p; };
   // Fill the field the owner means: prefer a visible password field, else the focused/last visible text-like input.
   const fillField = async (pg, text) => {
-    const sels = ['input[type="password"]', 'input[type="tel"]', 'input[type="email"]', 'input[type="text"]:not([readonly])', 'input[autocomplete="one-time-code"]'];
+    const sels = ['input[type="password"]', 'input[type="tel"]', 'input[type="email"]', 'input[autocomplete="one-time-code"]', 'input[type="text"]:not([readonly])'];
     for (const sel of sels) {
       const loc = pg.locator(sel + ':visible');
       const n = await loc.count();
-      if (n) { const el = loc.nth(n - 1); await el.click({ timeout: 3000 }).catch(() => {}); await el.fill(text, { timeout: 3000 }); return 'вставлено в ' + sel; }
+      if (n) {
+        const el = loc.nth(n - 1);
+        await el.click({ timeout: 3000 }).catch(() => {});
+        // clear, then type with REAL key events — Google forms reject programmatically-set values
+        await el.fill('', { timeout: 3000 }).catch(() => {});
+        await pg.keyboard.type(text, { delay: 45 });
+        return 'введено в ' + sel + ' (' + text.length + ' симв.)';
+      }
     }
-    // fallback: type into whatever is focused
-    await pg.keyboard.type(text, { delay: 25 }); return 'поле не найдено — напечатано в фокус';
+    await pg.keyboard.type(text, { delay: 45 }); return 'поле не найдено — напечатано в фокус';
   };
   http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x');
