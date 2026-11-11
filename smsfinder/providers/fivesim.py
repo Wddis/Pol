@@ -8,7 +8,7 @@ from __future__ import annotations
 import math
 import os
 
-from ..core import TIMEOUT, Candidate, ProviderError, Sms, extract_code, http
+from ..core import TIMEOUT, Candidate, ProviderError, Sms, extract_code, http, noop_emit
 from ..services import country_matches, service_name
 from .base import Provider
 
@@ -44,29 +44,39 @@ class FiveSim(Provider):
         except ValueError:
             raise ProviderError(f"5sim: {r.text[:200]}")
 
-    def find(self, service, country, limit=20):
+    def find(self, service, country, limit=20, mode="niche", emit=noop_emit):
         product = service_name(service, "5sim")
         r = self.s.get(f"{API}/guest/prices", params={"product": product}, timeout=TIMEOUT)
         if r.status_code != 200:
             raise ProviderError(f"5sim: HTTP {r.status_code}")
         data = r.json().get(product, {})
-        out = []
+        out, dropped = [], 0
         for cname, ops in data.items():
             if not country_matches(country, cname):
                 continue
             for op, info in ops.items():
                 count, cost = info.get("count", 0), float(info.get("cost", 0))
-                if count <= 0:
-                    continue
                 rate = info.get("rate")
-                # % доставки важнее всего, затем наличие, затем цена
-                score = (rate if rate is not None else 25) + min(math.log10(count + 1) * 5, 25) - min(cost, 100) * 0.3
-                out.append(Candidate(
+                if count <= 0 or (rate is not None and rate < 10):
+                    dropped += 1  # нет в наличии или почти не доставляет SMS
+                    continue
+                real_sim = not op.startswith("virtual")
+                # % доставки важнее всего, затем «реальная SIM», наличие и цена
+                score = (rate if rate is not None else 25) + (30 if real_sim else 0) \
+                    + min(math.log10(count + 1) * 5, 25) - min(cost, 100) * 0.3
+                c = Candidate(
                     provider=self.name, number="", country=cname, ref=f"{cname}/{op}",
                     score=round(score, 1), price=cost, public=False, stock=count,
-                    note=f"оператор {op}, доставка {rate if rate is not None else '?'}%, в наличии {count}",
+                    tier="premium" if (real_sim or (rate or 0) >= 50) else "regular",
+                    note=(f"{'реальная SIM' if real_sim else 'виртуальный'} оператор {op} · "
+                          f"доставка {rate if rate is not None else '?'}% · в наличии {count} · "
+                          "номер новый для этого сервиса"),
                     extra={"operator": op, "rate": rate},
-                ))
+                )
+                c.log(f"этап 1: {c.note}")
+                out.append(c)
+        emit({"type": "stage", "provider": self.name,
+              "text": f"операторов прошло: {len(out)}, отсеяно (нет в наличии / доставка <10%): {dropped}"})
         out.sort(key=lambda c: c.score, reverse=True)
         return out[:limit]
 

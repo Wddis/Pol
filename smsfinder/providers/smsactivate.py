@@ -9,7 +9,7 @@ from __future__ import annotations
 import math
 import os
 
-from ..core import TIMEOUT, Candidate, ProviderError, Sms, extract_code, http
+from ..core import TIMEOUT, Candidate, ProviderError, Sms, extract_code, http, noop_emit
 from ..services import country_matches, service_name
 from .base import Provider
 
@@ -59,7 +59,7 @@ class SmsActivateCompat(Provider):
                 self._countries = {}
         return self._countries
 
-    def find(self, service, country, limit=20):
+    def find(self, service, country, limit=20, mode="niche", emit=noop_emit):
         svc = service_name(service, "smsact")
         prices = self._call("getPrices", service=svc)
         if not isinstance(prices, dict):
@@ -79,7 +79,8 @@ class SmsActivateCompat(Provider):
             score = 25 + min(math.log10(count + 1) * 5, 25) - min(cost, 100) * 0.3
             out.append(Candidate(
                 provider=self.name, number="", country=cname, ref=str(cid), score=round(score, 1),
-                price=cost, public=False, stock=count, note=f"в наличии {count}",
+                price=cost, public=False, stock=count, tier="premium",
+                note=f"приватный номер · в наличии {count} · номер новый для этого сервиса",
             ))
         out.sort(key=lambda c: c.score, reverse=True)
         return out[:limit]

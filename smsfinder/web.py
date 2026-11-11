@@ -8,10 +8,12 @@ import os
 from functools import wraps
 from pathlib import Path
 
-from flask import Flask, abort, jsonify, request
+import json
+
+from flask import Flask, Response, abort, jsonify, request, stream_with_context
 
 from .core import ProviderError
-from .engine import Engine
+from .engine import MODES, Engine
 from .services import SERVICES
 
 app = Flask(__name__)
@@ -38,15 +40,35 @@ def index():
 @app.get("/api/meta")
 @guarded
 def meta():
-    return jsonify(providers=engine.provider_info(), services=list(SERVICES))
+    return jsonify(providers=engine.provider_info(), services=list(SERVICES), modes=MODES)
+
+
+def _find_args():
+    a = request.args
+    return dict(service=a.get("service", "other"), country=a.get("country", ""),
+                providers=[p for p in a.get("providers", "").split(",") if p] or None,
+                limit=int(a.get("limit", 15)), mode=a.get("mode", "niche"),
+                probe_s=max(0, min(int(a.get("probe", 20)), 120)))
 
 
 @app.get("/api/find")
 @guarded
 def find():
-    provs = [p for p in request.args.get("providers", "").split(",") if p] or None
-    return jsonify(engine.find(request.args.get("service", "other"), request.args.get("country", ""),
-                               provs, int(request.args.get("limit", 15))))
+    return jsonify(engine.find(**_find_args()))
+
+
+@app.get("/api/find/stream")
+@guarded
+def find_stream():
+    """Server-Sent Events: проверка номеров в реальном времени."""
+    args = _find_args()
+
+    def gen():
+        for ev in engine.find_stream(**args):
+            yield f"data: {json.dumps(ev, ensure_ascii=False)}\n\n"
+
+    return Response(stream_with_context(gen()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
 @app.post("/api/start")
@@ -66,7 +88,7 @@ def auto():
     d = request.get_json(force=True)
     try:
         act = engine.auto(d.get("service", "other"), d.get("country", ""), d.get("providers") or None,
-                          int(d.get("timeout", 600)))
+                          int(d.get("timeout", 600)), d.get("mode", "niche"), int(d.get("probe", 20)))
     except ProviderError as e:
         return jsonify(error=str(e)), 400
     return jsonify(act.to_dict())
@@ -84,6 +106,14 @@ def activation(aid):
 def cancel(aid):
     act = engine.activations.get(aid) or abort(404)
     act.cancel()
+    return jsonify(act.to_dict())
+
+
+@app.post("/api/activation/<aid>/switch")
+@guarded
+def switch(aid):
+    act = engine.activations.get(aid) or abort(404)
+    act.switch()
     return jsonify(act.to_dict())
 
 

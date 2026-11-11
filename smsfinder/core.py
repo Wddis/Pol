@@ -6,7 +6,7 @@ import re
 import time
 import uuid
 from dataclasses import asdict, dataclass, field
-from typing import Optional
+from typing import Callable, Optional
 
 import requests
 
@@ -14,7 +14,11 @@ USER_AGENT = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/128.0 Safari/537.36"
 )
-TIMEOUT = 15
+TIMEOUT = 12
+
+# Страны, номера которых встречаются на бесплатных сайтах чаще всего («заезженные»)
+COMMON_COUNTRIES = {"us", "usa", "gb", "uk", "england", "ca", "canada", "in", "india",
+                    "de", "germany", "nl", "netherlands", "fr", "france"}
 
 
 def http() -> requests.Session:
@@ -25,6 +29,20 @@ def http() -> requests.Session:
 
 class ProviderError(Exception):
     pass
+
+
+@dataclass
+class Health:
+    """Результат проверки номера на работоспособность."""
+
+    ok: bool
+    reason: str = ""
+    last_s: Optional[int] = None     # секунд с последнего SMS
+    usage: int = 0                   # сколько SMS видно (за 24 ч или в ленте)
+    services: int = 0                # разных отправителей/сервисов
+    service_seen: int = 0            # SMS от целевого сервиса
+    latency_ms: int = 0
+    keys: list = field(default_factory=list)  # отпечатки SMS для живой проверки
 
 
 @dataclass
@@ -39,12 +57,24 @@ class Candidate:
     price: Optional[float] = None
     public: bool = True   # публичный номер: SMS видят все
     stock: Optional[int] = None
+    tier: str = "regular"  # niche | premium | regular
     note: str = ""
+    checks: list = field(default_factory=list)  # журнал проверок
     extra: dict = field(default_factory=dict)
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
 
+    def log(self, msg: str):
+        self.checks.append(f"{time.strftime('%H:%M:%S')} {msg}")
+
     def to_dict(self) -> dict:
         return asdict(self)
+
+
+Emit = Callable[[dict], None]
+
+
+def noop_emit(_: dict) -> None:
+    pass
 
 
 @dataclass
@@ -100,3 +130,34 @@ def ago_to_seconds(s: str) -> Optional[int]:
 
 def digits(s: str) -> str:
     return re.sub(r"\D", "", s or "")
+
+
+def fmt_ago(sec: Optional[int]) -> str:
+    if sec is None:
+        return "?"
+    if sec < 3600:
+        return f"{sec // 60} мин"
+    if sec < 86400:
+        return f"{sec // 3600} ч"
+    return f"{sec // 86400} дн"
+
+
+def score_free(h: Health, country: str, mode: str) -> float:
+    """Оценка бесплатного номера.
+
+    niche   — редко используемый: мало SMS и сервисов, целевой сервис на номере не
+              регистрировался, редкая страна, но номер подтверждённо принимает SMS.
+    popular — максимально «живой»: много свежих SMS, сервис уже доставлял сюда.
+    """
+    recency = 0
+    if h.last_s is not None:
+        recency = 30 if h.last_s <= 600 else 20 if h.last_s <= 3600 else 10 if h.last_s <= 6 * 3600 else 3
+    rare = (country or "").lower() not in COMMON_COUNTRIES
+    if mode == "niche":
+        s = 100 - min(h.usage, 60) - min(h.services, 15) * 2
+        s += 25 if h.service_seen == 0 else -20 * min(h.service_seen, 3)
+        s += 15 if rare else 0
+        s += recency * 0.5
+        return round(s, 1)
+    s = min(h.usage, 100) * 0.5 + recency + (30 if h.service_seen else 0)
+    return round(s, 1)

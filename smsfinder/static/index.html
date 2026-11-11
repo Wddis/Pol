@@ -5,17 +5,17 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SMS Finder</title>
 <style>
-:root{--bg:#f6f7f9;--card:#fff;--fg:#14171c;--muted:#667085;--line:#e4e7ec;--acc:#2f6fed;--ok:#12805c;--warn:#b54708;--bad:#c4320a}
-@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e8eaee;--muted:#98a2b3;--line:#2a2f3a;--acc:#5b8cff;--ok:#3ccf91;--warn:#f5a524;--bad:#ff6b4a}}
+:root{--bg:#f6f7f9;--card:#fff;--fg:#14171c;--muted:#667085;--line:#e4e7ec;--acc:#2f6fed;--ok:#12805c;--warn:#b54708;--bad:#c4320a;--gold:#9a6b00}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e8eaee;--muted:#98a2b3;--line:#2a2f3a;--acc:#5b8cff;--ok:#3ccf91;--warn:#f5a524;--bad:#ff6b4a;--gold:#e8b931}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-.wrap{max-width:1040px;margin:0 auto;padding:20px 16px 60px}
+.wrap{max-width:1080px;margin:0 auto;padding:20px 16px 60px}
 h1{font-size:22px;margin:0 0 4px}
 .sub{color:var(--muted);margin:0 0 18px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
 .row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
 label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
-input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:150px}
+input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:130px}
 button{font:inherit;border:0;border-radius:8px;padding:9px 14px;background:var(--acc);color:#fff;cursor:pointer;font-weight:600}
 button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
 button:disabled{opacity:.5;cursor:default}
@@ -26,31 +26,42 @@ button:disabled{opacity:.5;cursor:default}
 .tbl{width:100%;border-collapse:collapse;font-size:14px}
 .tbl th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);padding:6px}
 .tbl td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top}
-.tbl td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.num{font-variant-numeric:tabular-nums;white-space:nowrap}
 .scroll{overflow-x:auto}
-.tag{display:inline-block;font-size:12px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.tag{display:inline-block;font-size:12px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted);white-space:nowrap}
 .tag.pub{color:var(--warn);border-color:var(--warn)}.tag.priv{color:var(--ok);border-color:var(--ok)}
+.tag.niche{color:var(--acc);border-color:var(--acc)}.tag.premium{color:var(--gold);border-color:var(--gold)}
+.tag.live{background:var(--ok);border-color:var(--ok);color:#fff}
 .muted{color:var(--muted)}.err{color:var(--bad)}
 .act{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}
+@media (max-width:640px){.act{grid-template-columns:1fr}.act>div:last-child{text-align:left!important}}
 .big{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer}
 .code{font-size:34px;font-weight:800;color:var(--ok);letter-spacing:2px;cursor:pointer}
 .sms{border-top:1px solid var(--line);padding:8px 0}
-.sms b{font-weight:600}
 .bar{height:4px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--acc);width:0}
 .note{font-size:13px;color:var(--muted)}
+.stats{display:flex;gap:18px;flex-wrap:wrap;font-size:14px;margin-bottom:8px}
+.stats b{font-size:18px;font-variant-numeric:tabular-nums}
+.log{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:220px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
+.log .ok{color:var(--ok)}.log .no{color:var(--bad)}.log .st{color:var(--acc);font-weight:600}
+details summary{cursor:pointer;color:var(--muted);font-size:12px}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>SMS Finder</h1>
-  <p class="sub">Параллельно опрашивает сайты виртуальных номеров, проверяет активность и доставку, выдаёт лучший номер и ждёт SMS.</p>
+  <p class="sub">Подбирает нишевые и премиум номера: проверяет каждый в процессе работы, нерабочие отсекает сразу, затем ждёт SMS и показывает код.</p>
 
   <div class="card">
     <div class="row">
+      <label>Режим<select id="mode"></select></label>
       <label>Сервис<select id="service"></select></label>
-      <label>Страна<input id="country" placeholder="de, usa, 49… (пусто = все)"></label>
-      <label>Ожидание, мин<input id="timeout" type="number" value="10" min="1" max="60" style="min-width:90px"></label>
-      <button id="find">Подобрать номера</button>
+      <label>Страна<input id="country" placeholder="de, usa, 49… (все)"></label>
+      <label>Живая проверка, с<input id="probe" type="number" value="20" min="0" max="120" style="min-width:80px"></label>
+      <label>Ожидание SMS, мин<input id="timeout" type="number" value="10" min="1" max="60" style="min-width:80px"></label>
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button id="find">Подобрать и проверить</button>
       <button id="auto" class="ghost">Взять лучший и ждать SMS</button>
     </div>
     <div class="provs" id="provs"></div>
@@ -66,30 +77,45 @@ button:disabled{opacity:.5;cursor:default}
       <div style="text-align:right">
         <div class="code" id="actCode" title="Скопировать код"></div>
         <div class="muted" id="actStatus"></div>
-        <button class="ghost" id="actCancel" style="margin-top:6px">Остановить</button>
+        <div style="margin-top:6px;display:flex;gap:6px;justify-content:flex-end;flex-wrap:wrap">
+          <button class="ghost" id="actSwitch">Другой номер</button>
+          <button class="ghost" id="actCancel">Остановить</button>
+        </div>
       </div>
     </div>
     <div class="bar"><i id="actBar"></i></div>
     <div id="actSms" style="margin-top:10px"></div>
+    <details style="margin-top:8px"><summary>Журнал активации</summary><div class="log" id="actLog"></div></details>
+  </div>
+
+  <div class="card" id="progCard" hidden>
+    <div class="stats">
+      <span>Проверено <b id="sChecked">0</b></span>
+      <span style="color:var(--ok)">Прошли <b id="sOk">0</b></span>
+      <span style="color:var(--bad)">Отсеяно <b id="sBad">0</b></span>
+      <span class="muted" id="sStage"></span>
+    </div>
+    <div class="log" id="log"></div>
   </div>
 
   <div class="card">
     <div class="row" style="justify-content:space-between;align-items:center">
-      <b>Кандидаты</b><span class="muted" id="took"></span>
+      <b>Подобранные номера</b><span class="muted" id="took"></span>
     </div>
     <div id="errors" class="err note"></div>
     <div class="scroll"><table class="tbl"><thead><tr>
-      <th>Score</th><th>Номер</th><th>Страна</th><th>Источник</th><th>Цена</th><th>Проверка</th><th></th>
-    </tr></thead><tbody id="rows"><tr><td colspan="7" class="muted">Нажмите «Подобрать номера».</td></tr></tbody></table></div>
+      <th>Score</th><th>Номер</th><th>Класс</th><th>Страна</th><th>Источник</th><th>Цена</th><th>Проверка</th><th></th>
+    </tr></thead><tbody id="rows"><tr><td colspan="8" class="muted">Нажмите «Подобрать и проверить».</td></tr></tbody></table></div>
   </div>
-  <p class="note">Бесплатные номера публичны: их SMS видны всем, номер может быть уже занят в сервисе. Для своих аккаунтов используйте платные приватные (5sim / SMS-Activate-совместимые) с API-ключом.</p>
+  <p class="note"><b>Нишевый</b> — бесплатный номер, на котором выбранный сервис ещё не регистрировался, с малой нагрузкой и подтверждённым приёмом SMS. <b>Премиум</b> — приватный платный номер (реальная SIM или высокий % доставки), новый для сервиса; нужен API-ключ провайдера. Бесплатные номера публичны: их SMS видны всем.</p>
 </div>
 <script>
 const T = new URLSearchParams(location.search).get('t');
 const q = (p) => p + (T ? (p.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(T) : '');
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-let current = null, timer = null;
+const TIER = {niche: 'нишевый', premium: 'премиум', regular: 'обычный'};
+let current = null, timer = null, es = null;
 
 async function api(path, body) {
   const r = await fetch(q(path), body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {});
@@ -98,49 +124,70 @@ async function api(path, body) {
   return j;
 }
 const provs = () => [...document.querySelectorAll('#provs input:checked')].map(i => i.value);
-const params = () => ({service: $('service').value, country: $('country').value.trim(), timeout: +$('timeout').value * 60});
+const params = () => ({service: $('service').value, country: $('country').value.trim(), mode: $('mode').value,
+                       probe: +$('probe').value, timeout: +$('timeout').value * 60});
 
 async function init() {
   const m = await api('/api/meta');
+  $('mode').innerHTML = Object.entries(m.modes).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
   $('service').innerHTML = m.services.map(s => `<option>${s}</option>`).join('');
   $('provs').innerHTML = m.providers.map(p => `<label><input type="checkbox" value="${p.name}" ${p.enabled ? 'checked' : 'disabled'}> ${esc(p.title)} ${p.note ? `<small>(${esc(p.note)})</small>` : ''}</label>`).join('');
 }
-
 function copy(t) { navigator.clipboard?.writeText(t); }
+function logLine(cls, text) {
+  const d = document.createElement('div'); d.className = cls; d.textContent = text;
+  $('log').prepend(d);
+}
 
-async function find() {
-  $('find').disabled = true; $('rows').innerHTML = '<tr><td colspan="7" class="muted">Проверяю номера…</td></tr>';
-  try {
-    const p = params();
-    const r = await api(`/api/find?service=${encodeURIComponent(p.service)}&country=${encodeURIComponent(p.country)}&providers=${provs().join(',')}&limit=20`);
-    $('took').textContent = `${r.candidates.length} шт. · ${r.took} с`;
-    $('errors').textContent = Object.entries(r.errors).map(([k, v]) => `${k}: ${v}`).join(' · ');
-    $('rows').innerHTML = r.candidates.length ? r.candidates.map(c => `<tr>
-      <td class="num"><b>${c.score}</b></td>
-      <td class="num">${c.number ? esc(c.number) : '<span class="muted">после покупки</span>'}</td>
-      <td>${esc(c.country)}</td>
-      <td>${esc(c.provider)} <span class="tag ${c.public ? 'pub' : 'priv'}">${c.public ? 'публичный' : 'приватный'}</span></td>
-      <td class="num">${c.public ? 'free' : c.price.toFixed(2)}</td>
-      <td class="note">${esc(c.note)}</td>
-      <td>${c.extra.can_buy ? `<button data-id="${c.id}">Взять</button>` : '<span class="note" title="Задайте API-ключ провайдера">нужен ключ</span>'}</td></tr>`).join('')
-      : '<tr><td colspan="7" class="muted">Ничего не найдено — смените страну или сервис.</td></tr>';
-  } catch (e) { $('rows').innerHTML = `<tr><td colspan="7" class="err">${esc(e.message)}</td></tr>`; }
-  $('find').disabled = false;
+function render(r) {
+  $('took').textContent = `${r.candidates.length} шт. · ${r.took} с · выдано ранее: ${r.used_total}`;
+  $('errors').textContent = Object.entries(r.errors).map(([k, v]) => `${k}: ${v}`).join(' · ');
+  $('rows').innerHTML = r.candidates.length ? r.candidates.map(c => `<tr>
+    <td class="num"><b>${c.score}</b></td>
+    <td class="num">${c.number ? esc(c.number) : '<span class="muted">после покупки</span>'}</td>
+    <td><span class="tag ${c.tier}">${TIER[c.tier] || c.tier}</span>${c.extra.live ? ' <span class="tag live">живой</span>' : ''}</td>
+    <td>${esc(c.country)}</td>
+    <td>${esc(c.provider)} <span class="tag ${c.public ? 'pub' : 'priv'}">${c.public ? 'публичный' : 'приватный'}</span></td>
+    <td class="num">${c.public ? 'free' : c.price.toFixed(2)}</td>
+    <td class="note">${esc(c.note)}<details><summary>журнал проверки</summary>${c.checks.map(esc).join('<br>')}</details></td>
+    <td>${c.extra.can_buy ? `<button data-id="${c.id}">Взять</button>` : '<span class="note" title="Задайте API-ключ провайдера">нужен ключ</span>'}</td></tr>`).join('')
+    : '<tr><td colspan="8" class="muted">Ни один номер не прошёл проверку — смените страну, сервис или режим.</td></tr>';
+}
+
+function find() {
+  es?.close();
+  const p = params(); let n = 0, ok = 0, bad = 0;
+  $('find').disabled = true; $('progCard').hidden = false; $('log').innerHTML = '';
+  ['sChecked', 'sOk', 'sBad'].forEach(i => $(i).textContent = '0');
+  $('rows').innerHTML = '<tr><td colspan="8" class="muted">Идёт проверка…</td></tr>';
+  es = new EventSource(q(`/api/find/stream?service=${encodeURIComponent(p.service)}&country=${encodeURIComponent(p.country)}&mode=${p.mode}&probe=${p.probe}&providers=${provs().join(',')}&limit=15`));
+  es.onmessage = (e) => {
+    const ev = JSON.parse(e.data);
+    if (ev.type === 'stage') { $('sStage').textContent = ev.text; logLine('st', '» ' + (ev.provider ? `[${ev.provider}] ` : '') + ev.text); }
+    else if (ev.type === 'error') logLine('no', `[${ev.provider}] ошибка: ${ev.text}`);
+    else if (ev.type === 'check') {
+      n++; ev.ok ? ok++ : bad++;
+      $('sChecked').textContent = n; $('sOk').textContent = ok; $('sBad').textContent = bad;
+      logLine(ev.ok ? 'ok' : 'no', `${ev.ok ? '✓' : '✗'} ${ev.provider} ${ev.number} — ${ev.reason}`);
+    } else if (ev.type === 'done') { es.close(); render(ev); $('sStage').textContent = 'Готово'; $('find').disabled = false; }
+  };
+  es.onerror = () => { es.close(); $('find').disabled = false; if ($('sStage').textContent !== 'Готово') logLine('no', 'Соединение прервано'); };
 }
 
 function show(a) {
   current = a; $('actCard').hidden = false;
   $('actNum').textContent = a.number || '…';
-  $('actMeta').textContent = `${a.provider} · ${a.candidate.country} · ${a.service}`;
-  $('actWarn').textContent = a.public ? '⚠ Публичный номер — SMS видят все.' : '';
+  $('actMeta').textContent = `${a.provider} · ${a.candidate.country} · ${a.service} · ${TIER[a.tier] || a.tier} · резерв: ${a.reserve}` + (a.history.length > 1 ? ` · было номеров: ${a.history.length}` : '');
+  $('actWarn').textContent = a.public ? '⚠ Публичный номер — SMS видят все. Номер перепроверяется каждые 30 с; если «умрёт», будет заменён автоматически.' : '';
   $('actCode').textContent = a.code || '';
   const st = {waiting:'Жду SMS…', received:'Код получен ✓', timeout:'Время вышло', cancelled:'Остановлено', error:'Ошибка', starting:'Подключаюсь…'}[a.status] || a.status;
-  $('actStatus').textContent = `${st} · ${Math.floor(a.elapsed / 60)}:${String(a.elapsed % 60).padStart(2, '0')}` + (a.error ? ` · ${a.error}` : '');
+  $('actStatus').textContent = `${st} · ${Math.floor(a.elapsed / 60)}:${String(a.elapsed % 60).padStart(2, '0')}` + (a.error && a.status === 'error' ? ` · ${a.error}` : '');
   $('actBar').style.width = Math.min(100, a.elapsed / a.timeout * 100) + '%';
   $('actSms').innerHTML = a.messages.length ? a.messages.slice().reverse().map(m => `<div class="sms"><b>${esc(m.sender)}</b> <span class="muted">${esc(m.received)}</span><br>${esc(m.text)}${m.code ? ` <span class="tag priv">код ${esc(m.code)}</span>` : ''}</div>`).join('') : '<div class="muted note">Новых SMS пока нет. Отправьте код на этот номер.</div>';
-  $('actCancel').disabled = !['waiting', 'starting'].includes(a.status);
+  $('actLog').innerHTML = a.events.slice().reverse().map(esc).join('<br>');
+  const active = ['waiting', 'starting'].includes(a.status);
+  $('actCancel').disabled = !active; $('actSwitch').disabled = !active || !a.reserve;
 }
-
 function watch(a) {
   show(a); clearInterval(timer);
   timer = setInterval(async () => {
@@ -156,12 +203,13 @@ $('rows').addEventListener('click', async (e) => {
   e.target.disabled = false;
 });
 $('auto').onclick = async () => {
-  $('auto').disabled = true;
+  $('auto').disabled = true; $('auto').textContent = 'Подбираю и проверяю…';
   try { watch(await api('/api/auto', {...params(), providers: provs()})); } catch (err) { alert(err.message); }
-  $('auto').disabled = false;
+  $('auto').disabled = false; $('auto').textContent = 'Взять лучший и ждать SMS';
 };
 $('find').onclick = find;
 $('actCancel').onclick = async () => current && show(await api(`/api/activation/${current.id}/cancel`, {}));
+$('actSwitch').onclick = async () => current && show(await api(`/api/activation/${current.id}/switch`, {}));
 $('actNum').onclick = () => current && copy(current.number);
 $('actCode').onclick = () => current?.code && copy(current.code);
 init().catch(e => $('errors').textContent = e.message);

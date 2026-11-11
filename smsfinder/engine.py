@@ -1,18 +1,36 @@
-"""Подбор номеров по всем провайдерам и ожидание SMS."""
+"""Подбор номеров по всем провайдерам, проверка в процессе работы и ожидание SMS.
+
+Проверка идёт в три этапа:
+  1. быстрый отсев (секунды): страница/API отвечает, номер не снят и не в архиве,
+     последнее SMS не старше суток, номер не выдавался ранее (реестр);
+  2. живая проверка (probe_s секунд): лучшие номера перепроверяются повторно —
+     кто перестал отвечать, отсекается; если за это время пришло новое SMS,
+     номер помечается «работает прямо сейчас»;
+  3. сторожевой таймер во время ожидания SMS: номер периодически перепроверяется,
+     и если он «умер», скрипт сам переключается на следующий из резерва.
+"""
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from typing import Callable, Optional
+from typing import Callable, Iterator, Optional
 
 import requests
 
+from . import registry
 from .core import Candidate, ProviderError, Sms
 from .providers import all_providers
 from .services import service_matchers
+
+MODES = {
+    "niche": "Нишевые и премиум: редко используемые + приватные",
+    "premium": "Только премиум: приватные платные номера",
+    "popular": "Все рабочие: максимум активности",
+}
 
 
 def telegram_notify(text: str) -> None:
@@ -28,52 +46,108 @@ def telegram_notify(text: str) -> None:
 
 
 class Activation:
-    def __init__(self, engine: "Engine", cand: Candidate, service: str, timeout: int, poll: float):
+    WATCH_EVERY = 30  # сек между перепроверками номера во время ожидания
+
+    def __init__(self, engine: "Engine", cand: Candidate, service: str, timeout: int, poll: float,
+                 reserve: list[str]):
         self.id = uuid.uuid4().hex[:12]
-        self.engine, self.cand, self.service = engine, cand, service
-        self.provider = engine.providers[cand.provider]
+        self.engine, self.service = engine, service
         self.timeout, self.poll = timeout, poll
+        self.reserve = list(reserve)
         self.status = "starting"
-        self.number = cand.number
         self.messages: list[Sms] = []
         self.code = ""
         self.error = ""
         self.started = time.time()
-        self.state: dict = {}
-        self._baseline: set[str] = set()
+        self.events: list[str] = []
+        self.history: list[str] = []
         self._stop = threading.Event()
         self.on_sms: list[Callable[["Activation", Sms], None]] = []
+        self._bind(cand)
+
+    def _bind(self, cand: Candidate):
+        self.cand = cand
+        self.provider = self.engine.providers[cand.provider]
+        self.number = cand.number
+        self.state: dict = {}
+        self._baseline: set[str] = set()
+        self._fails = 0
+        self._last_watch = time.time()
+
+    def log(self, msg: str):
+        self.events.append(f"{time.strftime('%H:%M:%S')} {msg}")
 
     def to_dict(self) -> dict:
         return {
             "id": self.id, "status": self.status, "number": self.number, "code": self.code,
             "error": self.error, "service": self.service, "provider": self.cand.provider,
-            "public": self.cand.public, "elapsed": int(time.time() - self.started),
-            "timeout": self.timeout, "candidate": self.cand.to_dict(),
+            "public": self.cand.public, "tier": self.cand.tier, "elapsed": int(time.time() - self.started),
+            "timeout": self.timeout, "candidate": self.cand.to_dict(), "events": self.events[-30:],
+            "history": self.history, "reserve": len(self.reserve),
             "messages": [m.to_dict() for m in self.messages],
         }
 
-    def start(self) -> "Activation":
+    def _acquire(self):
         self.state = self.provider.acquire(self.cand, self.service)
         self.number = self.state.get("number") or self.cand.number
+        registry.mark_used(self.number, self.service, self.cand.provider)
+        self.history.append(self.number)
         if self.cand.public:
             # публичный номер: запоминаем уже пришедшие SMS, ждём только новые
             try:
                 self._baseline = {m.key for m in self.provider.messages(self.state)}
             except Exception:
-                self._baseline = set()
+                self._baseline = set(self.cand.extra.get("keys") or [])
+        self.log(f"выдан номер {self.number} ({self.cand.provider}, {self.cand.tier})")
+
+    def start(self) -> "Activation":
+        self._acquire()
         self.status = "waiting"
         threading.Thread(target=self._loop, daemon=True).start()
         return self
+
+    def _failover(self, why: str) -> bool:
+        """Номер перестал работать — переключиться на следующий из резерва."""
+        self.log(f"номер {self.number}: {why}" if why == "заменён вручную"
+                 else f"номер {self.number} не работает: {why}")
+        if not self.cand.public and self.state:
+            self.provider.release(self.state, success=False)
+        while self.reserve:
+            cid = self.reserve.pop(0)
+            cand = self.engine.candidates.get(cid)
+            if not cand or registry.is_used(cand.number, self.service):
+                continue
+            if cand.public:
+                h = self.engine.providers[cand.provider].health(cand, self.service)
+                if not h.ok:
+                    self.log(f"резерв {cand.number} отсеян: {h.reason}")
+                    continue
+            try:
+                self._bind(cand)
+                self._acquire()
+                self.log("автозамена выполнена — отправьте код на новый номер")
+                telegram_notify(f"🔁 Номер заменён: {self.number}")
+                return True
+            except ProviderError as e:
+                self.log(f"резерв не занят: {e}")
+        self.status, self.error = "error", f"номер не работает ({why}), резерв закончился"
+        return False
 
     def _loop(self):
         matchers = service_matchers(self.service)
         while not self._stop.is_set():
             if time.time() - self.started > self.timeout:
-                self.status = "timeout" if not self.messages else self.status
+                if not self.code:
+                    self.status = "timeout"
                 if not self.cand.public:  # платный номер без кода — отменяем, деньги вернутся
                     self.provider.release(self.state, success=bool(self.code))
                 return
+            # сторожевой таймер: периодически проверяем, что номер ещё живой
+            if self.cand.public and time.time() - self._last_watch > self.WATCH_EVERY:
+                self._last_watch = time.time()
+                h = self.provider.health(self.cand, self.service)
+                if not h.ok and not self._failover(h.reason):
+                    return
             try:
                 for m in self.provider.messages(self.state):
                     if m.key in self._baseline:
@@ -84,18 +158,24 @@ class Activation:
                     if relevant and m.code and not self.code:
                         self.code = m.code
                         self.status = "received"
+                        self.log(f"получен код {m.code}")
                     for cb in self.on_sms:
                         cb(self, m)
+                self._fails = 0
                 if self.code and not self.cand.public:
                     self.provider.release(self.state, success=True)
                     return
             except ProviderError as e:
+                self._fails += 1
                 self.error = str(e)
-                if "отменена" in self.error:
-                    self.status = "error"
-                    return
-            except Exception as e:  # сеть/разметка — пробуем снова
+                if "отменена" in self.error or self._fails >= 3:
+                    if not self._failover(self.error):
+                        return
+            except Exception as e:  # сеть/разметка
+                self._fails += 1
                 self.error = f"{type(e).__name__}: {e}"
+                if self._fails >= 3 and not self._failover(self.error):
+                    return
             self._stop.wait(self.poll)
 
     def cancel(self):
@@ -105,10 +185,9 @@ class Activation:
         if self.status in ("waiting", "starting"):
             self.status = "cancelled"
 
-    def wait(self) -> "Activation":
-        while self.status in ("starting", "waiting") and not self._stop.is_set():
-            time.sleep(0.5)
-        return self
+    def switch(self) -> bool:
+        """Ручная замена номера («этот не пришёл — дай другой»)."""
+        return self._failover("заменён вручную")
 
 
 class Engine:
@@ -116,6 +195,7 @@ class Engine:
         self.providers = providers or all_providers()
         self.candidates: dict[str, Candidate] = {}
         self.activations: dict[str, Activation] = {}
+        self.last_order: list[str] = []
 
     def provider_info(self) -> list[dict]:
         out = []
@@ -125,39 +205,102 @@ class Engine:
                         "enabled": ok, "note": why})
         return out
 
-    def find(self, service: str, country: str = "", providers: Optional[list[str]] = None,
-             limit: int = 15) -> dict:
-        """Параллельно опрашивает провайдеров, сверяет номера и сортирует по score."""
+    # --- подбор ----------------------------------------------------------
+    def find_stream(self, service: str, country: str = "", providers: Optional[list[str]] = None,
+                    limit: int = 15, mode: str = "niche", probe_s: int = 20) -> Iterator[dict]:
+        """Генератор событий проверки; последнее событие — {'type': 'done', ...}."""
         names = providers or [p["name"] for p in self.provider_info() if p["enabled"]]
-        t0 = time.time()
+        if mode == "premium":
+            names = [n for n in names if self.providers[n].paid]
+        t0, q = time.time(), queue.Queue()
+        results: dict[str, list[Candidate]] = {}
+        errors: dict[str, str] = {}
 
         def run(name):
             try:
-                return name, self.providers[name].find(service, country, limit), None
+                results[name] = self.providers[name].find(service, country, limit * 2, mode, q.put)
             except Exception as e:
-                return name, [], str(e)
+                errors[name] = str(e)
+                q.put({"type": "error", "provider": name, "text": str(e)})
+            q.put({"type": "_finished", "provider": name})
 
-        with ThreadPoolExecutor(max_workers=len(names) or 1) as ex:
-            results = list(ex.map(run, names))
-        cands, errors = [], {}
-        for name, cs, err in results:
-            cands += cs
-            if err:
-                errors[name] = err
+        yield {"type": "stage", "text": f"Этап 1: быстрый отсев · источники: {', '.join(names)}"}
+        for n in names:
+            threading.Thread(target=run, args=(n,), daemon=True).start()
+        left = len(names)
+        while left:
+            ev = q.get()
+            if ev["type"] == "_finished":
+                left -= 1
+            else:
+                yield ev
+
+        cands = [c for cs in results.values() for c in cs]
+        # строгий режим: только нишевые и премиум
+        if mode == "niche":
+            dropped = [c for c in cands if c.tier == "regular"]
+            cands = [c for c in cands if c.tier != "regular"]
+            if dropped:
+                yield {"type": "stage", "text": f"Отсеяно как «заезженные» (много SMS / сервис уже "
+                                                f"регистрировался): {len(dropped)}"}
+        elif mode == "premium":
+            cands = [c for c in cands if not c.public]
+
+        # этап 2: живая проверка лучших бесплатных номеров
+        free = sorted([c for c in cands if c.public], key=lambda c: c.score, reverse=True)[:limit]
+        if free and probe_s > 0:
+            yield {"type": "stage", "text": f"Этап 2: живая проверка {len(free)} номеров в течение {probe_s} с"}
+            for rnd in (1, 2):
+                time.sleep(probe_s / 2)
+                with ThreadPoolExecutor(max_workers=12) as ex:
+                    res = list(ex.map(lambda c: (c, self.providers[c.provider].health(c, service)), free))
+                alive = []
+                for c, h in res:
+                    if not h.ok:
+                        c.log(f"этап 2, раунд {rnd}: отсеян — {h.reason}")
+                        yield {"type": "check", "provider": c.provider, "number": c.number, "ok": False,
+                               "reason": f"перестал отвечать: {h.reason}"}
+                        cands.remove(c)
+                        continue
+                    new = set(h.keys) - set(c.extra.get("keys") or [])
+                    if new and not c.extra.get("live"):
+                        c.extra["live"] = True
+                        c.score = round(c.score + 15, 1)
+                        c.note += " · SMS пришло во время проверки"
+                    c.extra["keys"] = h.keys
+                    c.log(f"этап 2, раунд {rnd}: отвечает за {h.latency_ms} мс"
+                          + (", получено новое SMS" if new else ""))
+                    yield {"type": "check", "provider": c.provider, "number": c.number, "ok": True,
+                           "reason": f"раунд {rnd}: отвечает ({h.latency_ms} мс)"
+                                     + (" · пришло новое SMS ✓" if new else "")}
+                    alive.append(c)
+                free = alive
+
         for c in cands:
-            if not c.public:  # приватные (платные) номера надёжнее — небольшой бонус
-                c.score = round(c.score + 15, 1)
+            if not c.public:
+                c.score = round(c.score + 15, 1)  # приватный номер надёжнее
             c.extra["can_buy"] = self.providers[c.provider].can_acquire()
             self.candidates[c.id] = c
         cands.sort(key=lambda c: (c.extra["can_buy"], c.score), reverse=True)
-        return {"candidates": [c.to_dict() for c in cands], "errors": errors,
-                "took": round(time.time() - t0, 2)}
+        cands = cands[: limit * 2]
+        self.last_order = [c.id for c in cands if c.extra["can_buy"]]
+        yield {"type": "done", "candidates": [c.to_dict() for c in cands], "errors": errors,
+               "took": round(time.time() - t0, 1), "used_total": registry.count()}
 
+    def find(self, *a, **kw) -> dict:
+        last = {}
+        for ev in self.find_stream(*a, **kw):
+            last = ev
+        return last
+
+    # --- выдача и ожидание -------------------------------------------------
     def start(self, cand_id: str, service: str, timeout: int = 600, poll: float = 5.0) -> Activation:
         cand = self.candidates.get(cand_id)
         if not cand:
             raise ProviderError("кандидат не найден — выполните поиск заново")
-        act = Activation(self, cand, service, timeout, poll)
+        reserve = [i for i in self.last_order if i != cand_id
+                   and self.candidates[i].public == cand.public]
+        act = Activation(self, cand, service, timeout, poll, reserve)
         act.on_sms.append(lambda a, m: telegram_notify(
             f"📩 SMS на {a.number} ({a.cand.provider})\nОт: {m.sender}\n{m.text}"
             + (f"\nКод: {m.code}" if m.code else "")))
@@ -166,13 +309,13 @@ class Engine:
         return act
 
     def auto(self, service: str, country: str = "", providers: Optional[list[str]] = None,
-             timeout: int = 600, tries: int = 3) -> Activation:
+             timeout: int = 600, mode: str = "niche", probe_s: int = 20, tries: int = 3) -> Activation:
         """Подобрать лучший номер и занять его; при ошибке покупки — следующий."""
-        res = self.find(service, country, providers)
+        res = self.find(service, country, providers, 15, mode, probe_s)
         last_err = None
-        for c in [c for c in res["candidates"] if c["extra"].get("can_buy")][:tries]:
+        for c in [c for c in res.get("candidates", []) if c["extra"].get("can_buy")][:tries]:
             try:
                 return self.start(c["id"], service, timeout)
             except ProviderError as e:
                 last_err = e
-        raise ProviderError(f"не удалось занять номер: {last_err or res['errors'] or 'нет кандидатов'}")
+        raise ProviderError(f"не удалось занять номер: {last_err or res.get('errors') or 'нет кандидатов'}")

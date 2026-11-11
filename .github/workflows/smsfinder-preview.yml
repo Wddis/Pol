@@ -1,0 +1,91 @@
+# Временный сайт SMS Finder: поднимает веб-интерфейс на раннере GitHub Actions
+# и открывает к нему публичный HTTPS-адрес *.trycloudflare.com (живёт, пока идёт job, до ~5,8 ч).
+# Адрес публикуется в заголовке проверки (check run) этого job'а, в логе и в Summary.
+name: smsfinder-preview
+
+on:
+  push:
+    branches: [ccr-3b710564-wdu6ow]
+    paths: ["smsfinder/**", ".github/workflows/smsfinder-preview.yml"]
+  workflow_dispatch:
+    inputs:
+      minutes:
+        description: "Сколько минут держать сайт (макс. 345)"
+        default: "300"
+
+permissions:
+  contents: read
+  checks: write
+  actions: read
+
+concurrency:
+  group: smsfinder-preview
+  cancel-in-progress: true
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      PORT: "8000"
+      SMSFINDER_DATA: ${{ github.workspace }}/.smsfinder
+      # ключи платных провайдеров (необязательно): Settings → Secrets → Actions
+      FIVESIM_API_KEY: ${{ secrets.FIVESIM_API_KEY }}
+      SMSACT_KEY: ${{ secrets.SMSACT_KEY }}
+      SMSFINDER_TOKEN: ${{ secrets.SMSFINDER_TOKEN }}
+      TELEGRAM_TOKEN: ${{ secrets.SMSFINDER_TG_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.SMSFINDER_TG_CHAT }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install flask requests beautifulsoup4
+
+      - name: Start app and tunnel
+        id: tunnel
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          nohup python -m smsfinder.web > web.log 2>&1 &
+          for i in $(seq 30); do curl -sf localhost:8000/healthz && break; sleep 1; done
+          curl -sL -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+          chmod +x cloudflared
+          nohup ./cloudflared tunnel --no-autoupdate --url http://localhost:8000 > cf.log 2>&1 &
+          URL=""
+          for i in $(seq 90); do
+            URL=$(grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' cf.log | head -1)
+            [ -n "$URL" ] && break; sleep 2
+          done
+          [ -z "$URL" ] && { cat cf.log; exit 1; }
+          [ -n "$SMSFINDER_TOKEN" ] && URL="$URL/?t=$SMSFINDER_TOKEN"
+          # ждём, пока DNS туннеля начнёт отвечать
+          for i in $(seq 60); do curl -sf -o /dev/null "${URL%%\?*}/healthz" && break; sleep 3; done
+          echo "url=$URL" >> "$GITHUB_OUTPUT"
+          echo "PREVIEW_URL=$URL"
+          echo "::notice title=SMS Finder preview::$URL"
+          echo "## SMS Finder: $URL" >> "$GITHUB_STEP_SUMMARY"
+          # публикуем адрес в check run этого job'а — он виден, пока job ещё работает
+          API="$GITHUB_API_URL/repos/$GITHUB_REPOSITORY"
+          JOB_ID=$(curl -s -H "Authorization: Bearer $GH_TOKEN" "$API/actions/runs/$GITHUB_RUN_ID/attempts/$GITHUB_RUN_ATTEMPT/jobs" \
+                   | jq -r '.jobs[] | select(.name=="preview") | .id' | head -1)
+          echo "job_id=$JOB_ID"
+          jq -n --arg u "$URL" '{output:{title:("SMS Finder: " + $u), summary:("Временный сайт: " + $u)}}' > body.json
+          curl -s -X PATCH -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+               "$API/check-runs/$JOB_ID" -d @body.json | jq -r '.output.title // .message'
+
+      - name: Keep site running
+        run: |
+          END=$(( $(date +%s) + ${{ github.event.inputs.minutes || '300' }} * 60 ))
+          while [ "$(date +%s)" -lt "$END" ]; do
+            if ! curl -sf -o /dev/null localhost:8000/healthz; then
+              echo "app died, restarting"; tail -20 web.log
+              nohup python -m smsfinder.web >> web.log 2>&1 &
+            fi
+            echo "$(date -u +%H:%M) alive: ${{ steps.tunnel.outputs.url }}"
+            sleep 300
+          done
+
+      - name: Logs
+        if: always()
+        run: tail -50 web.log; tail -20 cf.log

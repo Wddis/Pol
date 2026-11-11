@@ -13,10 +13,10 @@ from .engine import Engine
 
 
 def _print_table(cands):
-    print(f"{'#':>2}  {'score':>5}  {'провайдер':<12} {'страна':<12} {'номер':<17} {'цена':>7}  заметка")
+    print(f"{'#':>2}  {'score':>5}  {'класс':<8} {'провайдер':<12} {'страна':<12} {'номер':<17} {'цена':>7}  заметка")
     for i, c in enumerate(cands, 1):
         price = "free" if c["public"] else f"{c['price']:.2f}"
-        print(f"{i:>2}  {c['score']:>5}  {c['provider']:<12} {c['country'][:12]:<12} "
+        print(f"{i:>2}  {c['score']:>5}  {c['tier']:<8} {c['provider']:<12} {c['country'][:12]:<12} "
               f"{c['number'] or '(после покупки)':<17} {price:>7}  {c['note']}")
 
 
@@ -29,6 +29,9 @@ def main(argv=None):
         p.add_argument("--country", default="", help="ISO2 (de), название (germany) или код")
         p.add_argument("--providers", default="", help="через запятую: receivesms,onlinesim,5sim,smsactivate")
         p.add_argument("--limit", type=int, default=15)
+        p.add_argument("--mode", default="niche", choices=["niche", "premium", "popular"])
+        p.add_argument("--probe", type=int, default=20, help="длительность живой проверки, сек")
+        p.add_argument("-v", "--verbose", action="store_true", help="показывать каждую проверку")
         if name == "get":
             p.add_argument("--pick", type=int, default=1, help="номер строки из списка (1 = лучший)")
             p.add_argument("--timeout", type=int, default=600)
@@ -36,7 +39,14 @@ def main(argv=None):
 
     eng = Engine()
     provs = [x.strip() for x in a.providers.split(",") if x.strip()] or None
-    res = eng.find(a.service, a.country, provs, a.limit)
+    res = {}
+    for ev in eng.find_stream(a.service, a.country, provs, a.limit, a.mode, a.probe):
+        if ev["type"] == "stage":
+            print(f"» {ev['text']}" + (f" [{ev['provider']}]" if ev.get("provider") else ""))
+        elif ev["type"] == "check" and (a.verbose or ev["ok"] is False and "перестал" in ev["reason"]):
+            print(f"  {'✓' if ev['ok'] else '✗'} {ev['provider']:<12} {ev['number']:<16} {ev['reason']}")
+        elif ev["type"] == "done":
+            res = ev
     for k, v in res["errors"].items():
         print(f"[!] {k}: {v}", file=sys.stderr)
     cands = res["candidates"][: a.limit]
