@@ -43,7 +43,7 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
       try {
         await p.locator('#toggle-button').click(); await p.waitForTimeout(1500);
         const ti = p.locator('#tags-container input#text-input, ytcp-form-input-container#tags-container input').first();
-        await ti.click(); await ti.fill(m.tags.join(',') + ','); log('tags set');
+        await ti.click(); await p.keyboard.type(m.tags.join(',') + ',', { delay: 5 }); log('tags set');
       } catch (e) { log('tags skipped', e.message.slice(0, 80)); }
     }
     await p.screenshot({ path: `${shot}/step1.png` });
@@ -53,11 +53,13 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
     const done = p.locator('#done-button');
     const t0 = Date.now();
     while (true) {
-      const prog = await p.locator('ytcp-video-upload-progress .progress-label, .ytcp-video-upload-progress').first().innerText().catch(() => '');
-      if (prog) log('progress:', prog.replace(/\s+/g, ' ').slice(0, 120));
-      if (/Загрузка завершена|Обработка|Проверка|завершена|Upload complete|Processing|Checks/i.test(prog) && !(/Загрузка \d|Uploading \d/i.test(prog))) break;
-      if (Date.now() - t0 > 3600e3) throw new Error('upload timeout');
-      await p.waitForTimeout(15000);
+      const prog = (await p.locator('ytcp-video-upload-progress').first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+      log('progress:', prog.slice(0, 120) || '(none)');
+      await p.screenshot({ path: `${shot}/progress.png` }).catch(() => {});
+      const uploading = /(Загрузка|Uploading)\s*\d/i.test(prog);
+      if (prog && !uploading && /(Загрузка завершена|Обработка|Проверка|Upload complete|Processing|Checks|HD|SD)/i.test(prog)) break;
+      if (Date.now() - t0 > 7200e3) throw new Error('upload timeout');
+      await p.waitForTimeout(30000);
     }
     await p.screenshot({ path: `${shot}/step2.png` });
     const link = await p.locator('a.style-scope.ytcp-video-info, ytcp-video-info a').first().getAttribute('href').catch(() => null);
