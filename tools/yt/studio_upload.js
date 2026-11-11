@@ -1,6 +1,6 @@
 // Upload a video through the YouTube Studio web UI (Playwright), logged in with cookies.txt.
 // No API, no quota. usage: node studio_upload.js cookies.txt meta.json
-// meta: {video, title, description, thumb?, tags?[], visibility: PUBLIC|UNLISTED|PRIVATE, shot_dir?}
+// meta: {channel?, video, title, description, thumb?, tags?[], visibility: PUBLIC|UNLISTED|PRIVATE, shot_dir?}
 const fs = require('fs'); const { chromium } = require('playwright');
 const [ck, metaPath] = process.argv.slice(2); const m = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
 const shot = m.shot_dir || '.';
@@ -18,8 +18,11 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
   await ctx.addCookies(cookies);
   const p = await ctx.newPage(); p.setDefaultTimeout(60000);
   try {
-    await p.goto('https://www.youtube.com/upload', { waitUntil: 'domcontentloaded', timeout: 90000 });
+    // m.channel: target channel id (needed for an editor account, otherwise /upload opens its own channel)
+    const upUrl = m.channel ? `https://studio.youtube.com/channel/${m.channel}/videos/upload?d=ud` : 'https://www.youtube.com/upload';
+    await p.goto(upUrl, { waitUntil: 'domcontentloaded', timeout: 90000 });
     await p.waitForURL(/studio\.youtube\.com\/channel/, { timeout: 90000 });
+    if (m.channel && !p.url().includes(m.channel)) throw new Error('WRONG_CHANNEL ' + p.url());
     log('studio', p.url());
     const fileInput = p.locator('input[type="file"]').first();
     await fileInput.waitFor({ state: 'attached' });
