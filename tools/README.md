@@ -13,5 +13,6 @@
   (anchor 0..1, напр. [0,1] = левый нижний угол), блюр-боксы, loudnorm, 1080p60.
 - `r2_upload_parts.py` — параллельная заливка частей (64 МБ) по presigned-ссылкам BrightBean.
 - `shorts_template.py` + `shorts_render.sh` — шортсы 1080x1920 в стиле шапки канала (заголовок, экран, вебка, «ПОЛНАЯ ЗАПИСЬ НА КАНАЛЕ»).
+- `indiepost.py <tool> <json>` — IndiePost через MCP-эндпоинт (ключ подставляет прокси окружения): init_media_upload → PUT → confirm_media_upload → create_post.
 - Полный порядок работы: `docs/playbook-vod.md`.
 - Зависимости: `pip install yt-dlp faster-whisper`, ffmpeg.
