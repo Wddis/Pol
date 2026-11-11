@@ -1,11 +1,14 @@
 // Upload a video through the YouTube Studio web UI (Playwright), logged in with cookies.txt.
 // No API, no quota. usage: node studio_upload.js cookies.txt meta.json
+//   or: node studio_upload.js cdp:9222 meta.json — use the running pult browser (remote_browser.js)
+//       whose session already passed "Подтверждение личности"; its Studio tab is reused, not closed.
 // meta: {channel?, video, title, description, thumb?, tags?[], visibility: PUBLIC|UNLISTED|PRIVATE, shot_dir?}
 const fs = require('fs'); const { chromium } = require('playwright');
 const [ck, metaPath] = process.argv.slice(2); const m = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
 const shot = m.shot_dir || '.';
+const CDP = ck.startsWith('cdp:') ? ck.slice(4) : null;
 const cookies = [];
-for (let l of fs.readFileSync(ck, 'utf8').split('\n')) {
+if (!CDP) for (let l of fs.readFileSync(ck, 'utf8').split('\n')) {
   let h = false; if (l.startsWith('#HttpOnly_')) { h = true; l = l.slice(10); } else if (l.startsWith('#') || !l.trim()) continue;
   const f = l.split('\t'); if (f.length < 7) continue;
   const c = { name: f[5], value: f[6].trim(), domain: f[0], path: f[2], secure: f[3] === 'TRUE', httpOnly: h };
@@ -13,10 +16,19 @@ for (let l of fs.readFileSync(ck, 'utf8').split('\n')) {
 }
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 (async () => {
-  const b = await chromium.launch();
-  const ctx = await b.newContext({ viewport: { width: 1400, height: 1000 }, locale: 'ru-RU', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36' });
-  await ctx.addCookies(cookies);
-  const p = await ctx.newPage(); p.setDefaultTimeout(60000);
+  let b, p;
+  if (CDP) {
+    // pages opened via a foreign CDP connection land in a logged-out context — reuse the pult's own Studio tab
+    b = await chromium.connectOverCDP(`http://127.0.0.1:${CDP}`);
+    p = b.contexts().flatMap(c => c.pages()).find(x => /studio\.youtube\.com/.test(x.url()));
+    if (!p) throw new Error('NO_STUDIO_TAB in the pult browser');
+  } else {
+    b = await chromium.launch();
+    const ctx = await b.newContext({ viewport: { width: 1400, height: 1000 }, locale: 'ru-RU', userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36' });
+    await ctx.addCookies(cookies);
+    p = await ctx.newPage();
+  }
+  p.setDefaultTimeout(60000);
   try {
     // m.channel: target channel id (needed for an editor account, otherwise /upload opens its own channel)
     const upUrl = m.channel ? `https://studio.youtube.com/channel/${m.channel}/videos/upload?d=ud` : 'https://www.youtube.com/upload';
@@ -70,5 +82,5 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
     console.log('ERROR', e.message.slice(0, 400)); await p.screenshot({ path: `${shot}/error.png` }).catch(() => {});
     process.exitCode = 1;
   }
-  await b.close();
+  if (CDP) process.exit(process.exitCode || 0); else await b.close();
 })();
