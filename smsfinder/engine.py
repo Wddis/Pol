@@ -244,7 +244,11 @@ class Engine:
                 yield {"type": "stage", "text": f"Отсеяно как «заезженные» (много SMS / сервис уже "
                                                 f"регистрировался): {len(dropped)}"}
         elif mode == "premium":
-            cands = [c for c in cands if not c.public]
+            dropped = [c for c in cands if c.public or c.tier != "premium"]
+            cands = [c for c in cands if not c.public and c.tier == "premium"]
+            if dropped:
+                yield {"type": "stage", "text": f"Отсеяно не-премиум (доставка <50%, виртуальный "
+                                                f"оператор): {len(dropped)}"}
 
         # этап 2: живая проверка лучших бесплатных номеров
         free = sorted([c for c in cands if c.public], key=lambda c: c.score, reverse=True)[:limit]
