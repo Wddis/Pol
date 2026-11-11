@@ -16,3 +16,9 @@
 - `indiepost.py <tool> <json>` — IndiePost через MCP-эндпоинт (ключ подставляет прокси окружения): init_media_upload → PUT → confirm_media_upload → create_post.
 - Полный порядок работы: `docs/playbook-vod.md`.
 - Зависимости: `pip install yt-dlp faster-whisper`, ffmpeg.
+- `yt/yt_upload.py` + `yt/session_token.js` — загрузка на YouTube БЕЗ API и квот через внутренний API Studio
+  (пакет youtube-up 0.5.6 в venv; sessionToken берётся через Playwright вместо selenium-wire).
+  Нужен cookies.txt (Netscape) аккаунта с доступом к каналу (лучше отдельный аккаунт с ролью «Редактор»).
+  Cookies НЕ коммитить и не хранить в репо.
+  Установка: `python3 -m venv ytenv && ytenv/bin/pip install youtube-up==0.5.6`
+  Запуск: `ytenv/bin/python tools/yt/yt_upload.py cookies.txt meta.json`
