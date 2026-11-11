@@ -24,4 +24,5 @@
   Запуск: `ytenv/bin/python tools/yt/yt_upload.py cookies.txt meta.json`
   (youtube-up сейчас ломается на получении sessionToken — YouTube изменил Studio.)
 - `yt/studio_upload.js` — загрузка через веб-интерфейс Studio (Playwright, cookies.txt, обычный Chrome UA).
+  `yt/studio_publish_draft.js` — дописать и опубликовать существующий черновик по названию.
   Работает до шага публикации; Google может запросить «Подтверждение личности» — тогда владелец публикует черновик вручную.
