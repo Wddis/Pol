@@ -3,7 +3,7 @@
 // usage: node remote_browser.js cookies.txt [port=8765] [cdp_port=9222] [start_url]
 // - open http://localhost:<port>/?t=<token> (RB_TOKEN) — exposed to the owner's phone via a tunnel;
 // - upload scripts attach to the same logged-in browser: chromium.connectOverCDP('http://127.0.0.1:<cdp_port>').
-const fs = require('fs'); const http = require('http');
+const fs = require('fs'); const http = require('http'); const { spawn } = require('child_process');
 const { chromium } = require('playwright');
 const [ck, PORT = '8765', CDP = '9222', START = 'https://studio.youtube.com/'] = process.argv.slice(2);
 const TOKEN = process.env.RB_TOKEN || '';
@@ -23,7 +23,7 @@ body{margin:0;background:#111;color:#eee;font:14px system-ui}#bar{display:flex;g
 .p{background:#2b6;color:#000;font-weight:600}
 </style></head><body><div id="bar">
 <input id="tx" placeholder="пароль / код сюда" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false">
-<button class="p" onclick="send('fill',{text:tx.value})">Вставить в поле</button>
+<button class="p" onclick="send('fill',{text:tx.value});tx.value=''">Вставить в поле</button>
 <button onclick="send('type',{text:tx.value});tx.value=''">Печатать</button>
 <button onclick="send('key',{key:'Enter'})">Enter</button>
 <button onclick="send('key',{key:'Backspace'})">⌫</button>
@@ -38,41 +38,89 @@ s.onclick=e=>{const r2=s.getBoundingClientRect();send('click',{x:(e.clientX-r2.l
 let busy=false;function r(){if(busy)return;busy=true;const i=new Image();i.onload=()=>{s.src=i.src;busy=false};i.onerror=()=>busy=false;i.src='/shot?t='+T+'&'+Date.now()}
 setInterval(r,1200);r();
 </script></body></html>`;
+// Google's sign-in silently rejects automated browsers: after "Далее" the password field is cleared,
+// the button greys out and nothing happens. The old launch was a giveaway on every signal —
+// headless shell (sec-ch-ua "HeadlessChrome"), navigator.webdriver=true, and a Windows/Chrome 141 UA
+// that contradicted the real Linux/Chrome 153 client hints. Now: a real (headed) Chromium on a virtual
+// display, no automation flags, and the browser's own UA — so every signal agrees.
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function startDisplay() {
+  if (process.env.DISPLAY || process.env.RB_HEADLESS === '1') return null;
+  const bin = ['/usr/bin/Xvfb', '/usr/local/bin/Xvfb'].find(f => fs.existsSync(f));
+  if (!bin) return null;
+  // a previous pult killed with -9 can't clean up its Xvfb — do it now
+  const PIDF = '/tmp/remote_browser_xvfb.pid';
+  try { const [pid, d] = fs.readFileSync(PIDF, 'utf8').split(' '); process.kill(+pid, 'SIGKILL');
+    for (const f of [`/tmp/.X${d}-lock`, `/tmp/.X11-unix/X${d}`]) fs.rmSync(f, { force: true }); } catch (e) {}
+  for (let n = 90; n < 110; n++) {
+    if (fs.existsSync(`/tmp/.X11-unix/X${n}`) || fs.existsSync(`/tmp/.X${n}-lock`)) continue;
+    const x = spawn(bin, [`:${n}`, '-screen', '0', `${W}x${H + 120}x24`, '-nolisten', 'tcp'], { stdio: 'ignore' });
+    for (let i = 0; i < 30 && x.exitCode === null && !fs.existsSync(`/tmp/.X11-unix/X${n}`); i++) await sleep(100);
+    if (x.exitCode === null) { process.env.DISPLAY = `:${n}`; fs.writeFileSync(PIDF, `${x.pid} ${n}`); return x; }
+  }
+  return null;
+}
 (async () => {
-  const b = await chromium.launch({ args: [`--remote-debugging-port=${CDP}`] });
-  const ctx = await b.newContext({ viewport: { width: W, height: H }, locale: 'ru-RU',
-    userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36' });
+  const xvfb = await startDisplay();
+  const headed = !!process.env.DISPLAY && process.env.RB_HEADLESS !== '1';
+  const b = await chromium.launch({
+    headless: !headed,
+    channel: headed ? undefined : 'chromium', // new headless = full Chromium, not the headless shell
+    ignoreDefaultArgs: ['--enable-automation'],
+    args: [`--remote-debugging-port=${CDP}`, '--disable-blink-features=AutomationControlled', '--lang=ru-RU',
+      `--window-size=${W},${H + 120}`],
+  });
+  const kill = () => { try { xvfb && xvfb.kill('SIGKILL'); } catch (e) {} };
+  process.on('exit', kill); for (const sig of ['SIGINT', 'SIGTERM']) process.on(sig, () => { kill(); process.exit(0); });
+  // Keep the browser's real version/platform; only drop the "Headless" word if we had to run headless.
+  const ua0 = await (async () => { const t = await b.newPage(); const v = await t.evaluate(() => navigator.userAgent); await t.close(); return v; })();
+  const ctx = await b.newContext({ viewport: { width: W, height: H }, locale: 'ru-RU', timezoneId: 'Europe/Moscow',
+    userAgent: ua0.replace('HeadlessChrome/', 'Chrome/') });
   await ctx.addCookies(cookies);
   let p = await ctx.newPage(); await p.goto(START, { waitUntil: 'domcontentloaded' }).catch(() => {});
   ctx.on('page', np => { p = np; });
   // When a Google sign-in/challenge tab is open, pin to it (both screenshot and clicks),
   // so the two tabs can't swap under the owner between /shot and /click.
-  const cur = () => { const ps = ctx.pages(); return ps.find(x => /accounts\.google\.com|gds\.google\.com/.test(x.url())) || ps[ps.length - 1] || p; };
-  // Fill the field the owner means: prefer a visible password field, else the focused/last visible text-like input.
+  // The newest such tab wins; it is brought to front so it has focus (Google checks it) and renders.
+  let shown = null;
+  const cur = async () => {
+    const ps = ctx.pages();
+    const g = ps.filter(x => /accounts\.google\.com|gds\.google\.com/.test(x.url()));
+    const pg = g[g.length - 1] || ps[ps.length - 1] || p;
+    if (pg !== shown) { shown = pg; await pg.bringToFront().catch(() => {}); }
+    return pg;
+  };
+  // Fill the field the owner means: Google's password box first, then other credential/code inputs.
+  // Looks in every frame, takes the FIRST visible editable match (Google keeps hidden decoy inputs),
+  // clears and types with real key events, then reads the value back so the owner sees the truth.
+  const SELS = ['input[name="Passwd"]', 'input[type="password"]', 'input[autocomplete="one-time-code"]', 'input[type="tel"]',
+    'input[type="email"]', 'input[type="text"]', 'input:not([type])'];
   const fillField = async (pg, text) => {
-    const sels = ['input[type="password"]', 'input[type="tel"]', 'input[type="email"]', 'input[autocomplete="one-time-code"]', 'input[type="text"]:not([readonly])'];
-    for (const sel of sels) {
-      const loc = pg.locator(sel + ':visible');
-      const n = await loc.count();
-      if (n) {
-        const el = loc.nth(n - 1);
-        await el.click({ timeout: 3000 }).catch(() => {});
-        // clear, then type with REAL key events — Google forms reject programmatically-set values
-        await el.fill('', { timeout: 3000 }).catch(() => {});
-        await pg.keyboard.type(text, { delay: 45 });
-        return 'введено в ' + sel + ' (' + text.length + ' симв.)';
+    for (const sel of SELS) for (const fr of pg.frames()) {
+      const loc = fr.locator(sel); const n = await loc.count().catch(() => 0);
+      for (let i = 0; i < n; i++) {
+        const el = loc.nth(i);
+        if (!(await el.isVisible().catch(() => false)) || !(await el.isEditable().catch(() => false))) continue;
+        await el.scrollIntoViewIfNeeded({ timeout: 2000 }).catch(() => {});
+        await el.click({ timeout: 3000 }).catch(() => el.focus().catch(() => {}));
+        await pg.keyboard.press('Control+A'); await pg.keyboard.press('Backspace');
+        await pg.keyboard.type(text, { delay: 60 });
+        const got = (await el.inputValue().catch(() => '')).length;
+        return got === text.length
+          ? `введено в ${sel} (${got} симв.) — теперь тапните «Далее»`
+          : `ВНИМАНИЕ: в поле ${sel} ${got} симв. из ${text.length} — попробуйте ещё раз`;
       }
     }
-    await pg.keyboard.type(text, { delay: 45 }); return 'поле не найдено — напечатано в фокус';
+    return 'поле ввода не найдено — сначала тапните по полю на картинке, потом «Печатать»';
   };
   http.createServer(async (req, res) => {
     const u = new URL(req.url, 'http://x');
     if (TOKEN && u.searchParams.get('t') !== TOKEN) { res.writeHead(403); return res.end('forbidden'); }
     try {
       if (u.pathname === '/') { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); return res.end(PAGE); }
-      if (u.pathname === '/shot') { const img = await cur().screenshot({ type: 'jpeg', quality: 55 }); res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' }); return res.end(img); }
+      if (u.pathname === '/shot') { const img = await (await cur()).screenshot({ type: 'jpeg', quality: 55 }); res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'no-store' }); return res.end(img); }
       let body = ''; for await (const c of req) body += c; const a = body ? JSON.parse(body) : {};
-      const pg = cur(); let msg = '';
+      const pg = await cur(); let msg = '';
       if (u.pathname === '/click') await pg.mouse.click(a.x, a.y);
       else if (u.pathname === '/fill') msg = await fillField(pg, a.text || '');
       else if (u.pathname === '/type') await pg.keyboard.type(a.text || '', { delay: 25 });
@@ -81,5 +129,5 @@ setInterval(r,1200);r();
       else if (u.pathname === '/back') await pg.goBack().catch(() => {});
       res.writeHead(200); res.end(msg);
     } catch (e) { res.writeHead(200); res.end(String(e.message || e).slice(0, 160)); }
-  }).listen(+PORT, '0.0.0.0', () => console.log(`REMOTE http://localhost:${PORT}/${TOKEN ? '?t=' + TOKEN : ''}  CDP http://127.0.0.1:${CDP}`));
+  }).listen(+PORT, '0.0.0.0', () => console.log(`${headed ? 'HEADED on ' + process.env.DISPLAY : 'HEADLESS (no Xvfb)'}  UA ${ua0.replace('HeadlessChrome/', 'Chrome/')}\nREMOTE http://localhost:${PORT}/${TOKEN ? '?t=' + TOKEN : ''}  CDP http://127.0.0.1:${CDP}`));
 })();
