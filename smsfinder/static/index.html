@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMS Finder</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#14171c;--muted:#667085;--line:#e4e7ec;--acc:#2f6fed;--ok:#12805c;--warn:#b54708;--bad:#c4320a}
+@media (prefers-color-scheme:dark){:root{--bg:#0f1115;--card:#171a21;--fg:#e8eaee;--muted:#98a2b3;--line:#2a2f3a;--acc:#5b8cff;--ok:#3ccf91;--warn:#f5a524;--bad:#ff6b4a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
+.wrap{max-width:1040px;margin:0 auto;padding:20px 16px 60px}
+h1{font-size:22px;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;margin-bottom:16px}
+.row{display:flex;flex-wrap:wrap;gap:12px;align-items:end}
+label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--muted)}
+input,select{font:inherit;color:var(--fg);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px 10px;min-width:150px}
+button{font:inherit;border:0;border-radius:8px;padding:9px 14px;background:var(--acc);color:#fff;cursor:pointer;font-weight:600}
+button.ghost{background:transparent;color:var(--fg);border:1px solid var(--line)}
+button:disabled{opacity:.5;cursor:default}
+.provs{display:flex;flex-wrap:wrap;gap:8px 16px;margin-top:12px}
+.provs label{flex-direction:row;align-items:center;color:var(--fg);font-size:14px}
+.provs input{min-width:0;padding:0;margin:0 2px 0 0}
+.provs small{color:var(--muted)}
+.tbl{width:100%;border-collapse:collapse;font-size:14px}
+.tbl th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--line);padding:6px}
+.tbl td{border-bottom:1px solid var(--line);padding:8px 6px;vertical-align:top}
+.tbl td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
+.scroll{overflow-x:auto}
+.tag{display:inline-block;font-size:12px;padding:1px 7px;border-radius:99px;border:1px solid var(--line);color:var(--muted)}
+.tag.pub{color:var(--warn);border-color:var(--warn)}.tag.priv{color:var(--ok);border-color:var(--ok)}
+.muted{color:var(--muted)}.err{color:var(--bad)}
+.act{display:grid;grid-template-columns:1fr auto;gap:12px;align-items:center}
+.big{font-size:26px;font-weight:700;font-variant-numeric:tabular-nums;cursor:pointer}
+.code{font-size:34px;font-weight:800;color:var(--ok);letter-spacing:2px;cursor:pointer}
+.sms{border-top:1px solid var(--line);padding:8px 0}
+.sms b{font-weight:600}
+.bar{height:4px;background:var(--line);border-radius:4px;overflow:hidden;margin-top:8px}.bar i{display:block;height:100%;background:var(--acc);width:0}
+.note{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>SMS Finder</h1>
+  <p class="sub">Параллельно опрашивает сайты виртуальных номеров, проверяет активность и доставку, выдаёт лучший номер и ждёт SMS.</p>
+
+  <div class="card">
+    <div class="row">
+      <label>Сервис<select id="service"></select></label>
+      <label>Страна<input id="country" placeholder="de, usa, 49… (пусто = все)"></label>
+      <label>Ожидание, мин<input id="timeout" type="number" value="10" min="1" max="60" style="min-width:90px"></label>
+      <button id="find">Подобрать номера</button>
+      <button id="auto" class="ghost">Взять лучший и ждать SMS</button>
+    </div>
+    <div class="provs" id="provs"></div>
+  </div>
+
+  <div class="card" id="actCard" hidden>
+    <div class="act">
+      <div>
+        <div class="muted" id="actMeta"></div>
+        <div class="big" id="actNum" title="Нажмите, чтобы скопировать"></div>
+        <div id="actWarn" class="note"></div>
+      </div>
+      <div style="text-align:right">
+        <div class="code" id="actCode" title="Скопировать код"></div>
+        <div class="muted" id="actStatus"></div>
+        <button class="ghost" id="actCancel" style="margin-top:6px">Остановить</button>
+      </div>
+    </div>
+    <div class="bar"><i id="actBar"></i></div>
+    <div id="actSms" style="margin-top:10px"></div>
+  </div>
+
+  <div class="card">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <b>Кандидаты</b><span class="muted" id="took"></span>
+    </div>
+    <div id="errors" class="err note"></div>
+    <div class="scroll"><table class="tbl"><thead><tr>
+      <th>Score</th><th>Номер</th><th>Страна</th><th>Источник</th><th>Цена</th><th>Проверка</th><th></th>
+    </tr></thead><tbody id="rows"><tr><td colspan="7" class="muted">Нажмите «Подобрать номера».</td></tr></tbody></table></div>
+  </div>
+  <p class="note">Бесплатные номера публичны: их SMS видны всем, номер может быть уже занят в сервисе. Для своих аккаунтов используйте платные приватные (5sim / SMS-Activate-совместимые) с API-ключом.</p>
+</div>
+<script>
+const T = new URLSearchParams(location.search).get('t');
+const q = (p) => p + (T ? (p.includes('?') ? '&' : '?') + 't=' + encodeURIComponent(T) : '');
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let current = null, timer = null;
+
+async function api(path, body) {
+  const r = await fetch(q(path), body ? {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)} : {});
+  const j = await r.json().catch(() => ({error: 'HTTP ' + r.status}));
+  if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+  return j;
+}
+const provs = () => [...document.querySelectorAll('#provs input:checked')].map(i => i.value);
+const params = () => ({service: $('service').value, country: $('country').value.trim(), timeout: +$('timeout').value * 60});
+
+async function init() {
+  const m = await api('/api/meta');
+  $('service').innerHTML = m.services.map(s => `<option>${s}</option>`).join('');
+  $('provs').innerHTML = m.providers.map(p => `<label><input type="checkbox" value="${p.name}" ${p.enabled ? 'checked' : 'disabled'}> ${esc(p.title)} ${p.note ? `<small>(${esc(p.note)})</small>` : ''}</label>`).join('');
+}
+
+function copy(t) { navigator.clipboard?.writeText(t); }
+
+async function find() {
+  $('find').disabled = true; $('rows').innerHTML = '<tr><td colspan="7" class="muted">Проверяю номера…</td></tr>';
+  try {
+    const p = params();
+    const r = await api(`/api/find?service=${encodeURIComponent(p.service)}&country=${encodeURIComponent(p.country)}&providers=${provs().join(',')}&limit=20`);
+    $('took').textContent = `${r.candidates.length} шт. · ${r.took} с`;
+    $('errors').textContent = Object.entries(r.errors).map(([k, v]) => `${k}: ${v}`).join(' · ');
+    $('rows').innerHTML = r.candidates.length ? r.candidates.map(c => `<tr>
+      <td class="num"><b>${c.score}</b></td>
+      <td class="num">${c.number ? esc(c.number) : '<span class="muted">после покупки</span>'}</td>
+      <td>${esc(c.country)}</td>
+      <td>${esc(c.provider)} <span class="tag ${c.public ? 'pub' : 'priv'}">${c.public ? 'публичный' : 'приватный'}</span></td>
+      <td class="num">${c.public ? 'free' : c.price.toFixed(2)}</td>
+      <td class="note">${esc(c.note)}</td>
+      <td>${c.extra.can_buy ? `<button data-id="${c.id}">Взять</button>` : '<span class="note" title="Задайте API-ключ провайдера">нужен ключ</span>'}</td></tr>`).join('')
+      : '<tr><td colspan="7" class="muted">Ничего не найдено — смените страну или сервис.</td></tr>';
+  } catch (e) { $('rows').innerHTML = `<tr><td colspan="7" class="err">${esc(e.message)}</td></tr>`; }
+  $('find').disabled = false;
+}
+
+function show(a) {
+  current = a; $('actCard').hidden = false;
+  $('actNum').textContent = a.number || '…';
+  $('actMeta').textContent = `${a.provider} · ${a.candidate.country} · ${a.service}`;
+  $('actWarn').textContent = a.public ? '⚠ Публичный номер — SMS видят все.' : '';
+  $('actCode').textContent = a.code || '';
+  const st = {waiting:'Жду SMS…', received:'Код получен ✓', timeout:'Время вышло', cancelled:'Остановлено', error:'Ошибка', starting:'Подключаюсь…'}[a.status] || a.status;
+  $('actStatus').textContent = `${st} · ${Math.floor(a.elapsed / 60)}:${String(a.elapsed % 60).padStart(2, '0')}` + (a.error ? ` · ${a.error}` : '');
+  $('actBar').style.width = Math.min(100, a.elapsed / a.timeout * 100) + '%';
+  $('actSms').innerHTML = a.messages.length ? a.messages.slice().reverse().map(m => `<div class="sms"><b>${esc(m.sender)}</b> <span class="muted">${esc(m.received)}</span><br>${esc(m.text)}${m.code ? ` <span class="tag priv">код ${esc(m.code)}</span>` : ''}</div>`).join('') : '<div class="muted note">Новых SMS пока нет. Отправьте код на этот номер.</div>';
+  $('actCancel').disabled = !['waiting', 'starting'].includes(a.status);
+}
+
+function watch(a) {
+  show(a); clearInterval(timer);
+  timer = setInterval(async () => {
+    try { const x = await api('/api/activation/' + a.id); show(x); if (!['waiting', 'starting'].includes(x.status)) clearInterval(timer); } catch (e) {}
+  }, 2500);
+  $('actCard').scrollIntoView({behavior: 'smooth'});
+}
+
+$('rows').addEventListener('click', async (e) => {
+  const id = e.target.dataset?.id; if (!id) return;
+  e.target.disabled = true;
+  try { watch(await api('/api/start', {id, ...params()})); } catch (err) { alert(err.message); }
+  e.target.disabled = false;
+});
+$('auto').onclick = async () => {
+  $('auto').disabled = true;
+  try { watch(await api('/api/auto', {...params(), providers: provs()})); } catch (err) { alert(err.message); }
+  $('auto').disabled = false;
+};
+$('find').onclick = find;
+$('actCancel').onclick = async () => current && show(await api(`/api/activation/${current.id}/cancel`, {}));
+$('actNum').onclick = () => current && copy(current.number);
+$('actCode').onclick = () => current?.code && copy(current.code);
+init().catch(e => $('errors').textContent = e.message);
+</script>
+</body>
+</html>
