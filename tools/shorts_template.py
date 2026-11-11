@@ -15,7 +15,7 @@ bg=Image.new('RGB',(W,H),(8,8,8)); d=ImageDraw.Draw(bg)
 # speed-line slashes like the banner (white streaks radiating)
 for i in range(70):
     a=random.uniform(-0.5,0.5)+ (math.pi if random.random()<.5 else 0)
-    x0,y0=random.randint(0,W),random.choice([random.randint(0,370),random.randint(1625,H)])
+    x0,y0=random.randint(0,W),random.choice([random.randint(0,18),random.randint(1625,H)])
     L=random.randint(120,520); w=random.choice([1,2,2,3,5])
     d.line([(x0,y0),(x0+L*math.cos(a),y0+L*math.sin(a)*0.35)],fill=(random.randint(150,255),)*3,width=w)
 # film strip on bottom edge
