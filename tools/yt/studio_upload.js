@@ -14,6 +14,17 @@ if (!CDP) for (let l of fs.readFileSync(ck, 'utf8').split('\n')) {
   const c = { name: f[5], value: f[6].trim(), domain: f[0], path: f[2], secure: f[3] === 'TRUE', httpOnly: h };
   if (+f[4] > 0) c.expires = +f[4]; cookies.push(c);
 }
+// Over CDP Playwright refuses to send files > 50 MB ("browser not co-located"). The pult browser IS on
+// this machine, so hand it the local path directly (DOM.setFileInputFiles) — no 50 MB limit.
+async function setFiles(p, loc, file) {
+  if (!CDP) return loc.setInputFiles(file);
+  const h = await loc.elementHandle();
+  await h.evaluate(el => { window.__upTarget = el; });
+  const s = await p.context().newCDPSession(p);
+  const { result } = await s.send('Runtime.evaluate', { expression: 'window.__upTarget' });
+  await s.send('DOM.setFileInputFiles', { files: [require('path').resolve(file)], objectId: result.objectId });
+  await s.detach().catch(() => {});
+}
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 (async () => {
   let b, p;
@@ -38,7 +49,7 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
     log('studio', p.url());
     const fileInput = p.locator('input[type="file"]').first();
     await fileInput.waitFor({ state: 'attached' });
-    await fileInput.setInputFiles(m.video); log('file selected');
+    await setFiles(p, fileInput, m.video); log('file selected');
     // title
     const title = p.locator('#title-textarea #textbox, ytcp-social-suggestions-textbox#title-textarea #textbox').first();
     await title.waitFor({ state: 'visible', timeout: 120000 });
@@ -48,7 +59,7 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
     await desc.click(); await desc.fill(m.description || ''); log('description set');
     if (m.thumb) {
       const ti = p.locator('#file-loader, ytcp-thumbnails-compact-editor-uploader input[type="file"], input[type="file"][accept*="image"]').first();
-      await ti.setInputFiles(m.thumb); log('thumbnail set'); await p.waitForTimeout(3000);
+      await setFiles(p, ti, m.thumb); log('thumbnail set'); await p.waitForTimeout(3000);
     }
     await p.locator('tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]').click(); log('not for kids');
     if (m.tags && m.tags.length) {
