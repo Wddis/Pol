@@ -1,3 +1,4 @@
 cookies*.txt
 *.cookies
 __pycache__/
+out/
