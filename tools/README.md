@@ -11,4 +11,6 @@
 - `edit2.py` — быстрый рендер длинных нарезок (зум только на нужных кусках, громкость один раз в конце).
 - `edit.py src.mp4 plan.json out.mp4` — монтаж по плану: куски, зум на вебку
   (anchor 0..1, напр. [0,1] = левый нижний угол), блюр-боксы, loudnorm, 1080p60.
+- `r2_upload_parts.py` — параллельная заливка частей (64 МБ) по presigned-ссылкам BrightBean.
+- Полный порядок работы: `docs/playbook-vod.md`.
 - Зависимости: `pip install yt-dlp faster-whisper`, ffmpeg.

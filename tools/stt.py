@@ -2,7 +2,7 @@
 import sys, wave, numpy as np
 from faster_whisper import WhisperModel
 w = wave.open(sys.argv[1]); a = np.frombuffer(w.readframes(w.getnframes()), np.int16).astype(np.float32) / 32768
-m = WhisperModel('small', device='cpu', compute_type='int8', cpu_threads=4)
+m = WhisperModel(__import__('os').environ.get('WM','small'), device='cpu', compute_type='int8', cpu_threads=4)
 segs, _ = m.transcribe(a, language='ru', vad_filter=True)
 with open(sys.argv[2], 'w') as f:
     for s in segs:
