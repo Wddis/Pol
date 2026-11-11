@@ -45,7 +45,9 @@ setInterval(r,1200);r();
   await ctx.addCookies(cookies);
   let p = await ctx.newPage(); await p.goto(START, { waitUntil: 'domcontentloaded' }).catch(() => {});
   ctx.on('page', np => { p = np; });
-  const cur = () => { const ps = ctx.pages(); return ps[ps.length - 1] || p; };
+  // When a Google sign-in/challenge tab is open, pin to it (both screenshot and clicks),
+  // so the two tabs can't swap under the owner between /shot and /click.
+  const cur = () => { const ps = ctx.pages(); return ps.find(x => /accounts\.google\.com|gds\.google\.com/.test(x.url())) || ps[ps.length - 1] || p; };
   // Fill the field the owner means: prefer a visible password field, else the focused/last visible text-like input.
   const fillField = async (pg, text) => {
     const sels = ['input[type="password"]', 'input[type="tel"]', 'input[type="email"]', 'input[type="text"]:not([readonly])', 'input[autocomplete="one-time-code"]'];
