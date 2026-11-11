@@ -23,6 +23,8 @@
   Установка: `python3 -m venv ytenv && ytenv/bin/pip install youtube-up==0.5.6`
   Запуск: `ytenv/bin/python tools/yt/yt_upload.py cookies.txt meta.json`
   (youtube-up сейчас ломается на получении sessionToken — YouTube изменил Studio.)
+- `yt/remote_browser.js` — пульт: владелец сам проходит «Подтверждение личности» с телефона (см. docs/publishing-methods.md).
+  `yt/export_cookies.js` — сохранить cookies из браузера пульта после подтверждения (только в scratchpad).
 - `yt/studio_upload.js` — загрузка через веб-интерфейс Studio (Playwright, cookies.txt, обычный Chrome UA).
   `yt/studio_publish_draft.js` — дописать и опубликовать существующий черновик по названию.
   Работает до шага публикации; Google может запросить «Подтверждение личности» — тогда владелец публикует черновик вручную.

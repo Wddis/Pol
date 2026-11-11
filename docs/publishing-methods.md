@@ -79,6 +79,33 @@ devtunnel host -p 8765 --allow-anonymous
 4. Подтверждение на телефоне / код из SMS — на своём телефоне.
 5. Когда появится «Выбрать файлы» — сказать Claude; он подключится по CDP и зальёт ролик.
 
+### Проверенный запуск (11.11.2026, вечер) — ПОДТВЕРЖДЕНИЕ ПРОЙДЕНО
+После исправления браузера (headed Chromium на Xvfb, см. баги ниже) владелец прошёл
+«Подтверждение личности» через пульт с телефона с первой попытки. После этого в Studio
+открывается «Загрузка видео» → «Выбрать файлы», окна проверки больше нет. Порядок:
+```
+S=<scratchpad>; cd $S                                   # всё секретное — только тут
+cp <присланный cookies.txt> cookies.txt && chmod 600 cookies.txt
+python3 -c "import secrets;print(secrets.token_urlsafe(18))" > rb_token
+RB_TOKEN=$(cat rb_token) nohup node <repo>/tools/yt/remote_browser.js cookies.txt 8765 9222 \
+  "https://studio.youtube.com/channel/UC4R6TINYFRWa_80Vewy068g/videos/upload" > rb.log 2>&1 &
+# в rb.log первой строкой должно быть: HEADED on :90 ...
+curl -sSL -o bin/devtunnel https://aka.ms/TunnelsCliDownload/linux-x64 && chmod +x bin/devtunnel
+export SSL_CERT_FILE=/root/.ccr/ca-bundle.crt
+bin/devtunnel user login -d        # владелец: login.microsoft.com/device + код из вывода
+nohup bin/devtunnel host -p 8765 --allow-anonymous > dt_host.log 2>&1 &
+grep -o 'https://[^ ]*-8765.use.devtunnels.ms' dt_host.log   # + "/?t=$(cat rb_token)" -> владельцу
+```
+Проверка прохождения (Claude, по CDP): открыть
+`.../videos/upload?d=ud` и убедиться, что нет текста «Подтверждение личности» и есть `input[type=file]`.
+
+**Сохранить подтверждённую сессию** сразу после прохождения (cookies обновляются):
+`node tools/yt/export_cookies.js $S/cookies_verified.txt` — следующие запуски пульта и
+`studio_upload.js` делать с `cookies_verified.txt`. Файл — только в scratchpad, не в репо.
+Пульт (процесс `remote_browser.js`) НЕ гасить, пока идут загрузки: подтверждение живёт в этом
+браузере, скрипт загрузки подключается к нему по CDP `http://127.0.0.1:9222`.
+В конце сессии: `pkill -f 'devtunnel host'; pkill -f remote_browser.js`.
+
 ### БАГИ пульта и их исправления (все уже внесены в remote_browser.js)
 - Тап по картинке на телефоне попадал неточно (считали `offsetX`) → перешли на координаты от
   `getBoundingClientRect`.
