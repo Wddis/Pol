@@ -2,7 +2,7 @@
 
 Собрано 12.11.2026 по справке YouTube (support.google.com/youtube) + фактам нашего канала из Studio.
 Связанные документы: публикация и лимиты — `docs/publishing-methods.md`, монтаж — `docs/montage-style.md`,
-статус — `docs/STATUS.md`.
+статус — `docs/STATUS.md`, практическая инструкция «без жёлтой карточки» — `docs/no-yellow-card.md`.
 
 ## 0. Что сейчас на канале (проверено в Studio 12.11)
 | Видео | Пометка в Studio | Что значит |
