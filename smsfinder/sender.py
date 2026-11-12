@@ -1,17 +1,30 @@
 """Отправка тестовых SMS для проверки номеров.
 
-Шлюзы (используется первый настроенный, Textbelt free — запасной):
-  textbee   — open-source шлюз github.com/textbee/textbee: SMS уходит с вашего Android-телефона.
-              TEXTBEE_KEY [, TEXTBEE_DEVICE]
-  httpsms   — open-source шлюз github.com/NdoleStudio/httpsms (тоже через ваш Android).
-              HTTPSMS_KEY, HTTPSMS_FROM
-  twilio    — TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM
-  textbelt  — TEXTBELT_KEY (платный ключ) или бесплатный ключ "textbelt": 1 SMS в день с одного IP.
+Маршрут (route) — один независимый способ отправить SMS. Умный режим шлёт на номер два SMS
+по двум случайным разным маршрутам; если дошли оба — номер принимает SMS (2/2).
+
+  smsgate  — SMS Gateway for Android (github.com/capcom6/android-sms-gateway, ★6000, open-source,
+             бесплатное облако api.sms-gate.app). SMS уходит с вашего Android-телефона;
+             каждый телефон и каждая его SIM — отдельный маршрут.
+             SMSGATE_LOGIN + SMSGATE_PASSWORD (выдаёт приложение, режим Cloud) или SMSGATE_TOKEN;
+             SMSGATE_URL — свой сервер (по умолчанию облако); SMSGATE_SIMS — какие SIM использовать, «1,2».
+  httpsms  — github.com/NdoleStudio/httpsms (тоже через ваш Android). HTTPSMS_KEY, HTTPSMS_FROM
+  telnyx   — платный API без телефона, шлёт на международные номера. TELNYX_KEY, TELNYX_FROM
+  twilio   — платный. TWILIO_SID, TWILIO_TOKEN, TWILIO_FROM (пробный аккаунт шлёт только на
+             подтверждённые номера — для публичных номеров нужен платный)
+  textbelt — платный ключ TEXTBELT_KEY. Бесплатный ключ «textbelt» (1 SMS/день, для многих стран
+             отключён) используется только обычной проверкой, в умный режим не берётся.
+
+Бесплатных API, которые шлют SMS на любые номера без своего телефона, нет: у пробных тарифов
+Twilio/Vonage/Infobip отправка только на номера, подтверждённые владельцем аккаунта.
 """
 from __future__ import annotations
 
+import base64
 import os
+import random
 import threading
+import time
 from dataclasses import dataclass
 from typing import Optional
 
@@ -29,81 +42,76 @@ class SendResult:
     quota: Optional[int] = None
 
 
-class Sender:
+class Route:
+    """Один маршрут отправки."""
+
     name = "base"
-
-    def configured(self) -> bool:
-        return False
-
-    def quota(self) -> Optional[int]:
-        """Сколько SMS ещё можно отправить (None — без ограничения/неизвестно)."""
-        return None
 
     def send(self, to: str, text: str) -> SendResult:
         raise NotImplementedError
 
+    def state(self, msg_id: str) -> str:
+        """Статус доставки от шлюза ('' — неизвестно)."""
+        return ""
 
-class TextBelt(Sender):
-    name = "textbelt"
-    blocked = ""  # причина, если бесплатная отправка отклонена (запоминаем, чтобы не повторять)
 
-    def __init__(self):
-        self.key = os.getenv("TEXTBELT_KEY", "textbelt")
-        self._quota: Optional[int] = None
+# --- SMS Gateway for Android (SMSGate) -------------------------------------------
+class SmsGate(Route):
+    def __init__(self, base: str, auth: str, device: str = "", device_name: str = "", sim: Optional[int] = None):
+        self.base, self.auth, self.device, self.sim = base, auth, device, sim
+        label = device_name or (device[:6] if device else "телефон")
+        self.name = f"smsgate:{label}" + (f"/SIM{sim}" if sim else "")
 
-    def configured(self):
-        return True
+    @staticmethod
+    def config():
+        base = os.getenv("SMSGATE_URL", "https://api.sms-gate.app/3rdparty/v1").rstrip("/")
+        login, pwd, tok = os.getenv("SMSGATE_LOGIN", ""), os.getenv("SMSGATE_PASSWORD", ""), os.getenv("SMSGATE_TOKEN", "")
+        if login and pwd:
+            return base, "Basic " + base64.b64encode(f"{login}:{pwd}".encode()).decode()
+        if tok:
+            return base, f"Bearer {tok}"
+        return base, ""
 
-    def quota(self):
-        try:
-            self._quota = requests.get(f"https://textbelt.com/quota/{self.key}", timeout=TIMEOUT).json().get(
-                "quotaRemaining")
+    @classmethod
+    def routes(cls) -> list["SmsGate"]:
+        base, auth = cls.config()
+        if not auth:
+            return []
+        sims = [int(s) for s in os.getenv("SMSGATE_SIMS", "").replace(" ", "").split(",") if s.isdigit()]
+        devices: list[tuple[str, str]] = []
+        try:  # каждый телефон аккаунта — отдельный маршрут
+            r = requests.get(f"{base}/devices", headers={"Authorization": auth}, timeout=TIMEOUT)
+            if r.status_code < 300:
+                devices = [(d.get("id", ""), d.get("name", "")) for d in r.json() if not d.get("deletedAt")]
         except (requests.RequestException, ValueError):
             pass
-        return self._quota
+        devices = devices or [("", "")]
+        return [cls(base, auth, d, n, s) for d, n in devices for s in (sims or [None])]
 
     def send(self, to, text):
+        body = {"phoneNumbers": [to], "textMessage": {"text": text}, "withDeliveryReport": True, "priority": 100}
+        if self.device:
+            body["deviceId"] = self.device
+        if self.sim:
+            body["simNumber"] = self.sim
         try:
-            d = requests.post("https://textbelt.com/text", timeout=TIMEOUT,
-                              data={"phone": to, "message": text, "key": self.key}).json()
+            r = requests.post(f"{self.base}/messages", json=body, timeout=TIMEOUT,
+                              headers={"Authorization": self.auth, "Content-Type": "application/json"})
+            d = r.json() if r.content else {}
+            ok = r.status_code < 300
+            return SendResult(ok, self.name, id=str(d.get("id", "")), error="" if ok else str(d)[:200])
         except (requests.RequestException, ValueError) as e:
             return SendResult(False, self.name, error=str(e))
-        self._quota = d.get("quotaRemaining", self._quota)
-        if "disabled" in (d.get("error") or "") and self.key == "textbelt":
-            TextBelt.blocked = d["error"]
-        return SendResult(bool(d.get("success")), self.name, id=str(d.get("textId") or ""),
-                          error=d.get("error") or "", quota=self._quota)
 
-    def status(self, text_id: str) -> str:
+    def state(self, msg_id):
         try:
-            return requests.get(f"https://textbelt.com/status/{text_id}", timeout=TIMEOUT).json().get("status", "")
+            r = requests.get(f"{self.base}/messages/{msg_id}", headers={"Authorization": self.auth}, timeout=TIMEOUT)
+            return str(r.json().get("state", "")) if r.status_code < 300 else ""
         except (requests.RequestException, ValueError):
             return ""
 
 
-class TextBee(Sender):
-    name = "textbee"
-
-    def __init__(self):
-        self.key, self.device = os.getenv("TEXTBEE_KEY", ""), os.getenv("TEXTBEE_DEVICE", "")
-
-    def configured(self):
-        return bool(self.key)
-
-    def send(self, to, text):
-        body = {"recipients": [to], "message": text}
-        if self.device:
-            body["deviceId"] = self.device
-        try:
-            r = requests.post("https://api.textbee.dev/api/v1/gateway/send-sms", json=body, timeout=TIMEOUT,
-                              headers={"x-api-key": self.key})
-            ok = r.status_code < 300
-            return SendResult(ok, self.name, error="" if ok else r.text[:200])
-        except requests.RequestException as e:
-            return SendResult(False, self.name, error=str(e))
-
-
-class HttpSms(Sender):
+class HttpSms(Route):
     name = "httpsms"
 
     def __init__(self):
@@ -123,7 +131,29 @@ class HttpSms(Sender):
             return SendResult(False, self.name, error=str(e))
 
 
-class Twilio(Sender):
+class Telnyx(Route):
+    name = "telnyx"
+
+    def __init__(self):
+        self.key, self.frm = os.getenv("TELNYX_KEY", ""), os.getenv("TELNYX_FROM", "")
+
+    def configured(self):
+        return bool(self.key and self.frm)
+
+    def send(self, to, text):
+        try:
+            r = requests.post("https://api.telnyx.com/v2/messages", timeout=TIMEOUT,
+                              headers={"Authorization": f"Bearer {self.key}"},
+                              json={"from": self.frm, "to": to, "text": text})
+            d = r.json() if r.content else {}
+            ok = r.status_code < 300
+            return SendResult(ok, self.name, id=str((d.get("data") or {}).get("id", "")),
+                              error="" if ok else str(d.get("errors") or r.text)[:200])
+        except (requests.RequestException, ValueError) as e:
+            return SendResult(False, self.name, error=str(e))
+
+
+class Twilio(Route):
     name = "twilio"
 
     def __init__(self):
@@ -145,34 +175,93 @@ class Twilio(Sender):
             return SendResult(False, self.name, error=str(e))
 
 
+class TextBelt(Route):
+    name = "textbelt"
+    blocked = ""  # причина, если бесплатная отправка отклонена (запоминаем, чтобы не повторять)
+
+    def __init__(self):
+        self.key = os.getenv("TEXTBELT_KEY", "textbelt")
+        self._quota: Optional[int] = None
+
+    def paid(self):
+        return self.key != "textbelt"
+
+    def quota(self):
+        try:
+            self._quota = requests.get(f"https://textbelt.com/quota/{self.key}", timeout=TIMEOUT).json().get(
+                "quotaRemaining")
+        except (requests.RequestException, ValueError):
+            pass
+        return self._quota
+
+    def send(self, to, text):
+        try:
+            d = requests.post("https://textbelt.com/text", timeout=TIMEOUT,
+                              data={"phone": to, "message": text, "key": self.key}).json()
+        except (requests.RequestException, ValueError) as e:
+            return SendResult(False, self.name, error=str(e))
+        self._quota = d.get("quotaRemaining", self._quota)
+        if "disabled" in (d.get("error") or "") and self.key == "textbelt":
+            TextBelt.blocked = d["error"]
+        return SendResult(bool(d.get("success")), self.name, id=str(d.get("textId") or ""),
+                          error=d.get("error") or "", quota=self._quota)
+
+
+# --- набор маршрутов --------------------------------------------------------------
+_routes_cache: tuple[float, list[Route]] = (0.0, [])
 _lock = threading.Lock()
 
 
-def get_sender() -> Sender:
-    for cls in (TextBee, HttpSms, Twilio):
-        s = cls()
-        if s.configured():
-            return s
-    return TextBelt()
+def routes(refresh: bool = False) -> list[Route]:
+    """Все настроенные маршруты (список телефонов SMSGate кешируется на 5 мин)."""
+    global _routes_cache
+    with _lock:
+        if not refresh and time.time() - _routes_cache[0] < 300:
+            return list(_routes_cache[1])
+        out: list[Route] = list(SmsGate.routes())
+        out += [r for r in (HttpSms(), Telnyx(), Twilio()) if r.configured()]
+        tb = TextBelt()
+        if tb.paid():
+            out.append(tb)
+        _routes_cache = (time.time(), out)
+        return list(out)
+
+
+def pick_two() -> tuple[list[Route], str]:
+    """Два случайных разных маршрута. Если маршрут один — оба SMS через него (слабее: тот же отправитель)."""
+    rs = routes()
+    if len(rs) >= 2:
+        return random.sample(rs, 2), ""
+    if len(rs) == 1:
+        return [rs[0], rs[0]], f"настроен один маршрут ({rs[0].name}) — оба SMS идут через него"
+    return [], ("нет ни одного шлюза отправки: задайте SMSGATE_LOGIN/SMSGATE_PASSWORD "
+                "(приложение SMS Gateway for Android, sms-gate.app) или TELNYX_KEY/TELNYX_FROM")
+
+
+# --- совместимость с обычной активной проверкой (verify.py) ---------------------
+def get_sender() -> Route:
+    rs = routes()
+    return rs[0] if rs else TextBelt()
 
 
 def describe() -> dict:
     s = get_sender()
-    free = s.name == "textbelt" and os.getenv("TEXTBELT_KEY", "textbelt") == "textbelt"
+    free = isinstance(s, TextBelt) and not s.paid()
     note = ""
     if free:
         note = ("бесплатный Textbelt отклонил отправку: " + TextBelt.blocked) if TextBelt.blocked else \
             "бесплатный Textbelt: 1 SMS в день и для многих стран отключён"
-        note += " — для надёжной проверки задайте TEXTBEE_KEY (github.com/textbee/textbee) или Twilio"
-    return {"via": s.name, "quota": s.quota(), "free": free, "note": note}
+        note += " — для надёжной проверки подключите SMS Gateway for Android (SMSGATE_LOGIN/PASSWORD) или Telnyx"
+    return {"via": s.name, "quota": s.quota() if isinstance(s, TextBelt) else None, "free": free, "note": note,
+            "routes": [r.name for r in routes()]}
 
 
 def send(to: str, text: str) -> SendResult:
-    with _lock:  # чтобы параллельные проверки не перерасходовали квоту
-        s = get_sender()
+    s = get_sender()
+    if isinstance(s, TextBelt):
         q = s.quota()
         if q is not None and q <= 0:
             return SendResult(False, s.name, error="квота отправки исчерпана", quota=0)
-        if isinstance(s, TextBelt) and TextBelt.blocked and s.key == "textbelt":
+        if TextBelt.blocked and not s.paid():
             return SendResult(False, s.name, error=TextBelt.blocked)
-        return s.send(to, text)
+    return s.send(to, text)

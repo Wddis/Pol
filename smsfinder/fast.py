@@ -40,7 +40,8 @@ WARMUP_HEDGE = 0.9    # порог, пока по сайту мало замер
 HEDGE_BUDGET = 0.15   # доля дублей от числа запросов
 _lock = threading.Lock()
 _clients: dict = {}
-_pool = ThreadPoolExecutor(max_workers=256, thread_name_prefix="smsfinder-http")
+# 15 источников × 24 проверки + досмотр + хвосты прошлого подбора: при 256 запросы вставали в очередь
+_pool = ThreadPoolExecutor(max_workers=1024, thread_name_prefix="smsfinder-http")
 _lat: dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=64))
 stats = {"requests": 0, "hedged": 0, "hedge_won": 0}
 

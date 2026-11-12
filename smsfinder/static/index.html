@@ -216,7 +216,7 @@ async function init() {
   $('service').innerHTML = m.services.map(s => `<option value="${s}">${s === 'other' ? 'любой сервис' : s}</option>`).join('');
   const sd = m.sender;
   $('senderInfo').textContent = sd.free
-    ? 'Тест доставки: по новым входящим SMS от выбранного сервиса (бесплатно). Своё тестовое SMS (только для «любой сервис») — после подключения TEXTBEE_KEY / HTTPSMS_KEY / Twilio.'
+    ? 'Тест доставки: по новым входящим SMS от выбранного сервиса (бесплатно). Своё тестовое SMS (только для «любой сервис») — после подключения шлюза: SMSGATE_LOGIN/SMSGATE_PASSWORD (SMS Gateway for Android), Telnyx, httpSMS или Twilio. Режим «Умный» шлёт по 2 SMS через два случайных шлюза (тест 2/2) на чистые номера.'
     : `Тест доставки: для «любой сервис» — тестовое SMS через ${sd.via}; для конкретного сервиса — по SMS от него.`;
   $('provs').innerHTML = m.providers.map(p => `<label><input type="checkbox" value="${p.name}" ${p.enabled ? 'checked' : 'disabled'}> ${esc(p.title)} ${p.note ? `<small>(${esc(p.note)})</small>` : ''}</label>`).join('');
   const upd = () => { $('find').textContent = `Подобрать номер для ${svcName()}`; $('poolTitle').textContent = `✅ Проверенные для ${svcName()}`; loadPool(); };

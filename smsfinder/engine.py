@@ -38,7 +38,10 @@ MODES = {
     "verified": "Только проверенные тестом под сервис",
     "premium": "Только платные приватные",
     "popular": "Все рабочие номера",
+    "smart": "Умный: чистые номера + тест 2/2 своими шлюзами",
 }
+
+SMART_MAX_SMS = int(os.getenv("SMSFINDER_SMART_MAX_SMS", "20"))  # лимит SMS на один умный подбор
 
 
 def telegram_notify(text: str) -> None:
@@ -323,7 +326,7 @@ class Engine:
         names = providers or [p["name"] for p in self.provider_info() if p["enabled"]]
         if mode == "premium":
             names = [n for n in names if self.providers[n].paid]
-        elif mode == "verified":
+        elif mode in ("verified", "smart"):
             names = [n for n in names if not self.providers[n].paid]  # платный номер до покупки не проверить
             verify_n = verify_n or 2
         t0, q = time.time(), queue.Queue()
@@ -427,6 +430,11 @@ class Engine:
             lst.sort(key=lambda c: (c.extra["can_buy"], not c.extra.get("busy_left"), c.tier == "verified",
                                     c.score), reverse=True)
             return lst[: limit * 2]
+
+        if mode == "smart":
+            yield from self._smart_stage(cands, service, country, limit, verify_n, verify_wait, verify_target,
+                                         finalize, t0, errors, stop, track, names, done_ev, results)
+            return
 
         def keep(c):  # тот же фильтр режима, что выше
             if mode == "niche":
@@ -622,6 +630,103 @@ class Engine:
         yield {"type": "done", "candidates": [c.to_dict() for c in cands], "errors": errors,
                "took": round(time.time() - t0, 1), "used_total": registry.count(), "stopped": stop.is_set(),
                "hidden_unverified": hidden}
+
+    def _smart_stage(self, cands, service, country, limit, verify_n, verify_wait, verify_target, finalize, t0,
+                     errors, stop, track, names, done_ev, results) -> Iterator[dict]:
+        """Умный режим, этапы 2–3: чистые номера → тест 2/2 двумя своими шлюзами (smart.py).
+        Тест начинается сразу с первыми номерами; номера опоздавших сайтов и фонового досмотра
+        (проверка без бюджета) подаются в ту же очередь по мере готовности."""
+        from . import smart
+
+        def order(lst):  # первыми — номера, куда SMS приходят прямо сейчас и где меньше чужих SMS
+            return sorted(lst, key=lambda c: (c.extra.get("last_s") if c.extra.get("last_s") is not None
+                                              else 10 ** 9, c.extra.get("usage") or 0))
+        svc_t = verify.svc_title(service)
+        clean = order([c for c in cands if c.public])
+        yield {"type": "stage", "text": f"Чистых номеров (живые, {svc_t} сюда не писал): {len(clean)} — "
+                                        "тест начинается сразу, остальные сайты досматриваются в фоне"}
+        if clean:
+            yield {"type": "results", "candidates": [c.to_dict() for c in finalize(list(clean))], "errors": errors,
+                   "took": round(time.time() - t0, 1), "preliminary": True}
+        routes, warn = sender.pick_two()
+        if not routes:
+            yield {"type": "error", "provider": "smart", "text": warn}
+            yield {"type": "done", "candidates": [], "errors": errors, "took": round(time.time() - t0, 1),
+                   "used_total": registry.count(), "stopped": stop.is_set(), "hidden_unverified": len(clean)}
+            return
+        target = verify_target or 3
+        parallel = max(1, min(verify_n or 6, 10, target * 2))  # не тратить весь лимит SMS разом
+        wait = max(30, min(verify_wait or 90, 180))
+        feed: queue.Queue = queue.Queue()
+        for c in clean:
+            feed.put(c)
+        have = {c.number for c in clean}
+        have_lock = threading.Lock()
+        feeding_done = threading.Event()
+        added = {"n": 0}
+
+        def quiet(ev):
+            if stop.is_set():
+                raise SearchStopped()
+
+        def more(name):  # досмотр сайта без бюджета, как только закончился его этап 1
+            while not done_ev[name].wait(0.2):
+                if stop.is_set():
+                    return
+            pools = [results.get(name) or []]
+            if name not in errors and not stop.is_set():
+                try:
+                    pools.append(self.providers[name].find(service, country, limit * 2, "smart", quiet))
+                except Exception:
+                    pass
+            for c in order([c for cs in pools for c in cs]):
+                with have_lock:
+                    if c.number in have:
+                        continue
+                    have.add(c.number)
+                    added["n"] += 1
+                self.candidates[c.id] = c
+                c.extra["can_buy"] = True
+                feed.put(c)
+
+        feeders = [threading.Thread(target=more, args=(n,), daemon=True) for n in names]
+        for t in feeders:
+            t.start()
+        threading.Thread(target=lambda: ([t.join() for t in feeders], feeding_done.set()), daemon=True).start()
+
+        yield {"type": "stage", "stage": 3,
+               "text": f"Этап 3: тест 2/2 — на каждый номер 2 SMS по двум случайным маршрутам из "
+                       f"{len(sender.routes())} ({', '.join(r.name for r in sender.routes())}), "
+                       f"{parallel} номеров одновременно, цель — {target} номеров 2/2, до {wait} с на номер, "
+                       f"не больше {SMART_MAX_SMS} SMS" + (f" · ⚠ {warn}" if warn else "")
+                       + (" · ⚠ SMS уходят с вашей SIM — её номер как отправитель будет виден на публичной "
+                          "странице номера" if any(r.name.startswith(("smsgate", "httpsms")) for r in routes) else "")}
+        good: list[Candidate] = []
+        vq: queue.Queue = queue.Queue()
+
+        def bg():
+            try:
+                good.extend(smart.run_smart(self, feed, feeding_done, service, target, parallel, wait,
+                                            SMART_MAX_SMS, vq.put, stop))
+            finally:
+                vq.put({"type": "_vdone"})
+        threading.Thread(target=bg, daemon=True).start()
+        while True:
+            try:
+                ev = vq.get(timeout=1)
+            except queue.Empty:
+                continue
+            if ev["type"] == "_vdone":
+                break
+            yield ev
+        yield {"type": "stage", "text": f"Умный тест: {len(good)} номеров 2/2 (цель {target}); "
+                                        f"чистых найдено всего {len(clean) + added['n']}"}
+        result = finalize(list(good))
+        if track:
+            self.last_order = [c.id for c in result]
+        yield {"type": "done", "candidates": [c.to_dict() for c in result], "errors": errors,
+               "took": round(time.time() - t0, 1), "used_total": registry.count(), "stopped": stop.is_set(),
+               "hidden_unverified": len(clean) + added["n"] - len(good)}
 
     # --- подбор как фоновая задача (переживает обрывы соединения) ------------
     def start_search(self, **kw) -> "SearchJob":

@@ -29,13 +29,15 @@ def main(argv=None):
         p.add_argument("--country", default="", help="ISO2 (de), название (germany) или код")
         p.add_argument("--providers", default="", help="через запятую: receivesms,onlinesim,5sim,smsactivate")
         p.add_argument("--limit", type=int, default=15)
-        p.add_argument("--mode", default="niche", choices=["verified", "niche", "premium", "popular"])
+        p.add_argument("--mode", default="niche", choices=["verified", "niche", "premium", "popular", "smart"])
         p.add_argument("--verify", type=int, default=0,
                        help="сколько лучших номеров проверить тестовым SMS (тратит квоту отправки)")
         p.add_argument("--verify-wait", type=int, default=180, help="сколько ждать подтверждения доставки, сек")
         p.add_argument("--verify-method", default="auto", choices=["auto", "passive", "active"],
                        help="passive — ждать новое входящее SMS (бесплатно); active — отправить тестовое SMS")
         p.add_argument("--probe", type=int, default=20, help="длительность живой проверки, сек")
+        p.add_argument("--target", type=int, default=0,
+                       help="сколько номеров найти тестом (для --mode smart — сколько номеров 2/2, по умолчанию 3)")
         p.add_argument("-v", "--verbose", action="store_true", help="показывать каждую проверку")
         if name == "get":
             p.add_argument("--pick", type=int, default=1, help="номер строки из списка (1 = лучший)")
@@ -46,9 +48,11 @@ def main(argv=None):
     provs = [x.strip() for x in a.providers.split(",") if x.strip()] or None
     res = {}
     for ev in eng.find_stream(a.service, a.country, provs, a.limit, a.mode, a.probe, a.verify, a.verify_wait,
-                              verify_method=a.verify_method):
+                              verify_method=a.verify_method, verify_target=a.target):
         if ev["type"] == "stage":
             print(f"» {ev['text']}" + (f" [{ev['provider']}]" if ev.get("provider") else ""))
+        elif ev["type"] == "error":
+            print(f"[!] {ev.get('provider', '')}: {ev['text']}", file=sys.stderr)
         elif ev["type"] == "verify":
             print(f"  {'✓' if ev['ok'] else '✗'} SMS-проверка {ev['number']}: {ev['reason']}")
         elif ev["type"] == "check" and (a.verbose or ev["ok"] is False and "перестал" in ev["reason"]):

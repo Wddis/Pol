@@ -8,6 +8,29 @@ from typing import Optional
 from ..core import Candidate, Emit, Health, SearchStopped, Sms, noop_emit
 
 
+SMART_MAX_AGE = 6 * 3600  # умный режим: номер должен получать SMS прямо сейчас
+
+
+def smart_verdict(service: str, number: str, h: Health):
+    """Умный режим: нужен «чистый» номер — выбранный сервис на него НИКОГДА не присылал SMS
+    (ни в видимой истории сайта, ни в наших прошлых наблюдениях), и номер живой."""
+    from .. import verify
+    from ..services import SERVICES
+    name = service.capitalize() if service and service != "other" else "сервис"
+    if h.service_seen:
+        return False, f"не чистый: {name} уже присылал сюда SMS ({h.service_seen} шт.)", 0
+    rec = verify.cached(number, service) if service and service != "other" else None
+    if rec and rec.get("kind") != "smart":
+        return False, f"не чистый: мы видели здесь SMS от {name}", 0
+    if h.last_s is None or h.last_s > SMART_MAX_AGE:
+        return False, "чистый, но SMS сюда давно не приходили — номер может не принимать", 0
+    if service in SERVICES and service != "other":
+        label = f"чистый: {name} сюда не писал (в истории {h.usage} SMS от {h.services} отправителей)"
+    else:
+        label = "живой номер"
+    return True, label, 10
+
+
 class Provider:
     """Базовый интерфейс провайдера номеров."""
 
@@ -163,19 +186,24 @@ class FreeProvider(Provider):
                       "reason": h.reason})
                 return None
             from ..services import profile, service_verdict
-            ok, label, delta = service_verdict(service, h.service_seen, h.service_last_s, h.usage)
+            if mode == "smart":
+                ok, label, delta = smart_verdict(service, c.number, h)
+            else:
+                ok, label, delta = service_verdict(service, h.service_seen, h.service_last_s, h.usage)
             if not ok:
                 c.log(f"отсеян: {label}")
                 emit({"type": "check", "provider": self.name, "number": c.number, "ok": False, "reason": label})
                 return None
-            c.score = round(score_free(h, c.country, mode) + delta, 1)
+            c.score = round(score_free(h, c.country, "niche" if mode == "smart" else mode) + delta, 1)
             c.extra["svc_label"] = label
             strict = bool(profile(service).get("strict"))
             busy = h.service_last_s is not None and h.service_last_s < profile(service).get("busy_s", 0)
             low = h.usage <= 25 or h.services <= 5
             # нишевый: сейчас никто не ждёт код этого сервиса и номер малоиспользуемый;
             # для «строгих» сервисов (Telegram) — сервис сюда реально доставляет SMS, но редко (1–4 кода)
-            if strict:
+            if mode == "smart":
+                niche = True  # чистый номер: сервис сюда не писал
+            elif strict:
                 niche = not busy and 1 <= h.service_seen <= 4
             else:
                 niche = not busy and low and h.service_seen == 0

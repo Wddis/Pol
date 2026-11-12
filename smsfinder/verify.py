@@ -9,7 +9,7 @@
       нового SMS сервиса, отправитель и время с начала наблюдения. Подход как в
       github.com/LayorX/Temporary-SMS-Receiver-Monitor.
   active (только для «любого сервиса») — своё тестовое SMS со случайным кодом через шлюз
-      textbee / httpSMS / Twilio / Textbelt (sender.py). Для Telegram и т.п. бессмысленно:
+      SMS Gateway for Android / Telnyx / httpSMS / Twilio / Textbelt (sender.py). Для Telegram и т.п. бессмысленно:
       важно, доставляет ли сюда SMS сам сервис, а не наш шлюз.
 
 Watcher — фоновый пул: постоянно наблюдает ~24 живых номера и записывает, от каких сервисов
@@ -114,12 +114,14 @@ def mark(cand: Candidate, rec: dict, service: str = "other"):
         cand.extra["base_note"] = cand.note
     cand.extra["verified"] = dict(rec, service=_norm(service))
     ago = int((time.time() - rec["at"]) // 60)
-    if rec.get("kind") == "active":
+    if rec.get("kind") == "smart":
+        how = f"тест 2/2: оба наших SMS дошли ({', '.join(rec.get('routes', []))}) за {rec['delivered_s']} с"
+    elif rec.get("kind") == "active":
         how = f"наше тестовое SMS дошло за {rec['delivered_s']} с ({rec['via']})"
     else:
         how = f"{rec.get('sender', '?')} прислал SMS через {rec['delivered_s']} с наблюдения"
     busy = ""
-    b = profile(service).get("busy_s", 0)
+    b = profile(service).get("busy_s", 0) if rec.get("kind") != "smart" else 0  # наш тест номер не занимает
     left = int(b - (time.time() - rec["at"])) if b else 0
     cand.extra["busy_left"] = max(left, 0)
     base = cand.extra.get("base_note") or ""

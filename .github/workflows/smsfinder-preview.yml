@@ -35,8 +35,11 @@ jobs:
       SMSACT_KEY: ${{ secrets.SMSACT_KEY }}
       SMSFINDER_TOKEN: ${{ secrets.SMSFINDER_TOKEN }}
       # шлюзы для проверки номеров тестовым SMS (любой один)
-      TEXTBEE_KEY: ${{ secrets.TEXTBEE_KEY }}
-      TEXTBEE_DEVICE: ${{ secrets.TEXTBEE_DEVICE }}
+      SMSGATE_LOGIN: ${{ secrets.SMSGATE_LOGIN }}
+      SMSGATE_PASSWORD: ${{ secrets.SMSGATE_PASSWORD }}
+      SMSGATE_SIMS: ${{ secrets.SMSGATE_SIMS }}
+      TELNYX_KEY: ${{ secrets.TELNYX_KEY }}
+      TELNYX_FROM: ${{ secrets.TELNYX_FROM }}
       HTTPSMS_KEY: ${{ secrets.HTTPSMS_KEY }}
       HTTPSMS_FROM: ${{ secrets.HTTPSMS_FROM }}
       TWILIO_SID: ${{ secrets.TWILIO_SID }}
