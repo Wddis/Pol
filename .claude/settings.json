@@ -21,5 +21,8 @@
       "mcp__plugin_engineering_pagerduty",
       "mcp__plugin_engineering_slack"
     ]
-  }
+  },
+  "enabledMcpjsonServers": [
+    "playwright"
+  ]
 }
