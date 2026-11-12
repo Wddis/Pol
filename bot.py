@@ -1,11 +1,13 @@
+import os
 import requests
 import json
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (ApplicationBuilder, MessageHandler, CommandHandler,
                            CallbackQueryHandler, filters, ContextTypes)
 
-NVIDIA_API_KEY = "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"
-TELEGRAM_TOKEN = "8751101888:AAG4JOjtY4TfatM2QvSTOOz7j_LWMT4AUm4"
+NVIDIA_API_KEY = os.environ["NVIDIA_API_KEY"]
+TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
+MODEL = os.environ.get("MODEL", "deepseek-ai/deepseek-v4.1-flash")
 
 chat_histories = {}
 
@@ -31,7 +33,7 @@ def ask_nvidia(user_id, user_message):
         "Accept": "text/event-stream"
     }
     payload = {
-        "model": "moonshotai/kimi-k2.5",
+        "model": MODEL,
         "messages": [
             {"role": "system", "content": SYSTEM_PROMPT},
             *chat_histories[user_id]
@@ -47,8 +49,12 @@ def ask_nvidia(user_id, user_message):
         "https://integrate.api.nvidia.com/v1/chat/completions",
         headers=headers,
         json=payload,
-        stream=True
+        stream=True,
+        timeout=300
     )
+    if response.status_code != 200:
+        chat_histories[user_id].pop()
+        return f"⚠️ Ошибка API ({response.status_code}): {response.text[:300]}"
 
     full_answer = ""
     for line in response.iter_lines():
@@ -63,6 +69,9 @@ def ask_nvidia(user_id, user_message):
                 except Exception:
                     pass
 
+    if not full_answer:
+        chat_histories[user_id].pop()
+        return "⚠️ Модель вернула пустой ответ, попробуй ещё раз."
     chat_histories[user_id].append({"role": "assistant", "content": full_answer})
     return full_answer
 
@@ -74,11 +83,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     answer = ask_nvidia(user_id, user_text)
     await thinking.delete()
 
-    await update.message.reply_text(
-        answer,
-        parse_mode="Markdown",
-        reply_markup=clear_button()
-    )
+    try:
+        await update.message.reply_text(
+            answer,
+            parse_mode="Markdown",
+            reply_markup=clear_button()
+        )
+    except Exception:
+        # Markdown от модели может быть невалидным для Telegram — шлём как обычный текст
+        await update.message.reply_text(answer, reply_markup=clear_button())
 
 async def clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
