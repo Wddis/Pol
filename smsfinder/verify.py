@@ -55,6 +55,19 @@ def _save(number: str, rec: dict):
         PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1))
 
 
+def invalidate(number: str):
+    """Снять статус «проверенный» (номер остановлен или не подошёл)."""
+    with _lock:
+        data = _load()
+        if data.pop(number, None) is not None:
+            _write(data)
+
+
+def _write(data: dict):
+    PATH.parent.mkdir(parents=True, exist_ok=True)
+    PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+
+
 def mark(cand: Candidate, rec: dict):
     """Перевести кандидата в категорию «проверенный»."""
     if cand.tier != "verified":
@@ -199,7 +212,8 @@ class Watcher:
         added = 0
         for d in res.get("candidates", []):
             c = self.engine.candidates.get(d["id"])
-            if not c or not c.public or c.number in self.watch or cached(c.number):
+            from . import registry
+            if not c or not c.public or c.number in self.watch or cached(c.number) or registry.is_blocked(c.number):
                 continue
             if len(self.watch) >= self.size:
                 break
@@ -249,8 +263,9 @@ class Watcher:
         """Все действующие «проверенные» номера (с кандидатами для выдачи)."""
         by_num = {c.number: c for c in self.engine.candidates.values() if c.public}
         out = []
+        from . import registry
         for num, rec in _load().items():
-            if not (rec.get("ok") and time.time() - rec.get("at", 0) < TTL):
+            if not (rec.get("ok") and time.time() - rec.get("at", 0) < TTL) or registry.is_blocked(num):
                 continue
             c = by_num.get(num)
             if c is None and rec.get("ref"):  # восстановить кандидата из записи (после перезапуска)
@@ -264,6 +279,9 @@ class Watcher:
             out.append(c)
         out.sort(key=lambda c: c.extra["verified"]["at"], reverse=True)
         return [c.to_dict() for c in out]
+
+    def drop(self, number: str):
+        self.watch.pop(number, None)
 
     def status(self) -> dict:
         return {"running": self.running, "watching": len(self.watch), "events": self.events[-15:][::-1],

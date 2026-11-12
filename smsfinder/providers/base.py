@@ -64,9 +64,9 @@ class FreeProvider(Provider):
 
         def check(c: Candidate):
             if registry.is_used(c.number, service):
-                c.log("отсеян: уже выдавался для этого сервиса")
-                emit({"type": "check", "provider": self.name, "number": c.number, "ok": False,
-                      "reason": "уже выдавался"})
+                why = "остановлен / не подошёл ранее" if registry.is_blocked(c.number) else "уже выдавался"
+                c.log(f"отсеян: {why}")
+                emit({"type": "check", "provider": self.name, "number": c.number, "ok": False, "reason": why})
                 return None
             h = self.health(c, service)
             if h.ok and h.last_s is not None and h.last_s > self.max_age:
@@ -76,15 +76,28 @@ class FreeProvider(Provider):
                 emit({"type": "check", "provider": self.name, "number": c.number, "ok": False,
                       "reason": h.reason})
                 return None
-            c.score = score_free(h, c.country, mode)
-            # нишевый: целевой сервис на номере не регистрировался и номер малоиспользуемый
-            c.tier = "niche" if (h.service_seen == 0 and (h.usage <= 25 or h.services <= 5)) else "regular"
+            from ..services import profile, service_verdict
+            ok, label, delta = service_verdict(service, h.service_seen, h.service_last_s, h.usage)
+            if not ok:
+                c.log(f"отсеян: {label}")
+                emit({"type": "check", "provider": self.name, "number": c.number, "ok": False, "reason": label})
+                return None
+            c.score = round(score_free(h, c.country, mode) + delta, 1)
+            c.extra["svc_label"] = label
+            strict = bool(profile(service).get("strict"))
+            busy = h.service_last_s is not None and h.service_last_s < profile(service).get("busy_s", 0)
+            low = h.usage <= 25 or h.services <= 5
+            # нишевый: сейчас никто не ждёт код этого сервиса и номер малоиспользуемый;
+            # для «строгих» сервисов (Telegram) — сервис сюда реально доставляет SMS, но редко (1–4 кода)
+            if strict:
+                niche = not busy and 1 <= h.service_seen <= 4
+            else:
+                niche = not busy and low and h.service_seen == 0
+            c.tier = "niche" if niche else "regular"
             c.extra.update(last_s=h.last_s, usage=h.usage, services=h.services,
                            service_seen=h.service_seen, latency_ms=h.latency_ms, keys=h.keys)
             fresh = f"посл. SMS {fmt_ago(h.last_s)} назад" if h.last_s is not None else "лента активна (Live)"
-            c.note = (f"{fresh} · SMS: {h.usage} · сервисов: {h.services} · "
-                      + ("сервис здесь НЕ регистрировался" if h.service_seen == 0
-                         else f"сервис уже был здесь {h.service_seen}×"))
+            c.note = f"{fresh} · SMS: {h.usage} · сервисов: {h.services}" + (f" · {label}" if label else "")
             c.log(f"этап 1 пройден: {c.note}, ответ {h.latency_ms} мс")
             emit({"type": "check", "provider": self.name, "number": c.number, "ok": True,
                   "reason": c.note, "score": c.score})

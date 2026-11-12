@@ -133,6 +133,15 @@ def cancel(aid):
     return jsonify(act.to_dict())
 
 
+@app.post("/api/activation/<aid>/feedback")
+@guarded
+def feedback(aid):
+    act = engine.activations.get(aid) or abort(404)
+    d = request.get_json(force=True)
+    act.feedback(bool(d.get("ok")), d.get("reason", ""), bool(d.get("switch", True)))
+    return jsonify(act.to_dict())
+
+
 @app.post("/api/activation/<aid>/switch")
 @guarded
 def switch(aid):
@@ -145,7 +154,8 @@ def switch(aid):
 @guarded
 def verified_pool():
     """Пул «проверенных» номеров + состояние фонового наблюдения."""
-    return jsonify(pool=engine.watcher.pool(), watcher=engine.watcher.status())
+    from . import registry
+    return jsonify(pool=engine.watcher.pool(), watcher=engine.watcher.status(), stats=registry.stats())
 
 
 @app.get("/healthz")

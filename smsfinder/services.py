@@ -1,4 +1,5 @@
-"""Справочники: сервисы и страны в форматах разных провайдеров."""
+"""Справочники: сервисы и страны в форматах разных провайдеров + профили сервисов."""
+import re
 
 # ключ — как вводит пользователь; значения — названия у провайдеров
 SERVICES = {
@@ -39,6 +40,63 @@ COUNTRIES = {
     "za": ("southafrica", "27"), "eg": ("egypt", "20"), "ke": ("kenya", "254"),
     "au": ("australia", "61"),
 }
+
+
+# Профили сервисов для подбора и извлечения кода.
+#   strict  — сервис часто вообще не шлёт SMS на виртуальные номера; номер подходит, только если
+#             во входящих уже были SMS ИМЕННО от этого сервиса (он сюда доставляет).
+#   code_re — точный формат кода сервиса; коды от других отправителей игнорируются.
+#   busy_s  — если SMS сервиса приходило за последние busy_s секунд, номер «занят» (кто-то
+#             другой прямо сейчас ждёт код → коды перепутаются).
+#   hint    — подсказка пользователю при ожидании.
+PROFILES = {
+    "telegram": {
+        "strict": True,
+        # «Telegram code 54325», «Telegram code: 377944 …», «Код для входа в Telegram: 12345»
+        "code_re": re.compile(r"(?:telegram|телеграм)\D{0,40}?(\d{5,6})(?!\d)", re.I),
+        "busy_s": 15 * 60,
+        "hint": ("1) Введите номер в Telegram. 2) Если Telegram пишет «код отправлен в приложение Telegram» — "
+                 "на номере уже есть чужой аккаунт, SMS не будет: нажмите «Не подошёл». "
+                 "3) Если просит email или пишет «номер заблокирован» — тоже «Не подошёл». "
+                 "4) Вводите только код, пришедший ПОСЛЕ вашего запроса (он отмечен ★)."),
+    },
+    "whatsapp": {"strict": True, "code_re": re.compile(r"whatsapp\D{0,40}?(\d{3}[- ]?\d{3})", re.I),
+                 "busy_s": 15 * 60, "hint": ""},
+}
+
+
+def profile(service: str) -> dict:
+    return PROFILES.get((service or "").lower().strip(), {})
+
+
+def service_code(service: str, text: str) -> str:
+    """Код в формате сервиса или '' (для сервисов без профиля — любой код)."""
+    p = profile(service)
+    if not p.get("code_re"):
+        return ""
+    m = p["code_re"].search(text or "")
+    return re.sub(r"\D", "", m.group(1)) if m else ""
+
+
+def service_verdict(service: str, seen: int, last_s, per24: int):
+    """Оценка номера под конкретный сервис по истории входящих.
+
+    Возвращает (ok, label, score_delta). seen — сколько SMS сервиса во входящих,
+    last_s — сколько секунд назад было последнее (None — неизвестно).
+    """
+    p = profile(service)
+    if not service or service == "other":
+        return True, "", 0
+    name = service.capitalize()
+    if seen == 0:
+        if p.get("strict"):
+            return False, f"{name} не присылал SMS на этот номер — код не придёт (уйдёт в приложение или номер в блоке)", 0
+        return True, f"{name} здесь ещё не было", 10
+    if p.get("busy_s") and last_s is not None and last_s < p["busy_s"]:
+        return True, f"⚠ {name} слал код {last_s // 60} мин назад — номер сейчас занят другим человеком", -35
+    if seen >= 8:
+        return True, f"{name} доставляет, но номер очень заезжен ({seen} кодов)", -10
+    return True, f"✓ {name} доставляет SMS сюда ({seen} шт.), сейчас свободен", 30
 
 
 def service_name(service: str, provider: str) -> str:

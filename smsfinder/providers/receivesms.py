@@ -82,14 +82,16 @@ class ReceiveSmsCo(FreeProvider):
         m24 = re.search(r"Messages \(24h\):\s*(\d+)", text)
         sms = self._parse_sms(soup)
         matchers = service_matchers(service)
-        seen = sum(any(k in (m.sender + " " + m.text).lower() for k in matchers) for m in sms) if matchers else 0
+        svc = [m for m in sms if matchers and any(k in (m.sender + " " + m.text).lower() for k in matchers)]
+        seen = len(svc)
+        svc_last = next((s for s in (ago_to_seconds(m.received) for m in svc) if s is not None), None)
         last_s = ago_to_seconds(last.group(1)) if last else None
         if last_s is None and sms:
             last_s = ago_to_seconds(sms[0].received)
         if last_s is None:
             return Health(ok=False, reason="ни одного SMS — не подтверждено, что номер принимает", latency_ms=ms)
         return Health(ok=True, last_s=last_s, usage=int(m24.group(1)) if m24 else len(sms),
-                      services=len({m.sender.lower() for m in sms}), service_seen=seen,
+                      services=len({m.sender.lower() for m in sms}), service_seen=seen, service_last_s=svc_last,
                       latency_ms=ms, keys=[m.key for m in sms])
 
     def messages(self, state):

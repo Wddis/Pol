@@ -41,6 +41,7 @@ class Health:
     usage: int = 0                   # сколько SMS видно (за 24 ч или в ленте)
     services: int = 0                # разных отправителей/сервисов
     service_seen: int = 0            # SMS от целевого сервиса
+    service_last_s: Optional[int] = None  # секунд с последнего SMS от целевого сервиса
     latency_ms: int = 0
     keys: list = field(default_factory=list)  # отпечатки SMS для живой проверки
 
@@ -155,9 +156,8 @@ def score_free(h: Health, country: str, mode: str) -> float:
     rare = (country or "").lower() not in COMMON_COUNTRIES
     if mode == "niche":
         s = 100 - min(h.usage, 60) - min(h.services, 15) * 2
-        s += 25 if h.service_seen == 0 else -20 * min(h.service_seen, 3)
         s += 15 if rare else 0
         s += recency * 0.5
         return round(s, 1)
-    s = min(h.usage, 100) * 0.5 + recency + (30 if h.service_seen else 0)
+    s = min(h.usage, 100) * 0.5 + recency
     return round(s, 1)

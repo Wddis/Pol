@@ -113,12 +113,14 @@ class FreePhoneNum(FreeProvider):
             return Health(ok=False, reason="лента в архиве — номер больше не принимает", latency_ms=ms)
         last_s = next((s for s in (ago_to_seconds(m.received) for m in sms) if s is not None), None)
         matchers = service_matchers(service)
-        seen = sum(any(k in (m.sender + " " + m.text).lower() for k in matchers) for m in sms) if matchers else 0
+        hits = [i for i, m in enumerate(sms) if matchers and any(k in (m.sender + " " + m.text).lower() for k in matchers)]
+        seen = len(hits)
+        svc_last = 0 if hits and hits[0] <= 1 else None  # SMS сервиса среди самых последних — номер занят
         txt = soup.get_text(" ", strip=True)
         svc = re.search(r"(\d+)\s+services", txt)
         return Health(ok=True, last_s=last_s, usage=len(sms),
                       services=int(svc.group(1)) if svc else len({m.sender for m in sms}),
-                      service_seen=seen, latency_ms=ms, keys=[m.key for m in sms])
+                      service_seen=seen, service_last_s=svc_last, latency_ms=ms, keys=[m.key for m in sms])
 
     def messages(self, state):
         return self._parse_sms(self._get(state["ref"])[0])

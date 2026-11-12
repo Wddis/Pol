@@ -47,6 +47,12 @@ button:disabled{opacity:.5;cursor:default}
 .log{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;max-height:220px;overflow:auto;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
 .log .ok{color:var(--ok)}.log .no{color:var(--bad)}.log .st{color:var(--acc);font-weight:600}
 details summary{cursor:pointer;color:var(--muted);font-size:12px}
+.hint{margin-top:10px;padding:10px 12px;border-radius:8px;border:1px solid var(--acc);font-size:13px}
+.codes .c{display:flex;gap:10px;align-items:baseline;border-top:1px solid var(--line);padding:6px 0}
+.codes .c b{font-size:22px;font-variant-numeric:tabular-nums;letter-spacing:1px}
+.codes .c.old b{color:var(--muted);font-size:17px}
+.fb{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
+.sms.other{opacity:.55}
 </style>
 </head>
 <body>
@@ -97,7 +103,20 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px}
       </div>
     </div>
     <div class="bar"><i id="actBar"></i></div>
-    <div id="actSms" style="margin-top:10px"></div>
+    <div id="actHint" class="hint" hidden></div>
+    <div id="actCodes" style="margin-top:10px"></div>
+    <div class="fb" id="actFb">
+      <button id="fbOk" style="background:var(--ok)">✓ Код подошёл</button>
+      <select id="fbReason">
+        <option value="код ушёл в приложение Telegram (номер занят)">Код ушёл в приложение (номер занят)</option>
+        <option value="код неверный">Код неверный / истёк</option>
+        <option value="SMS не пришло">SMS не пришло</option>
+        <option value="номер заблокирован">Номер заблокирован / banned</option>
+        <option value="просит email / пароль">Просит email или пароль</option>
+      </select>
+      <button id="fbBad" style="background:var(--bad)">✗ Не подошёл → другой номер</button>
+    </div>
+    <details style="margin-top:8px"><summary>Все новые SMS на номере</summary><div id="actSms"></div></details>
     <details style="margin-top:8px"><summary>Журнал активации</summary><div class="log" id="actLog"></div></details>
   </div>
 
@@ -196,24 +215,36 @@ function find() {
   es.onerror = () => { es.close(); $('find').disabled = false; if ($('sStage').textContent !== 'Готово') logLine('no', 'Соединение прервано'); };
 }
 
+const ACTIVE = ['waiting', 'starting', 'received'];
+function dropNumber(num) {  // остановленный / не подошедший номер исчезает из всех списков
+  document.querySelectorAll('#rows tr, #poolRows tr').forEach(tr => { if (tr.textContent.includes(num)) tr.remove(); });
+  loadPool();
+}
 function show(a) {
-  current = a; $('actCard').hidden = false;
+  const prev = current; current = a; $('actCard').hidden = false;
+  if (prev && prev.id === a.id && prev.number !== a.number) dropNumber(prev.number);
   $('actNum').textContent = a.number || '…';
   $('actMeta').textContent = `${a.provider} · ${a.candidate.country} · ${a.service} · ${TIER[a.tier] || a.tier} · резерв: ${a.reserve}` + (a.history.length > 1 ? ` · было номеров: ${a.history.length}` : '');
-  $('actWarn').textContent = a.public ? '⚠ Публичный номер — SMS видят все. Номер перепроверяется каждые 30 с; если «умрёт», будет заменён автоматически.' : '';
+  $('actWarn').textContent = (a.public ? '⚠ Публичный номер — SMS видят все. ' : '') + (a.warning || '');
+  $('actHint').hidden = !a.hint; $('actHint').textContent = a.hint || '';
   $('actCode').textContent = a.code || '';
-  const st = {waiting:'Жду SMS…', received:'Код получен ✓', timeout:'Время вышло', cancelled:'Остановлено', error:'Ошибка', starting:'Подключаюсь…'}[a.status] || a.status;
+  const st = {waiting:'Жду код…', received:'Код получен — слушаю дальше', done:'Готово ✓', timeout:'Время вышло', cancelled:'Остановлено, номер убран', error:'Ошибка', starting:'Подключаюсь…'}[a.status] || a.status;
   $('actStatus').textContent = `${st} · ${Math.floor(a.elapsed / 60)}:${String(a.elapsed % 60).padStart(2, '0')}` + (a.error && a.status === 'error' ? ` · ${a.error}` : '');
   $('actBar').style.width = Math.min(100, a.elapsed / a.timeout * 100) + '%';
-  $('actSms').innerHTML = a.messages.length ? a.messages.slice().reverse().map(m => `<div class="sms"><b>${esc(m.sender)}</b> <span class="muted">${esc(m.received)}</span><br>${esc(m.text)}${m.code ? ` <span class="tag priv">код ${esc(m.code)}</span>` : ''}</div>`).join('') : '<div class="muted note">Новых SMS пока нет. Отправьте код на этот номер.</div>';
+  const codes = a.codes.slice().reverse();
+  $('actCodes').innerHTML = codes.length ? '<div class="codes">' + codes.map((c, i) => `<div class="c ${i ? 'old' : ''}">${i ? '' : '★'}<b>${esc(c.code)}</b><span class="note">пришёл через ${c.since_s} с после выдачи номера · ${esc(c.sender)}</span></div>`).join('') + '</div>'
+    : `<div class="muted note">Кода ${esc(a.service)} пока нет. Запросите код на этот номер — он появится здесь (коды других сервисов игнорируются).</div>`;
+  $('actSms').innerHTML = a.messages.length ? a.messages.slice().reverse().map(m => `<div class="sms ${m.is_service ? '' : 'other'}"><b>${esc(m.sender)}</b> <span class="muted">+${m.since_s ?? '?'} с</span><br>${esc(m.text)}</div>`).join('') : '<div class="muted note">Новых SMS нет.</div>';
   $('actLog').innerHTML = a.events.slice().reverse().map(esc).join('<br>');
-  const active = ['waiting', 'starting'].includes(a.status);
+  const active = ACTIVE.includes(a.status);
   $('actCancel').disabled = !active; $('actSwitch').disabled = !active || !a.reserve;
+  $('actFb').hidden = !active;
+  if (['cancelled'].includes(a.status)) dropNumber(a.number);
 }
 function watch(a) {
   show(a); clearInterval(timer);
   timer = setInterval(async () => {
-    try { const x = await api('/api/activation/' + a.id); show(x); if (!['waiting', 'starting'].includes(x.status)) clearInterval(timer); } catch (e) {}
+    try { const x = await api('/api/activation/' + a.id); show(x); if (!ACTIVE.includes(x.status)) clearInterval(timer); } catch (e) {}
   }, 2500);
   $('actCard').scrollIntoView({behavior: 'smooth'});
 }
@@ -249,13 +280,20 @@ $('auto').onclick = async () => {
 $('find').onclick = find;
 $('actCancel').onclick = async () => current && show(await api(`/api/activation/${current.id}/cancel`, {}));
 $('actSwitch').onclick = async () => current && show(await api(`/api/activation/${current.id}/switch`, {}));
+$('fbOk').onclick = async () => current && show(await api(`/api/activation/${current.id}/feedback`, {ok: true}));
+$('fbBad').onclick = async () => {
+  if (!current) return;
+  const num = current.number;
+  const x = await api(`/api/activation/${current.id}/feedback`, {ok: false, reason: $('fbReason').value, switch: true});
+  dropNumber(num); show(x); if (ACTIVE.includes(x.status)) watch(x);
+};
 $('actNum').onclick = () => current && copy(current.number);
 $('actCode').onclick = () => current?.code && copy(current.code);
 async function loadPool() {
   try {
     const r = await api('/api/verified');
     const w = r.watcher;
-    $('poolInfo').textContent = `проверенных: ${r.pool.length} · под наблюдением: ${w.watching}` + (w.running ? '' : ' · фоновая проверка выключена');
+    $('poolInfo').textContent = `проверенных: ${r.pool.length} · под наблюдением: ${w.watching} · убрано (остановлены/не подошли): ${r.stats.blocked}` + (w.running ? '' : ' · фоновая проверка выключена');
     $('poolRows').innerHTML = r.pool.length ? r.pool.map(c => `<tr>
       <td class="num"><b>${esc(c.number)}</b></td><td>${esc(c.country)}</td><td>${esc(c.provider)}</td>
       <td class="note">${esc(c.note.split(' · ')[0])}</td>

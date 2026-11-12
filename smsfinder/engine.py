@@ -26,7 +26,7 @@ import requests
 from . import registry, sender, verify
 from .core import Candidate, ProviderError, Sms
 from .providers import all_providers
-from .services import country_matches, service_matchers
+from .services import country_matches, profile, service_code, service_matchers
 
 MODES = {
     "verified": "Проверенные: тестовое SMS дошло до номера",
@@ -60,6 +60,9 @@ class Activation:
         self.status = "starting"
         self.messages: list[Sms] = []
         self.code = ""
+        self.codes: list[dict] = []     # все коды сервиса, пришедшие после выдачи номера
+        self.seen_at: dict[str, int] = {}  # отпечаток SMS -> секунда с начала ожидания
+        self.warning = ""
         self.error = ""
         self.started = time.time()
         self.events: list[str] = []
@@ -76,6 +79,7 @@ class Activation:
         self._baseline: set[str] = set()
         self._fails = 0
         self._last_watch = time.time()
+        self._bound_at = time.time()
 
     def log(self, msg: str):
         self.events.append(f"{time.strftime('%H:%M:%S')} {msg}")
@@ -86,9 +90,26 @@ class Activation:
             "error": self.error, "service": self.service, "provider": self.cand.provider,
             "public": self.cand.public, "tier": self.cand.tier, "elapsed": int(time.time() - self.started),
             "timeout": self.timeout, "candidate": self.cand.to_dict(), "events": self.events[-30:],
-            "history": self.history, "reserve": len(self.reserve),
-            "messages": [m.to_dict() for m in self.messages],
+            "history": self.history, "reserve": len(self.reserve), "warning": self.warning,
+            "codes": self.codes, "hint": profile(self.service).get("hint", ""),
+            "messages": [dict(m.to_dict(), since_s=self.seen_at.get(m.key),
+                              is_service=bool(self._service_code(m))) for m in self.messages],
         }
+
+    def _service_code(self, m: Sms) -> str:
+        """Код именно от выбранного сервиса (для Telegram — строго в формате Telegram)."""
+        if profile(self.service).get("code_re"):
+            return service_code(self.service, m.sender + " " + m.text)
+        matchers = service_matchers(self.service)
+        relevant = not matchers or any(k in (m.sender + " " + m.text).lower() for k in matchers)
+        return m.code if relevant else ""
+
+    def _forget(self, reason: str):
+        """Номер больше не выдавать: убрать из реестра, пула проверенных и наблюдения."""
+        if self.cand.public:
+            registry.block(self.number, reason)
+            verify.invalidate(self.number)
+            self.engine.watcher.drop(self.number)
 
     def _acquire(self):
         self.state = self.provider.acquire(self.cand, self.service)
@@ -112,8 +133,10 @@ class Activation:
 
     def _failover(self, why: str) -> bool:
         """Номер перестал работать — переключиться на следующий из резерва."""
-        self.log(f"номер {self.number}: {why}" if why == "заменён вручную"
+        self.log(f"номер {self.number}: {why}" if why in ("заменён вручную", "не подошёл")
                  else f"номер {self.number} не работает: {why}")
+        self._forget(why)
+        self.code, self.codes, self.warning = "", [], ""
         if not self.cand.public and self.state:
             self.provider.release(self.state, success=False)
         while self.reserve:
@@ -129,7 +152,8 @@ class Activation:
             try:
                 self._bind(cand)
                 self._acquire()
-                self.log("автозамена выполнена — отправьте код на новый номер")
+                self.status = "waiting"
+                self.log("автозамена выполнена — запросите код на новый номер")
                 telegram_notify(f"🔁 Номер заменён: {self.number}")
                 return True
             except ProviderError as e:
@@ -141,8 +165,7 @@ class Activation:
         matchers = service_matchers(self.service)
         while not self._stop.is_set():
             if time.time() - self.started > self.timeout:
-                if not self.code:
-                    self.status = "timeout"
+                self.status = "done" if self.code else "timeout"
                 if not self.cand.public:  # платный номер без кода — отменяем, деньги вернутся
                     self.provider.release(self.state, success=bool(self.code))
                 return
@@ -158,11 +181,17 @@ class Activation:
                         continue
                     self._baseline.add(m.key)
                     self.messages.append(m)
-                    relevant = not matchers or any(k in (m.sender + " " + m.text).lower() for k in matchers)
-                    if relevant and m.code and not self.code:
-                        self.code = m.code
-                        self.status = "received"
-                        self.log(f"получен код {m.code}")
+                    at = int(time.time() - self._bound_at)
+                    self.seen_at[m.key] = at
+                    code = self._service_code(m)
+                    if code:
+                        self.codes.append({"code": code, "since_s": at, "sender": m.sender, "text": m.text[:120]})
+                        self.code = code          # всегда самый свежий код
+                        self.status = "received"  # но продолжаем слушать номер
+                        self.log(f"получен код {code} (через {at} с)")
+                        if len(self.codes) > 1:
+                            self.warning = (f"На номер пришло {len(self.codes)} кода(ов) — их запрашивают и другие люди. "
+                                            "Ваш — тот, что пришёл сразу после ВАШЕГО запроса; самый свежий отмечен ★.")
                     for cb in self.on_sms:
                         cb(self, m)
                 self._fails = 0
@@ -183,10 +212,29 @@ class Activation:
             self._stop.wait(self.poll)
 
     def cancel(self):
+        """Остановить: номер больше никогда не выдаётся и пропадает из списков."""
         self._stop.set()
         if not self.cand.public and self.state:
             self.provider.release(self.state, success=bool(self.code))
-        if self.status in ("waiting", "starting"):
+        self._forget("остановлен пользователем")
+        if self.status in ("waiting", "starting", "received"):
+            self.status = "cancelled"
+        self.log("остановлено — номер убран из выдачи и пула")
+
+    def feedback(self, ok: bool, reason: str = "", switch: bool = True) -> None:
+        """Отзыв пользователя: код подошёл / не подошёл (с причиной)."""
+        registry.feedback(self.number, self.service, ok, reason)
+        if ok:
+            self._stop.set()
+            self.status = "done"
+            self.log("✓ код подошёл")
+            if not self.cand.public and self.state:
+                self.provider.release(self.state, success=True)
+            return
+        self.log(f"✗ не подошёл: {reason or 'без причины'}")
+        if not (switch and self._failover("не подошёл")):
+            self._stop.set()
+            self._forget(reason or "не подошёл")
             self.status = "cancelled"
 
     def switch(self) -> bool:
@@ -253,8 +301,8 @@ class Engine:
             dropped = [c for c in cands if c.tier == "regular"]
             cands = [c for c in cands if c.tier != "regular"]
             if dropped:
-                yield {"type": "stage", "text": f"Отсеяно как «заезженные» (много SMS / сервис уже "
-                                                f"регистрировался): {len(dropped)}"}
+                yield {"type": "stage", "text": f"Отсеяно как «заезженные» (много SMS или номер сейчас "
+                                                f"занят другим человеком): {len(dropped)}"}
         elif mode == "premium":
             dropped = [c for c in cands if c.public or c.tier != "premium"]
             cands = [c for c in cands if not c.public and c.tier == "premium"]

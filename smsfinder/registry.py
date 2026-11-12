@@ -1,4 +1,7 @@
-"""Реестр выданных номеров: один и тот же номер не выдаётся повторно."""
+"""Реестр номеров: выданные, остановленные и не подошедшие номера больше не показываются.
+
+Запись: {services: [...], provider, last, blocked: bool, reason, feedback: [{ok, reason, service, at}]}
+"""
 from __future__ import annotations
 
 import json
@@ -18,24 +21,70 @@ def _load() -> dict:
         return {}
 
 
+def _write(data: dict):
+    PATH.parent.mkdir(parents=True, exist_ok=True)
+    PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+
+
+def _update(number: str, fn):
+    with _lock:
+        data = _load()
+        rec = data.setdefault(number, {"services": []})
+        fn(rec)
+        rec["last"] = int(time.time())
+        _write(data)
+
+
+def is_blocked(number: str) -> bool:
+    return bool(number) and bool(_load().get(number, {}).get("blocked"))
+
+
 def is_used(number: str, service: str) -> bool:
+    """Номер не показывать: заблокирован или уже выдавался для этого сервиса."""
     if not number:
         return False
     rec = _load().get(number)
-    return bool(rec) and (service in rec.get("services", []) or "*" in rec.get("services", []))
+    if not rec:
+        return False
+    return bool(rec.get("blocked")) or service in rec.get("services", []) or "*" in rec.get("services", [])
 
 
 def mark_used(number: str, service: str, provider: str) -> None:
     if not number:
         return
-    with _lock:
-        data = _load()
-        rec = data.setdefault(number, {"services": [], "provider": provider})
+
+    def f(rec):
+        rec["provider"] = provider
         if service not in rec["services"]:
             rec["services"].append(service)
-        rec["last"] = int(time.time())
-        PATH.parent.mkdir(parents=True, exist_ok=True)
-        PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1))
+    _update(number, f)
+
+
+def block(number: str, reason: str) -> None:
+    """Номер остановлен / не подошёл — больше не выдавать никогда."""
+    if not number:
+        return
+
+    def f(rec):
+        rec["blocked"] = True
+        rec["reason"] = reason
+    _update(number, f)
+
+
+def feedback(number: str, service: str, ok: bool, reason: str = "") -> None:
+    def f(rec):
+        rec.setdefault("feedback", []).append({"ok": ok, "reason": reason, "service": service,
+                                                "at": int(time.time())})
+        if not ok:
+            rec["blocked"], rec["reason"] = True, reason or "не подошёл"
+    _update(number, f)
+
+
+def stats() -> dict:
+    data = _load()
+    fb = [f for r in data.values() for f in r.get("feedback", [])]
+    return {"total": len(data), "blocked": sum(1 for r in data.values() if r.get("blocked")),
+            "worked": sum(1 for f in fb if f["ok"]), "failed": sum(1 for f in fb if not f["ok"])}
 
 
 def count() -> int:

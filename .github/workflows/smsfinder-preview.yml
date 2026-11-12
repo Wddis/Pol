@@ -52,6 +52,14 @@ jobs:
           python-version: "3.12"
       - run: pip install flask requests beautifulsoup4
 
+      # реестр остановленных / не подошедших / проверенных номеров переживает перезапуски сайта
+      - name: Restore number registry
+        uses: actions/cache/restore@v4
+        with:
+          path: .smsfinder
+          key: smsfinder-data-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: smsfinder-data-
+
       - name: Start app and tunnel
         id: tunnel
         env:
@@ -99,3 +107,10 @@ jobs:
       - name: Logs
         if: always()
         run: tail -50 web.log; tail -20 cf.log
+
+      - name: Save number registry
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: .smsfinder
+          key: smsfinder-data-${{ github.run_id }}-${{ github.run_attempt }}
