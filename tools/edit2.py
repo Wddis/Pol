@@ -23,10 +23,11 @@ def blur(inp, boxes=None):
 subs = []
 for c in plan["clips"]:
     s, e = c["s"], c["e"]; cur = s; bl = c.get("blur")
-    for a, b in sorted(c.get("zoom", [])):
+    for zz in sorted(c.get("zoom", [])):                 # [a, b] or [a, b, factor] (own factor, e.g. 2.77 = webcam full frame)
+        a, b = zz[0], zz[1]; zf = zz[2] if len(zz) > 2 else Z
         za, zb = max(s, s + a - PAD), min(e, s + b + PAD)
         if za > cur + 0.05: subs.append((cur, za, None, bl))
-        subs.append((za, zb, (s + a - za, s + b - za), bl)); cur = zb
+        subs.append((za, zb, (s + a - za, s + b - za, zf), bl)); cur = zb
     if e > cur + 0.05: subs.append((cur, e, None, bl))
 
 def render(i_sub):
@@ -34,9 +35,9 @@ def render(i_sub):
     p = f"{tmp}/{i:04d}.mp4"
     lab, bf = blur("0:v", bl)
     if zw:
-        a, b = zw
+        a, b, zf = zw
         k = f"min(clip((t-{a})/{RAMP},0,1),clip(({b}-t)/{RAMP},0,1))"
-        z = f"(1+({Z}-1)*{k})"
+        z = f"(1+({zf}-1)*{k})"
         vf = (bf + f"[{lab}]scale=w='trunc(1920*{z}/2)*2':h='trunc(1080*{z}/2)*2':eval=frame:flags=bicubic,"
               f"crop=1920:1080:x='floor(1920*({z}-1)*{ax})':y='floor(1080*({z}-1)*{ay})',fps=60,format=yuv420p[v]")
     else:
