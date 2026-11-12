@@ -61,7 +61,13 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
       const ti = p.locator('#file-loader, ytcp-thumbnails-compact-editor-uploader input[type="file"], input[type="file"][accept*="image"]').first();
       await setFiles(p, ti, m.thumb); log('thumbnail set'); await p.waitForTimeout(3000);
     }
-    await p.locator('tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]').click(); log('not for kids');
+    // "not made for kids" is usually preset by the channel default; click only if it isn't checked
+    const nmfk = p.locator('tp-yt-paper-radio-button[name="VIDEO_MADE_FOR_KIDS_NOT_MFK"]');
+    if ((await nmfk.getAttribute('aria-checked').catch(() => null)) !== 'true') await nmfk.click({ timeout: 15000 });
+    log('not for kids');
+    // the channel's daily upload limit shows up right in the dialog — stop instead of retrying
+    const blocked = await p.getByText(/Загрузка недоступна|Daily upload limit reached/).first().isVisible().catch(() => false);
+    if (blocked) throw new Error('UPLOAD_LIMIT: Studio says the daily upload limit is reached (try in 24 h or pass verification)');
     if (m.tags && m.tags.length) {
       try {
         await p.locator('#toggle-button').click(); await p.waitForTimeout(1500);
