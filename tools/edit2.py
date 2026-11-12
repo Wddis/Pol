@@ -20,10 +20,15 @@ def blur(inp, boxes=None):
 
 # build sub-parts: (start, end, zoom_window_relative or None)
 # a clip may carry its own "blur" list (e.g. a full-screen-webcam part must not get screen boxes)
+# ZOOM IS OFF (owner rule 12.11.2026): zoom windows in plans are ignored unless the owner
+# gives an explicit command -> then run with ALLOW_ZOOM=1. See docs/montage-style.md «Зум».
+ALLOW_ZOOM = os.environ.get("ALLOW_ZOOM") == "1"
+if not ALLOW_ZOOM and any(c.get("zoom") for c in plan["clips"]):
+    print("edit2: zoom windows in plan IGNORED (zoom is off; ALLOW_ZOOM=1 to enable)", file=sys.stderr)
 subs = []
 for c in plan["clips"]:
     s, e = c["s"], c["e"]; cur = s; bl = c.get("blur")
-    for zz in sorted(c.get("zoom", [])):                 # [a, b] or [a, b, factor] (own factor, e.g. 2.77 = webcam full frame)
+    for zz in (sorted(c.get("zoom", [])) if ALLOW_ZOOM else []):                 # [a, b] or [a, b, factor] (own factor, e.g. 2.77 = webcam full frame)
         a, b = zz[0], zz[1]; zf = zz[2] if len(zz) > 2 else Z
         za, zb = max(s, s + a - PAD), min(e, s + b + PAD)
         if za > cur + 0.05: subs.append((cur, za, None, bl))
