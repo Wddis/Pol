@@ -126,7 +126,7 @@ class FreeProvider(Provider):
             else:
                 niche = not busy and low and h.service_seen == 0
             c.tier = "niche" if niche else "regular"
-            c.extra.update(last_s=h.last_s, usage=h.usage, services=h.services,
+            c.extra.update(last_s=h.last_s, usage=h.usage, services=h.services, svc_last_s=h.service_last_s,
                            service_seen=h.service_seen, latency_ms=h.latency_ms, keys=h.keys)
             fresh = f"посл. SMS {fmt_ago(h.last_s)} назад" if h.last_s is not None else "лента активна (Live)"
             c.note = f"{fresh} · SMS: {h.usage} · сервисов: {h.services}" + (f" · {label}" if label else "")

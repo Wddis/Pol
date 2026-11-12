@@ -161,7 +161,7 @@ def score_free(h: Health, country: str, mode: str) -> float:
     if mode == "niche":
         s = 100 - min(h.usage, 60) - min(h.services, 15) * 2
         s += 15 if rare else 0
-        s += recency * 0.5
+        s += recency  # номер, принимающий SMS прямо сейчас, важнее «тишины»
         return round(s, 1)
     s = min(h.usage, 100) * 0.5 + recency
     return round(s, 1)

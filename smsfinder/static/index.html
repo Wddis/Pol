@@ -67,6 +67,15 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px}
 .bar.big{height:8px;margin:4px 0 10px}.bar i{transition:width .4s}
 .bestc{border:2px solid var(--ok);border-radius:10px;padding:12px;margin:8px 0 12px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
 .bestc .n{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+@media (max-width:700px){
+  .tbl thead{display:none}
+  .tbl tr{display:grid;grid-template-columns:1fr auto;gap:2px 10px;padding:10px 0;border-bottom:1px solid var(--line)}
+  .tbl td{border:0;padding:0}
+  .tbl td.num{grid-column:1}
+  .tbl td:last-child{grid-column:2;grid-row:1 / span 3;align-self:center}
+  .tbl td.notecell,.tbl td.note{grid-column:1 / -1;font-size:12px}
+  .tbl td.notecell details{display:none}
+}
 tr.flash td{background:color-mix(in srgb,var(--ok) 14%,transparent)}
 </style>
 </head>
@@ -81,10 +90,10 @@ tr.flash td{background:color-mix(in srgb,var(--ok) 14%,transparent)}
       <label>Страна<input id="country" placeholder="все страны (или de, usa, 49…)"></label>
       <label>Какие номера<select id="mode"></select></label>
       <label>Тест доставки сервиса<select id="vtest">
-        <option value="0:0">без теста</option>
-        <option value="3:180" selected>3 лучших номера, до 3 мин</option>
-        <option value="5:300">5 лучших номеров, до 5 мин</option>
-        <option value="8:600">8 лучших номеров, до 10 мин</option>
+        <option value="0:0:0">без теста</option>
+        <option value="20:600:1" selected>найти 1 проверенный (20 номеров, до 10 мин)</option>
+        <option value="30:900:3">найти 3 проверенных (30 номеров, до 15 мин)</option>
+        <option value="40:1200:5">найти 5 проверенных (40 номеров, до 20 мин)</option>
       </select></label>
     </div>
     <div class="row" style="margin-top:14px;align-items:center">
@@ -120,24 +129,27 @@ tr.flash td{background:color-mix(in srgb,var(--ok) 14%,transparent)}
     </details>
   </div>
 
+  <div class="card" id="poolCard">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <b id="poolTitle">✅ Проверенные номера</b><span class="muted note" id="poolInfo">загрузка…</span>
+    </div>
+    <p class="note" style="margin:6px 0 8px">Только номера, на которые <b>при нашем наблюдении</b> пришло SMS от выбранного сервиса (для Telegram — «Telegram code …»). Наполняется тестом при подборе и фоновым наблюдением; статус действует 6 ч.</p>
+    <div id="best"></div>
+    <div class="scroll"><table class="tbl"><thead><tr>
+      <th>Номер</th><th>Страна</th><th>Источник</th><th>Доказательство доставки</th><th></th>
+    </tr></thead><tbody id="poolRows"></tbody></table></div>
+    <details style="margin-top:8px"><summary>Журнал фонового наблюдения</summary><div class="log" id="poolLog"></div></details>
+  </div>
+
   <div class="card" id="resCard" hidden>
     <div class="row" style="justify-content:space-between;align-items:center">
-      <b id="resTitle">Подобранные номера</b><span class="muted" id="took"></span>
+      <b id="resTitle">🔎 Найденные номера (ещё не проверены тестом)</b><span class="muted" id="took"></span>
     </div>
+    <p class="note" style="margin:6px 0 8px">Прошли отсев: сервис доставлял сюда SMS по истории сайта, номер жив и сейчас не занят. Доставка ещё не подтверждена нашим наблюдением — как только подтвердится, номер переедет в «✅ Проверенные».</p>
     <div id="errors" class="err note"></div>
-    <div id="best"></div>
     <div class="scroll"><table class="tbl"><thead><tr>
       <th>Номер</th><th>Статус</th><th>Страна</th><th>Источник</th><th>Проверка</th><th></th>
     </tr></thead><tbody id="rows"></tbody></table></div>
-  </div>
-
-  <div class="card" id="poolCard">
-    <div class="row" style="justify-content:space-between;align-items:center">
-      <b id="poolTitle">✅ Пул проверенных номеров</b><span class="muted note" id="poolInfo">загрузка…</span>
-    </div>
-    <p class="note" style="margin:6px 0 8px">Фоновый тест: скрипт постоянно наблюдает живые номера; как только на номер приходит SMS от выбранного сервиса, номер попадает сюда (действует 6 ч). Ночью и для Telegram пул наполняется медленнее — коды Telegram приходят на номер раз в несколько часов.</p>
-    <div class="scroll"><table class="tbl"><tbody id="poolRows"></tbody></table></div>
-    <details style="margin-top:8px"><summary>Журнал наблюдения</summary><div class="log" id="poolLog"></div></details>
   </div>
 
   <div class="card" id="actCard" hidden>
@@ -192,9 +204,9 @@ async function api(path, body) {
 }
 const provs = () => [...document.querySelectorAll('#provs input:checked')].map(i => i.value);
 const params = () => {
-  const [vn, vw] = $('vtest').value.split(':').map(Number);
+  const [vn, vw, vt] = $('vtest').value.split(':').map(Number);
   return {service: $('service').value, country: $('country').value.trim(), mode: $('mode').value,
-          probe: +$('probe').value, verify: vn, vwait: vw, timeout: +$('timeout').value * 60};
+          probe: +$('probe').value, verify: vn, vwait: vw, target: vt, timeout: +$('timeout').value * 60};
 };
 const svcName = () => { const v = $('service').value; return v === 'other' ? 'любого сервиса' : v[0].toUpperCase() + v.slice(1); };
 
@@ -229,14 +241,10 @@ function rowHtml(c) {
 }
 function render(r, final) {
   $('resCard').hidden = false;
-  const list = r.candidates;
-  $('resTitle').textContent = `Номера для ${svcName()}`;
+  const list = r.candidates.filter(c => c.tier !== 'verified');
   $('took').textContent = `${list.length} шт. · ${r.took} с`;
   $('errors').textContent = Object.entries(r.errors || {}).map(([k, v]) => `${k}: ${v}`).join(' · ');
-  const best = list.find(c => c.extra.can_buy && !c.extra.busy_left) || list.find(c => c.extra.can_buy);
-  $('best').innerHTML = best ? `<div class="bestc"><div><div class="note">Рекомендуемый номер для ${esc(svcName())}</div>
-      <div class="n">${esc(best.number || '(выдаётся после покупки)')}</div><div class="note">${esc(best.note.split(' · ').slice(0, 2).join(' · '))}</div></div>
-      <button data-id="${best.id}" class="primary-big">Взять этот номер</button></div>` : '';
+  loadPool();
   $('rows').innerHTML = list.length ? list.map(rowHtml).join('')
     : `<tr><td colspan="6" class="muted">${!final ? 'Идёт проверка…'
         : r.hidden_unverified ? `За время теста ${esc(svcName())} не прислал SMS ни на один тестируемый номер, поэтому проверенных пока нет. Подходящих номеров найдено: <b>${r.hidden_unverified}</b> — выберите «Какие номера → Лучшие под сервис», чтобы их увидеть. Фоновый пул продолжает наблюдение и добавит номер, как только придёт SMS от ${esc(svcName())}.`
@@ -247,7 +255,7 @@ function updateRow(ev) {  // тест доставки обновляет стр
   if (ev.tier) tr.querySelector('.tiercell').innerHTML = `<span class="tag ${ev.tier}">${ev.tier === 'verified' ? '✅ ' : ''}${TIER[ev.tier] || ev.tier}</span>`;
   if (ev.note) tr.querySelector('.notecell').firstChild.textContent = ev.note;
   const v = $('v-' + ev.id); if (v) v.innerHTML = ev.status === 'watching' ? '⏳ тест идёт…' : ev.status === 'verified' ? '<b style="color:var(--ok)">✅ тест пройден</b>' : ev.status === 'failed' ? '<span class="muted">тест: SMS от сервиса не было</span>' : '';
-  if (ev.status === 'verified') { tr.classList.add('flash'); }
+  if (ev.status === 'verified') { tr.classList.add('flash'); setTimeout(() => { tr.remove(); loadPool(); }, 1500); }
 }
 
 let findT0 = 0, clock = null, job = null, S = null, pollT = null;
@@ -369,7 +377,11 @@ function show(a) {
   const active = ACTIVE.includes(a.status);
   $('actCancel').disabled = !active; $('actSwitch').disabled = !active || !a.reserve;
   $('actFb').hidden = !active;
-  if (['cancelled'].includes(a.status)) dropNumber(a.number);
+  if (['cancelled'].includes(a.status)) {
+    dropNumber(a.number);
+    clearInterval(timer);
+    setTimeout(() => { if (current && current.id === a.id) { $('actCard').hidden = true; current = null; } }, 1200);
+  }
 }
 function watch(a) {
   show(a); clearInterval(timer);
@@ -420,22 +432,22 @@ async function loadPool() {
   try {
     const r = await api(`/api/verified?service=${encodeURIComponent($('service').value)}`);
     const w = r.watcher;
-    $('poolInfo').textContent = `проверенных: ${r.pool.length} · под наблюдением: ${w.watching} · убрано (остановлены/не подошли): ${r.stats.blocked}` + (w.running ? '' : ' · фоновая проверка выключена');
+    $('poolTitle').textContent = `✅ Проверенные для ${svcName()} (${r.pool.length})`;
+    $('poolInfo').textContent = `под наблюдением: ${w.watching} · убрано (остановлены/не подошли): ${r.stats.blocked}` + (w.running ? '' : ' · фоновая проверка выключена');
+    const free = r.pool.find(c => !c.extra.busy_left);
+    $('best').innerHTML = free ? `<div class="bestc"><div><div class="note">Рекомендуемый номер для ${esc(svcName())}</div>
+        <div class="n">${esc(free.number)}</div><div class="note">${esc(free.note.split(' · ')[0])}</div></div>
+        <button data-id="${free.id}" class="primary-big">Взять этот номер</button></div>` : '';
     $('poolRows').innerHTML = r.pool.length ? r.pool.map(c => `<tr>
       <td class="num"><b>${esc(c.number)}</b></td><td>${esc(c.country)}</td><td>${esc(c.provider)}</td>
-      <td class="note">${esc(c.note.split(' · ')[0])}</td>
+      <td class="note">${esc(c.note.split(' · ').slice(0, 2).join(' · '))}</td>
       <td><button data-id="${c.id}">Взять</button></td></tr>`).join('')
-      : `<tr><td class="muted note">Пока пусто — номер появится здесь, когда на один из наблюдаемых номеров придёт SMS от ${esc(svcName())}.</td></tr>`;
+      : `<tr><td colspan="5" class="muted note">Пока пусто — номер появится здесь, когда на один из наблюдаемых номеров придёт SMS от ${esc(svcName())}. Нажмите «Подобрать номер» с тестом, чтобы ускорить.</td></tr>`;
     $('poolLog').innerHTML = w.events.map(esc).join('<br>');
   } catch (e) { $('poolInfo').textContent = e.message; }
 }
-$('poolRows').addEventListener('click', async (e) => {
-  const id = e.target.dataset?.id; if (!id) return;
-  e.target.disabled = true;
-  try { watch(await api('/api/start', {id, ...params()})); } catch (err) { alert(err.message); }
-  e.target.disabled = false;
-});
-loadPool(); setInterval(loadPool, 20000);
+$('poolRows').addEventListener('click', onTake);
+loadPool(); setInterval(() => loadPool(), 10000);
 init().then(resumeJob).catch(e => $('errors').textContent = e.message);
 </script>
 </body>

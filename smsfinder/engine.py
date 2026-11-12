@@ -307,7 +307,8 @@ class Engine:
     def find_stream(self, service: str, country: str = "", providers: Optional[list[str]] = None,
                     limit: int = 15, mode: str = "niche", probe_s: int = 20,
                     verify_n: int = 0, verify_wait: int = 180, track: bool = True,
-                    verify_method: str = "auto", stop: Optional[threading.Event] = None) -> Iterator[dict]:
+                    verify_method: str = "auto", stop: Optional[threading.Event] = None,
+                    verify_target: int = 0) -> Iterator[dict]:
         """Генератор событий проверки; последнее событие — {'type': 'done', ...}."""
         names = providers or [p["name"] for p in self.provider_info() if p["enabled"]]
         if mode == "premium":
@@ -445,13 +446,21 @@ class Engine:
                "took": round(time.time() - t0, 1)}
 
         # этап 3: тест доставки под выбранный сервис
-        todo = [c for c in cands if c.public and c.tier != "verified"][:verify_n]
-        if todo:
-            yield {"type": "stage", "stage": 3, "text": f"Этап 3 из 3: тест доставки {svc_t} на {len(todo)} номерах — "
-                                                        f"жду новое SMS от {svc_t} до {max(1, verify_wait // 60)} мин "
-                                                        "(номера уже можно брать)"}
+        # тестируем сначала номера, куда сервис писал недавно (шанс поймать его SMS выше)
+        def recent(c):
+            return c.extra.get("svc_last_s") if c.extra.get("svc_last_s") is not None else 10 ** 9
+        pool_t = sorted((c for c in cands if c.public and c.tier != "verified"), key=lambda c: (recent(c), -c.score))
+        todo = pool_t[:verify_n]
+        have_ver = sum(1 for c in cands if c.tier == "verified")
+        if todo and not (verify_target and have_ver >= verify_target):
+            goal = f", остановлюсь на {verify_target} проверенных" if verify_target else ""
+            yield {"type": "stage", "stage": 3, "text": f"Этап 3 из 3: тест доставки {svc_t} на {len(todo)} номерах "
+                                                        f"одновременно — жду SMS от {svc_t} до {max(1, verify_wait // 60)} "
+                                                        f"мин{goal} (номера уже можно брать)"}
             vq: queue.Queue = queue.Queue()
-            jobs = [verify.Verification(self, c, verify_wait, vq.put, verify_method, service, stop) for c in todo]
+            vstop = threading.Event()  # общий стоп теста: пользователь или достигнута цель
+            threading.Thread(target=lambda: (stop.wait(), vstop.set()), daemon=True).start()
+            jobs = [verify.Verification(self, c, verify_wait, vq.put, verify_method, service, vstop) for c in todo]
 
             def run_v(j):
                 try:
@@ -471,6 +480,12 @@ class Engine:
                     left -= 1
                 else:
                     yield ev
+                    if ev.get("status") == "verified":
+                        have_ver += 1
+                        if verify_target and have_ver >= verify_target and not vstop.is_set():
+                            vstop.set()
+                            yield {"type": "stage", "text": f"Цель достигнута: {have_ver} проверенных для {svc_t} — "
+                                                            "тест остальных номеров остановлен"}
         hidden = 0
         if mode == "verified" and not stop.is_set():
             hidden = sum(1 for c in cands if c.tier != "verified")

@@ -84,8 +84,9 @@ def search_start():
     job = engine.start_search(
         service=d.get("service", "other"), country=d.get("country", ""),
         providers=d.get("providers") or None, limit=int(d.get("limit", 15)), mode=d.get("mode", "niche"),
-        probe_s=max(0, min(int(d.get("probe", 10)), 120)), verify_n=max(0, min(int(d.get("verify", 0)), 8)),
-        verify_wait=max(30, min(int(d.get("vwait", 180)), 600)), verify_method=d.get("vmethod", "auto"))
+        probe_s=max(0, min(int(d.get("probe", 10)), 120)), verify_n=max(0, min(int(d.get("verify", 0)), 40)),
+        verify_wait=max(30, min(int(d.get("vwait", 180)), 1200)), verify_method=d.get("vmethod", "auto"),
+        verify_target=max(0, min(int(d.get("target", 0)), 20)))
     return jsonify(job.poll(0))
 
 

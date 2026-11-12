@@ -213,7 +213,9 @@ class Verification:
 
         while time.time() - t0 < self.wait:
             if self.stop.wait(5 if self.method == "active" else 10):
-                return self._fail("тест остановлен вместе с подбором")
+                self.status = "stopped"
+                self._say(False, "тест остановлен (цель достигнута или подбор остановлен)")
+                return self
             try:
                 msgs = _msgs(self.provider, c)
             except Exception:
@@ -250,7 +252,7 @@ class Watcher:
     """Фоновый пул: постоянно наблюдает живые номера и записывает, от каких сервисов
     на них реально приходят SMS прямо сейчас."""
 
-    def __init__(self, engine, size: int = 24, cycle: int = 60, refresh: int = 900):
+    def __init__(self, engine, size: int = 60, cycle: int = 30, refresh: int = 600):
         self.engine, self.size, self.cycle, self.refresh = engine, size, cycle, refresh
         self.watch: dict[str, dict] = {}   # number -> {cand, baseline, since, last_new}
         self.events: list[str] = []
@@ -269,14 +271,17 @@ class Watcher:
         busy = any(not j.finished for j in self.engine.jobs.values())
         pool = [c for c in self.engine.candidates.values()
                 if c.public and c.number not in self.watch and not registry.is_blocked(c.number)]
-        if len(pool) < self.size // 2 and not busy:
-            try:
-                res = self.engine.find("other", "", None, self.size, "popular", 0, track=False)
-                pool += [self.engine.candidates[d["id"]] for d in res.get("candidates", [])
-                         if d["id"] in self.engine.candidates]
-            except Exception as e:
-                self.log(f"обновление списка не удалось: {e}")
-        pool.sort(key=lambda c: c.score, reverse=True)
+        if len(pool) < self.size and not busy:
+            # строгие сервисы (Telegram) — первыми: номера, куда они уже доставляли SMS
+            for svc in ("telegram", "other"):
+                try:
+                    res = self.engine.find(svc, "", None, self.size, "popular", 0, track=False)
+                    pool += [self.engine.candidates[d["id"]] for d in res.get("candidates", [])
+                             if d["id"] in self.engine.candidates]
+                except Exception as e:
+                    self.log(f"обновление списка не удалось: {e}")
+        # приоритет: недавно приходило SMS от Telegram, затем общий score
+        pool.sort(key=lambda c: (c.extra.get("svc_last_s") is None, c.extra.get("svc_last_s") or 0, -c.score))
         added = 0
         for c in pool:
             if not c.public or c.number in self.watch or registry.is_blocked(c.number):
@@ -291,15 +296,25 @@ class Watcher:
         self.log(f"под наблюдением: {len(self.watch)} (добавлено {added})")
 
     def _tick(self):
+        from concurrent.futures import ThreadPoolExecutor
         from . import registry
-        for num, w in list(self.watch.items()):
-            c = w["cand"]
-            if registry.is_blocked(num):
-                del self.watch[num]
-                continue
+        items = list(self.watch.items())
+
+        def fetch(item):
+            num, w = item
             try:
-                msgs = _msgs(self.engine.providers[c.provider], c)
+                return num, _msgs(self.engine.providers[w["cand"].provider], w["cand"])
             except Exception:
+                return num, None
+        with ThreadPoolExecutor(max_workers=10) as ex:
+            fetched = dict(ex.map(fetch, items))
+        for num, w in items:
+            c = w["cand"]
+            if registry.is_blocked(num) or num not in self.watch:
+                self.watch.pop(num, None)
+                continue
+            msgs = fetched.get(num)
+            if msgs is None:
                 continue
             if not w["baseline"]:
                 w["baseline"] = {m.key for m in msgs}
@@ -318,7 +333,7 @@ class Watcher:
                 del self.watch[num]
 
     def _loop(self):
-        time.sleep(45)  # дать первому пользовательскому подбору отработать без конкуренции
+        time.sleep(20)  # дать первому пользовательскому подбору отработать без конкуренции
         while True:
             try:
                 if time.time() - self.last_refresh > self.refresh or len(self.watch) < self.size // 2:

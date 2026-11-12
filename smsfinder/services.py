@@ -55,6 +55,7 @@ PROFILES = {
         # «Telegram code 54325», «Telegram code: 377944 …», «Код для входа в Telegram: 12345»
         "code_re": re.compile(r"(?:telegram|телеграм)\D{0,40}?(\d{5,6})(?!\d)", re.I),
         "busy_s": 15 * 60,
+        "stale_s": 24 * 3600,   # SMS от Telegram старше суток — не доказательство
         "hint": ("1) Введите номер в Telegram. 2) Если Telegram пишет «код отправлен в приложение Telegram» — "
                  "на номере уже есть чужой аккаунт, SMS не будет: нажмите «Не подошёл». "
                  "3) Если просит email или пишет «номер заблокирован» — тоже «Не подошёл». "
@@ -92,11 +93,18 @@ def service_verdict(service: str, seen: int, last_s, per24: int):
         if p.get("strict"):
             return False, f"{name} не присылал SMS на этот номер — код не придёт (уйдёт в приложение или номер в блоке)", 0
         return True, f"{name} здесь ещё не было", 10
+    stale = p.get("stale_s", 0)
+    if stale and last_s is not None and last_s > stale:
+        ago = f"{last_s // 3600} ч" if last_s < 86400 else f"{last_s // 86400} дн"
+        return False, f"{name} последний раз присылал SMS {ago} назад — данные устарели, номер мог умереть", 0
     if p.get("busy_s") and last_s is not None and last_s < p["busy_s"]:
         return True, f"⚠ {name} слал код {last_s // 60} мин назад — номер сейчас занят другим человеком", -35
     if seen >= 8:
         return True, f"{name} доставляет, но номер очень заезжен ({seen} кодов)", -10
-    return True, f"✓ {name} доставляет SMS сюда ({seen} шт.), сейчас свободен", 30
+    if last_s is None:
+        return True, f"{name} присылал SMS сюда ({seen} шт.), давность неизвестна", 10
+    ago = f"{last_s // 60} мин" if last_s < 3600 else f"{last_s // 3600} ч"
+    return True, f"✓ {name} доставлял SMS {ago} назад ({seen} шт.), сейчас свободен", 30 + (15 if last_s < 6 * 3600 else 0)
 
 
 def service_name(service: str, provider: str) -> str:
