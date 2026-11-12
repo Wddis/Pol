@@ -12,7 +12,7 @@ import time
 from datetime import datetime, timezone
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
+from ..fast import Soup
 
 from ..core import TIMEOUT, Candidate, Health, ProviderError, Sms, extract_code, http
 from ..services import COUNTRIES, country_matches, service_matchers
@@ -55,33 +55,45 @@ class AsmsAi(FreeProvider):
         super().__init__()
         self.s = http()
 
-    def _get(self, path: str) -> tuple[BeautifulSoup, int]:
+    def _get(self, path: str) -> tuple:
         t0 = time.time()
         r = self.s.get(urljoin(BASE, path), timeout=TIMEOUT)
         if r.status_code != 200:
             raise ProviderError(f"HTTP {r.status_code}")
-        return BeautifulSoup(r.text, "html.parser"), int((time.time() - t0) * 1000)
+        return Soup(r.text), int((time.time() - t0) * 1000)
 
-    pages = int(__import__("os").getenv("SMSFINDER_ASMS_PAGES", "15"))  # 60 номеров на страницу
+    # 60 номеров на страницу. Сайт отдаёт ~40 страниц/с, поэтому лишние страницы списка
+    # прямо удлиняют подбор: за бюджет этапа 1 проверяется ~30 номеров, 5 страниц (300) хватает с запасом.
+    pages = int(__import__("os").getenv("SMSFINDER_ASMS_PAGES", "3"))
+    workers = 16  # больше одновременных запросов сайт не ускоряет — только растит задержку каждого
 
-    def listing(self, country, mode):
-        """Все страницы списка параллельно. Карточка списка уже содержит число SMS и время
-        последнего SMS — по ним отсеиваем «спящие» номера, не открывая каждый."""
+    def listing_for(self, service, country, mode):
+        return self.listing(country, mode, service)
+
+    def listing(self, country, mode, service=""):
+        """Страницы списка параллельно. Карточка списка уже содержит число SMS и время
+        последнего SMS — по ним отсеиваем «спящие» номера, не открывая каждый.
+        Страница сервиса (/telegram и т. п.) одним запросом даёт номера, куда сервис недавно
+        доставлял SMS, — их проверяем первыми."""
         from concurrent.futures import ThreadPoolExecutor
         from ..core import ago_to_seconds
+        from ..services import SERVICES, profile
         iso = country.lower().strip() if country and len(country.strip()) == 2 else ""
+        svc_path = f"/{service}" if service in SERVICES and service != "other" else ""
         if iso:
             paths = [f"/free-phone-numbers?country={iso}&page={i}" for i in range(1, 4)]
         else:
             paths = ["/new-numbers", "/new-numbers?page=2"] + [f"/free-phone-numbers?page={i}"
                                                               for i in range(1, self.pages + 1)]
+        if svc_path:
+            paths.insert(0, svc_path)
 
         def fetch(path):
             try:
                 return path, self._get(path)[0]
             except Exception:
                 return path, None
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        with ThreadPoolExecutor(max_workers=len(paths)) as ex:
             soups = list(ex.map(fetch, paths))
         seen, out = set(), []
         for path, soup in soups:
@@ -94,7 +106,7 @@ class AsmsAi(FreeProvider):
                 num = m.group(1)
                 seen.add(num)
                 parts = [p.strip() for p in a.get_text("|", strip=True).split("|") if p.strip()]
-                total = next((int(p) for p in parts if p.isdigit()), None)
+                total = next((int(p.replace(",", "")) for p in parts if p.replace(",", "").isdigit()), None)
                 last_s = next((ago_to_seconds(p) for p in parts if ago_to_seconds(p) is not None), None)
                 if last_s is not None and last_s > self.max_age:
                     continue  # больше суток без SMS — не тратим на него запрос
@@ -104,15 +116,26 @@ class AsmsAi(FreeProvider):
                 out.append(Candidate(provider=self.name, number="+" + num, country=ciso.upper() or (parts[1:2] or [""])[0],
                                      ref=m.group(0), price=0.0, public=True,
                                      extra={"fresh_list": path.startswith("/new-numbers"), "list_total": total,
-                                            "list_last_s": last_s}))
+                                            "list_last_s": last_s, "svc_page": path == svc_path,
+                                            "svc_page_last_s": last_s if path == svc_path else None}))
         if not out and not country:
             raise ProviderError(f"{self.name}: не удалось получить список номеров")
-        # самые «живые» — первыми (их и проверяем подробно)
-        out.sort(key=lambda c: (c.extra["list_last_s"] if c.extra["list_last_s"] is not None else 10 ** 9))
+        # порядок проверки: (0) сервис доставлял сюда SMS, и номер сейчас не занят другим человеком;
+        # (1) раздел «новые номера» — малоиспользуемые, лучшие для нишевого режима; (2) остальные;
+        # (3) номера, где код сервиса пришёл только что (заняты). Внутри группы — самые «живые» первыми.
+        busy_s = profile(service).get("busy_s", 0) if service else 0
+
+        def prio(c):
+            age = c.extra["list_last_s"] if c.extra["list_last_s"] is not None else 10 ** 9
+            if c.extra.get("svc_page"):
+                svc_age = c.extra["svc_page_last_s"]
+                return (3, age) if svc_age is not None and svc_age < busy_s else (0, age)
+            return (1 if c.extra.get("fresh_list") else 2, age)
+        out.sort(key=prio)
         return out
 
     @staticmethod
-    def _parse_sms(soup: BeautifulSoup) -> list[Sms]:
+    def _parse_sms(soup) -> list[Sms]:
         out = []
         for t in soup.select("time[datetime]"):
             card = t.find_parent("div", class_=re.compile("rounded"))

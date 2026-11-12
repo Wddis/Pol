@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import time
 
-from bs4 import BeautifulSoup
+from ..fast import Soup
 
 from ..core import TIMEOUT, Candidate, Health, ProviderError, Sms, ago_to_seconds, digits, extract_code, http
 from ..services import COUNTRIES, country_matches, service_matchers
@@ -38,7 +38,7 @@ class ReceiveSmss(FreeProvider):
         r = self.s.get(BASE + path, timeout=TIMEOUT)
         if r.status_code != 200:
             raise ProviderError(f"HTTP {r.status_code}" + (" (защита Cloudflare)" if r.status_code == 403 else ""))
-        return BeautifulSoup(r.text, "html.parser"), int((time.time() - t0) * 1000)
+        return Soup(r.text), int((time.time() - t0) * 1000)
 
     def listing(self, country, mode):
         soup, _ = self._get("/")

@@ -35,7 +35,7 @@ class OnlineSimFree(FreeProvider):
             except Exception:
                 return []
 
-        with ThreadPoolExecutor(max_workers=8) as ex:
+        with ThreadPoolExecutor(max_workers=max(1, len(countries))) as ex:  # HTTP/2: все страны одной волной
             pairs = [p for chunk in ex.map(numbers, countries) for p in chunk]
         out = []
         for c, n in pairs:

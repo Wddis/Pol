@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 from typing import Optional
 
-from ..core import Candidate, Emit, Health, Sms, noop_emit
+from ..core import Candidate, Emit, Health, SearchStopped, Sms, noop_emit
 
 
 class Provider:
@@ -54,11 +55,48 @@ class FreeProvider(Provider):
     max_check = 40          # сколько номеров проверять за один поиск
     max_age = 24 * 3600     # номер без SMS дольше этого считается нерабочим
     dead_ttl = 3600         # «мёртвый» номер (архив / нет SMS) не перепроверяем час
-    workers = 12
+    workers = 24          # одновременных проверок на сайт (HTTP/2: потоки по одному соединению)
+    grace = 0.3           # сколько после бюджета ждать уже начатые проверки, с
+    min_window = 0.35     # минимум времени на проверки после получения списка, с
+
+    # Кеш для повторных подборов на работающем сервере: страница номера, проверенная меньше
+    # health_ttl секунд назад, на этапе 1 не скачивается заново (живая перепроверка — всегда свежая).
+    listing_ttl = 30
+    health_ttl = 45
 
     def __init__(self):
         self._dead: dict[str, tuple[float, str]] = {}
         self._dead_lock = threading.Lock()
+        self._lcache: dict = {}
+        self._hcache: dict = {}
+
+    def _listing_cached(self, service: str, country: str, mode: str) -> list[Candidate]:
+        key = (service, country, mode)
+        rec = self._lcache.get(key)
+        if rec and time.time() - rec[0] < self.listing_ttl:
+            base = rec[1]
+        else:
+            base = self.listing_for(service, country, mode)
+            self._lcache[key] = (time.time(), base)
+        # подбор меняет кандидатов (score, tier, note) — каждому подбору свежие копии с новыми id
+        return [Candidate(provider=c.provider, number=c.number, country=c.country, ref=c.ref, price=c.price,
+                          public=c.public, stock=c.stock, extra=dict(c.extra)) for c in base]
+
+    def _health_cached(self, c: Candidate, service: str) -> Health:
+        key = (c.number, service)
+        rec = self._hcache.get(key)
+        if rec and time.time() - rec[0] < self.health_ttl:
+            h, dt = dataclasses.replace(rec[1]), int(time.time() - rec[0])
+            if h.last_s is not None:  # «последнее SMS N с назад» — с поправкой на возраст кеша
+                h.last_s += dt
+            if h.service_last_s is not None:
+                h.service_last_s += dt
+            return h
+        h = self.health(c, service)
+        transient = not h.ok and any(k in h.reason for k in ("недоступн", "HTTP 4", "HTTP 5"))
+        if not transient:  # сетевые сбои и ограничения сайта не запоминаем
+            self._hcache[key] = (time.time(), dataclasses.replace(h))
+        return h
 
     def _is_dead(self, number: str) -> bool:
         rec = self._dead.get(number)
@@ -71,11 +109,22 @@ class FreeProvider(Provider):
     def listing(self, country: str, mode: str) -> list[Candidate]:
         raise NotImplementedError
 
-    def find(self, service, country, limit=20, mode="niche", emit=noop_emit):
+    def listing_for(self, service: str, country: str, mode: str) -> list[Candidate]:
+        """Список номеров с учётом сервиса (провайдер может поставить первыми номера,
+        куда сервис доставлял SMS). По умолчанию — обычный listing()."""
+        return self.listing(country, mode)
+
+    def find(self, service, country, limit=20, mode="niche", emit=noop_emit, deadline=None):
+        """deadline — момент (time.time()), после которого новые проверки не начинаются:
+        номера проверяются в порядке приоритета, и подбор выдаёт то, что успел проверить
+        (самые перспективные номера стоят в начале списка)."""
         from ..core import fmt_ago, score_free  # локально, чтобы не плодить циклы импорта
         from .. import registry
 
-        listed = self.listing(country, mode)
+        listed = self._listing_cached(service, country, mode)
+        if deadline is not None and time.time() + 0.15 > deadline:
+            # медленная сеть: список пришёл почти к концу бюджета — всё равно даём время на проверки
+            deadline = time.time() + self.min_window
         alive = [c for c in listed if not self._is_dead(c.number)]
         skipped = len(listed) - len(alive)
         items = alive[: self.max_check]
@@ -84,8 +133,13 @@ class FreeProvider(Provider):
                       + (f" (ещё {skipped} пропущено — признаны мёртвыми за последний час)" if skipped else "")})
         limited = {"n": 0}
 
+        late = {"n": 0}
+
         def check(c: Candidate):
             emit({"type": "_ping"})  # если подбор остановлен, движок прервёт проверку здесь
+            if deadline is not None and time.time() > deadline:
+                late["n"] += 1  # бюджет времени исчерпан — номер не проверяем (не отсеиваем навсегда)
+                return None
             if limited["n"] >= 4:  # сайт начал ограничивать запросы — не долбим его дальше
                 return None
             if registry.is_used(c.number, service):
@@ -93,7 +147,7 @@ class FreeProvider(Provider):
                 c.log(f"отсеян: {why}")
                 emit({"type": "check", "provider": self.name, "number": c.number, "ok": False, "reason": why})
                 return None
-            h = self.health(c, service)
+            h = self._health_cached(c, service)
             if h.ok and h.last_s is not None and h.last_s > self.max_age:
                 h.ok, h.reason = False, f"нет SMS {fmt_ago(h.last_s)}"
             if not h.ok and any(k in h.reason for k in ("HTTP 403", "HTTP 429", "HTTP 503")):
@@ -135,8 +189,25 @@ class FreeProvider(Provider):
                   "reason": c.note, "score": c.score})
             return c
 
-        from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=self.workers) as ex:
-            out = [c for c in ex.map(check, items) if c]
+        from concurrent.futures import ThreadPoolExecutor, wait
+        ex = ThreadPoolExecutor(max_workers=max(1, min(self.workers, len(items))))
+        futs = [ex.submit(check, c) for c in items]
+        # после бюджета ждём зависшие запросы не дольше grace — остальное отбрасываем
+        done, hung = wait(futs, timeout=None if deadline is None else max(0.0, deadline - time.time()) + self.grace)
+        ex.shutdown(wait=False, cancel_futures=True)
+        out = []
+        for f in futs:
+            if f not in done:
+                continue
+            err = f.exception()
+            if isinstance(err, SearchStopped):
+                raise err  # подбор остановлен пользователем
+            if err is None and f.result():
+                out.append(f.result())
+        late["n"] += len(hung)
+        if late["n"]:
+            emit({"type": "stage", "provider": self.name,
+                  "text": f"проверено {len(items) - late['n']} из {len(items)} за отведённое время, "
+                          f"годных: {len(out)}"})
         out.sort(key=lambda c: c.score, reverse=True)
         return out[:limit]

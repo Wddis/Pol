@@ -1,4 +1,6 @@
 python-telegram-bot
 requests
 flask
+httpx[http2]
+selectolax
 beautifulsoup4

@@ -5,7 +5,7 @@ import re
 import time
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
+from ..fast import Soup
 
 from ..core import (TIMEOUT, Candidate, Health, ProviderError, Sms, ago_to_seconds, digits,
                     extract_code, http)
@@ -24,12 +24,12 @@ class ReceiveSmsCo(FreeProvider):
         super().__init__()
         self.s = http()
 
-    def _get(self, path: str) -> tuple[BeautifulSoup, int]:
+    def _get(self, path: str) -> tuple:
         t0 = time.time()
         r = self.s.get(urljoin(BASE, path), timeout=TIMEOUT)
         if r.status_code != 200:
             raise ProviderError(f"HTTP {r.status_code}")
-        return BeautifulSoup(r.text, "html.parser"), int((time.time() - t0) * 1000)
+        return Soup(r.text), int((time.time() - t0) * 1000)
 
     def listing(self, country, mode):
         seen, out = set(), []
@@ -53,7 +53,7 @@ class ReceiveSmsCo(FreeProvider):
         return out
 
     @staticmethod
-    def _parse_sms(soup: BeautifulSoup) -> list[Sms]:
+    def _parse_sms(soup) -> list[Sms]:
         out = []
         for art in soup.select("#sms-comments article.entry-card"):
             body = art.select_one(".sms")

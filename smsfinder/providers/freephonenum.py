@@ -10,7 +10,7 @@ import re
 import time
 from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
+from ..fast import Soup
 
 from ..core import (COMMON_COUNTRIES, TIMEOUT, Candidate, Health, ProviderError, Sms, ago_to_seconds,
                     extract_code, http)
@@ -35,7 +35,7 @@ class FreePhoneNum(FreeProvider):
         r = self.s.get(urljoin(BASE, path), timeout=TIMEOUT)
         if r.status_code != 200:
             raise ProviderError(f"HTTP {r.status_code}")
-        return BeautifulSoup(r.text, "html.parser"), int((time.time() - t0) * 1000)
+        return Soup(r.text), int((time.time() - t0) * 1000)
 
     def listing(self, country, mode):
         soup, _ = self._get("/receive-sms")
@@ -60,19 +60,23 @@ class FreePhoneNum(FreeProvider):
         common = [c for iso, cs in by_cc.items() if iso in COMMON_COUNTRIES for c in cs]
         random.shuffle(common)
         # «Get a fresh number» на сайте отдаёт номера с живой лентой — ставим их первыми
-        fresh = []
-        for _ in range(4):
+        def random_one(_):
             try:
                 r = self.s.get(f"{BASE}/receive-sms/random", timeout=TIMEOUT, allow_redirects=False)
-                m = re.search(r"/([a-z]{2})/receive-sms/(.+)$", r.headers.get("Location", ""))
-                if m and country_matches(country, m.group(1)):
-                    loc = "".join(ch for ch in m.group(2) if ch.isdigit())
-                    iso = m.group(1)
-                    code = COUNTRIES.get(iso, ("", ""))[1]
-                    fresh.append(Candidate(provider=self.name, number=f"+{code}{loc}", country=iso.upper(),
-                                           ref=f"/{iso}/receive-sms/{loc}", price=0.0, public=True))
             except Exception:
-                pass
+                return None
+            m = re.search(r"/([a-z]{2})/receive-sms/(.+)$", r.headers.get("Location", ""))
+            if not (m and country_matches(country, m.group(1))):
+                return None
+            loc = "".join(ch for ch in m.group(2) if ch.isdigit())
+            iso = m.group(1)
+            code = COUNTRIES.get(iso, ("", ""))[1]
+            return Candidate(provider=self.name, number=f"+{code}{loc}", country=iso.upper(),
+                             ref=f"/{iso}/receive-sms/{loc}", price=0.0, public=True)
+
+        from concurrent.futures import ThreadPoolExecutor
+        with ThreadPoolExecutor(max_workers=4) as ex:  # раньше 4 запроса шли друг за другом
+            fresh = [c for c in ex.map(random_one, range(4)) if c]
         seen, out = set(), []
         for c in fresh + (rare + common if mode == "niche" else common + rare):
             if c.ref not in seen:
@@ -81,7 +85,7 @@ class FreePhoneNum(FreeProvider):
         return out
 
     @staticmethod
-    def _parse_sms(soup: BeautifulSoup) -> list[Sms]:
+    def _parse_sms(soup) -> list[Sms]:
         out = []
         for div in soup.select("#messages .msg"):
             body = div.select_one(".js-msgtext")

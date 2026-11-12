@@ -26,7 +26,12 @@ import requests
 from . import registry, sender, verify
 from .core import Candidate, ProviderError, SearchStopped, Sms
 from .providers import all_providers
+from .providers.base import FreeProvider
 from .services import country_matches, profile, service_code, service_matchers
+
+# Бюджет этапа 1 (с): за это время каждый сайт проверяет номера в порядке приоритета.
+# 0 — без ограничения (проверить всех, как раньше).
+STAGE1_BUDGET = float(os.getenv("SMSFINDER_BUDGET", "0.8"))
 
 MODES = {
     "niche": "Лучшие под сервис (рекомендуется)",
@@ -311,8 +316,10 @@ class Engine:
                     limit: int = 15, mode: str = "niche", probe_s: int = 20,
                     verify_n: int = 0, verify_wait: int = 180, track: bool = True,
                     verify_method: str = "auto", stop: Optional[threading.Event] = None,
-                    verify_target: int = 0) -> Iterator[dict]:
+                    verify_target: int = 0, stage1_budget: Optional[float] = None) -> Iterator[dict]:
         """Генератор событий проверки; последнее событие — {'type': 'done', ...}."""
+        if stage1_budget is None:
+            stage1_budget = STAGE1_BUDGET
         names = providers or [p["name"] for p in self.provider_info() if p["enabled"]]
         if mode == "premium":
             names = [n for n in names if self.providers[n].paid]
@@ -324,6 +331,8 @@ class Engine:
         errors: dict[str, str] = {}
 
         stop = stop or threading.Event()
+        # бюджет этапа 1: после него новые проверки не начинаются, выдаётся проверенное
+        deadline = t0 + stage1_budget if stage1_budget and stage1_budget > 0 else None
 
         def emit(ev):
             if stop.is_set():
@@ -334,7 +343,9 @@ class Engine:
         def run(name):
             try:
                 pmode = "popular" if mode == "verified" else mode
-                results[name] = self.providers[name].find(service, country, limit * 2, pmode, emit)
+                prov = self.providers[name]
+                kw = {"deadline": deadline} if isinstance(prov, FreeProvider) else {}
+                results[name] = prov.find(service, country, limit * 2, pmode, emit, **kw)
             except SearchStopped:
                 pass
             except Exception as e:
@@ -347,16 +358,27 @@ class Engine:
                                                     f"{svc_t} · источники: {', '.join(names)}"}
         for n in names:
             threading.Thread(target=run, args=(n,), daemon=True).start()
-        left = len(names)
+        left, finished = len(names), set()
+        # после бюджета не ждём отстающий сайт, если другие уже дали номера: его результат
+        # подмешается позже (в момент досмотра на этапе 2)
+        hard = deadline + FreeProvider.grace + 0.05 if deadline is not None else None
         while left:
             try:
-                ev = q.get(timeout=1)
+                ev = q.get(timeout=0.05 if hard else 1)
             except queue.Empty:
+                if hard and time.time() > hard and any(
+                        results.get(n) and isinstance(self.providers[n], FreeProvider) for n in finished):
+                    break
                 continue
             if ev["type"] == "_finished":
                 left -= 1
+                finished.add(ev["provider"])
             else:
                 yield ev
+        late_names = [n for n in names if n not in finished]
+        if late_names:
+            yield {"type": "stage", "text": f"Не дождался за отведённое время: {', '.join(late_names)} — "
+                                            "их номера добавятся во время перепроверки"}
 
         cands = [c for cs in results.values() for c in cs]
         all_found = list(cands)  # для теста доставки берём всех, включая «занятых» — там сервис пишет прямо сейчас
@@ -374,14 +396,83 @@ class Engine:
                 yield {"type": "stage", "text": f"Отсеяно не-премиум (доставка <50%, виртуальный "
                                                 f"оператор): {len(dropped)}"}
 
+        def finalize(lst):
+            for c in lst:
+                if not c.public and not c.extra.get("_paid_bonus"):
+                    c.score = round(c.score + 15, 1)  # приватный номер надёжнее
+                    c.extra["_paid_bonus"] = True
+                c.extra["can_buy"] = self.providers[c.provider].can_acquire()
+                self.candidates[c.id] = c
+            # сначала доступные, затем НЕ занятые другим человеком, затем проверенные, затем score
+            lst.sort(key=lambda c: (c.extra["can_buy"], not c.extra.get("busy_left"), c.tier == "verified",
+                                    c.score), reverse=True)
+            return lst[: limit * 2]
+
+        def keep(c):  # тот же фильтр режима, что выше
+            if mode == "niche":
+                return c.tier != "regular"
+            if mode == "premium":
+                return not c.public and c.tier == "premium"
+            return True
+
+        # «досмотр»: этап 1 уложился в бюджет, но живая перепроверка всё равно ждёт probe_s —
+        # в это время в фоне проверяем номера, до которых не дошла очередь. Уже проверенные
+        # берутся из кеша провайдера (health_ttl), так что сеть тратится только на новые.
+        topup: dict[str, list[Candidate]] = {}
+        topup_threads = []
+        if probe_s > 0 and deadline is not None:
+            def quiet(ev):
+                if stop.is_set():
+                    raise SearchStopped()
+
+            def run_more(name):
+                try:
+                    pmode = "popular" if mode == "verified" else mode
+                    topup[name] = self.providers[name].find(service, country, limit * 2, pmode, quiet)
+                except Exception:
+                    pass
+            for n in names:
+                if isinstance(self.providers[n], FreeProvider) and n not in errors and n not in late_names:
+                    t = threading.Thread(target=run_more, args=(n,), daemon=True)
+                    t.start()
+                    topup_threads.append(t)
+
+        # номера показываем сразу после этапа 1 — живая перепроверка обновит их поверх
+        if probe_s > 0 and cands:
+            for c in cands:
+                rec = verify.cached(c.number, service) if c.public else None
+                if rec:
+                    verify.mark(c, rec, service)
+            early = finalize(list(cands))
+            yield {"type": "results", "candidates": [c.to_dict() for c in early], "errors": errors,
+                   "took": round(time.time() - t0, 1), "preliminary": True}
+
         # этап 2: живая проверка лучших бесплатных номеров
         free = sorted([c for c in cands if c.public], key=lambda c: c.score, reverse=True)[:limit]
-        if free and probe_s > 0:
+        if probe_s > 0 and (free or topup_threads or late_names):
             yield {"type": "stage", "stage": 2, "text": f"Этап 2 из 3: живая перепроверка {len(free)} лучших номеров "
                                                         f"({probe_s} с)"}
             for rnd in (1, 2):
                 if stop.wait(probe_s / 2):
                     break
+                if rnd == 1 and (topup_threads or late_names):
+                    end = time.time() + 1.0
+                    for t in topup_threads:
+                        t.join(timeout=max(0.0, end - time.time()))
+                    have = {c.number for c in all_found}
+                    pools = list(topup.values()) + [results.get(n) or [] for n in late_names]
+                    added = []
+                    for c in (c for cs in pools for c in cs):
+                        if c.number not in have:
+                            have.add(c.number)
+                            added.append(c)
+                    all_found += added
+                    extra = [c for c in added if keep(c)]
+                    if extra:
+                        cands += extra
+                        free = sorted([c for c in cands if c.public], key=lambda c: c.score, reverse=True)[:limit]
+                        yield {"type": "stage", "text": f"Досмотр в фоне: найдено ещё {len(extra)} подходящих "
+                                                        f"номеров — добавлены в перепроверку"}
                 with ThreadPoolExecutor(max_workers=12) as ex:
                     res = list(ex.map(lambda c: (c, self.providers[c.provider].health(c, service)), free))
                 alive = []
@@ -429,18 +520,6 @@ class Engine:
                 c = self.candidates.get(d["id"])
                 if c and c.number not in have:
                     cands.append(c)
-
-        def finalize(lst):
-            for c in lst:
-                if not c.public and not c.extra.get("_paid_bonus"):
-                    c.score = round(c.score + 15, 1)  # приватный номер надёжнее
-                    c.extra["_paid_bonus"] = True
-                c.extra["can_buy"] = self.providers[c.provider].can_acquire()
-                self.candidates[c.id] = c
-            # сначала доступные, затем НЕ занятые другим человеком, затем проверенные, затем score
-            lst.sort(key=lambda c: (c.extra["can_buy"], not c.extra.get("busy_left"), c.tier == "verified",
-                                    c.score), reverse=True)
-            return lst[: limit * 2]
 
         cands = finalize(cands)
         if track:

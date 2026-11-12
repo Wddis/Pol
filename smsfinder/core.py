@@ -21,10 +21,10 @@ COMMON_COUNTRIES = {"us", "usa", "gb", "uk", "england", "ca", "canada", "in", "i
                     "de", "germany", "nl", "netherlands", "fr", "france"}
 
 
-def http() -> requests.Session:
-    s = requests.Session()
-    s.headers.update({"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"})
-    return s
+def http():
+    """HTTP-клиент провайдеров: HTTP/2, общие соединения, хеджирование медленных запросов (fast.py)."""
+    from .fast import Http
+    return Http({"User-Agent": USER_AGENT, "Accept-Language": "en-US,en;q=0.9"})
 
 
 class ProviderError(Exception):
@@ -114,9 +114,12 @@ def extract_code(text: str) -> str:
     return ""
 
 
-_AGO = re.compile(r"(\d+|an?|one)\s*(second|sec|minute|min|hour|day|week|month|year)s?\s+ago", re.I)
-_UNIT = {"second": 1, "sec": 1, "minute": 60, "min": 60, "hour": 3600,
-         "day": 86400, "week": 604800, "month": 2592000, "year": 31536000}
+# «5 minutes ago», «an hour ago» и короткая запись asms.ai: «59m ago», «4h ago», «2d ago», «3mo ago»
+_AGO = re.compile(r"(\d+|an?|one)\s*(second|sec|minute|min|hour|hr|day|week|month|year|mo|s|m|h|d|w|y)s?\s+ago\b",
+                  re.I)
+_UNIT = {"second": 1, "sec": 1, "minute": 60, "min": 60, "hour": 3600, "hr": 3600,
+         "day": 86400, "week": 604800, "month": 2592000, "year": 31536000,
+         "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800, "mo": 2592000, "y": 31536000}
 
 
 def ago_to_seconds(s: str) -> Optional[int]:
