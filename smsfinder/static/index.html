@@ -238,7 +238,9 @@ function render(r, final) {
       <div class="n">${esc(best.number || '(выдаётся после покупки)')}</div><div class="note">${esc(best.note.split(' · ').slice(0, 2).join(' · '))}</div></div>
       <button data-id="${best.id}" class="primary-big">Взять этот номер</button></div>` : '';
   $('rows').innerHTML = list.length ? list.map(rowHtml).join('')
-    : `<tr><td colspan="6" class="muted">${final ? 'Ни один номер не прошёл проверку под этот сервис — смените страну или режим «Какие номера».' : 'Идёт проверка…'}</td></tr>`;
+    : `<tr><td colspan="6" class="muted">${!final ? 'Идёт проверка…'
+        : r.hidden_unverified ? `За время теста ${esc(svcName())} не прислал SMS ни на один тестируемый номер, поэтому проверенных пока нет. Подходящих номеров найдено: <b>${r.hidden_unverified}</b> — выберите «Какие номера → Лучшие под сервис», чтобы их увидеть. Фоновый пул продолжает наблюдение и добавит номер, как только придёт SMS от ${esc(svcName())}.`
+        : 'Ни один номер не прошёл проверку под этот сервис — смените страну или «Какие номера».'}</td></tr>`;
 }
 function updateRow(ev) {  // тест доставки обновляет строку на лету
   const tr = document.querySelector(`tr[data-row="${ev.id}"]`); if (!tr) return;

@@ -471,14 +471,17 @@ class Engine:
                     left -= 1
                 else:
                     yield ev
+        hidden = 0
         if mode == "verified" and not stop.is_set():
+            hidden = sum(1 for c in cands if c.tier != "verified")
             cands = [c for c in cands if c.tier == "verified"]
             yield {"type": "stage", "text": f"Проверенных для {svc_t}: {len(cands)}"}
         cands = finalize(cands)
         if track:
             self.last_order = [c.id for c in cands if c.extra["can_buy"]]
         yield {"type": "done", "candidates": [c.to_dict() for c in cands], "errors": errors,
-               "took": round(time.time() - t0, 1), "used_total": registry.count(), "stopped": stop.is_set()}
+               "took": round(time.time() - t0, 1), "used_total": registry.count(), "stopped": stop.is_set(),
+               "hidden_unverified": hidden}
 
     # --- подбор как фоновая задача (переживает обрывы соединения) ------------
     def start_search(self, **kw) -> "SearchJob":
