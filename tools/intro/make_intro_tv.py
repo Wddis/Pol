@@ -8,7 +8,8 @@ Effects: CRT barrel curvature + rounded screen, bloom, scanlines + flicker, chro
 VHS tracking band, vertical roll after channel switch, glass glare sweep, slow background zoom.
 Animation: head slides in on every channel and «talks» to the phrase, lines slide in and are typed, icons pop.
 
-usage: python3 make_intro_tv.py head.png avatar.png fonts_dir greeting.wav ph1.wav ph2.wav ph3.wav out.mp4
+usage: python3 make_intro_tv.py head.png avatar.png fonts_dir greeting.wav ph1.wav ph2.wav ph3.wav out.mp4   (ph = "-" -> channel without a phrase)
+Owner 12.11: CH 02 (twitch) — без фразы.
 fonts_dir: russo-one (cyrillic + latin) woff.  STILLS="1.0,4.2" -> png stills only (absolute seconds)."""
 import sys, os, math, wave, subprocess, functools, numpy as np
 from PIL import Image, ImageDraw, ImageFont, ImageFilter
@@ -31,7 +32,7 @@ D = 0.12 + GREET_SPEECH + 0.30                        # phase A: TV on + greetin
 STATIC = [(0.00, 0.22), (2.42, 2.54), (4.44, 4.56)]   # base-timeline (tb = t - D)
 CH_T = [(0.22, 2.42), (2.54, 4.44), (4.56, 6.95)]
 OFF = 6.95; TB = 7.63; T = D + TB; NF = int(round(T * FPS))
-VOICES = [(0.12, *load(GREET)), (D + 0.36, *load(P1)), (D + 2.66, *load(P2)), (D + 4.74, *load(P3))]   # (abs start, x, env)
+VOICES = [(0.12, *load(GREET))] + [(t0, *load(p_)) for t0, p_ in ((D + 0.36, P1), (D + 2.66, P2), (D + 4.74, P3)) if p_ != "-"]   # (abs start, x, env); "-" = no phrase
 def venv(t):
     v = 0.0
     for t0, _, e in VOICES:
