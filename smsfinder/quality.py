@@ -1,4 +1,4 @@
-"""Надёжность номера: процент успешных проверок под сервис — категория «надёжные 80%+».
+"""Надёжность номера: процент успешных проверок под сервис — категория «надёжные 95%+».
 
 Раньше номер становился «проверенным» после ОДНОГО SMS от сервиса, а неудачные проверки
 нигде не запоминались. Поэтому номер, который сработал один раз из десяти, выглядел так же,
@@ -11,9 +11,16 @@
   user   — отзыв пользователя «код подошёл» / «не подошёл».
 Для «любого сервиса» (other) успех — любое новое SMS.
 
-Номер попадает в «надёжные», если за последние HORIZON (7 дней) у него не меньше MIN_TRIALS
-проверок под этот сервис и доля успешных — не ниже THRESHOLD (80%). Платные номера (5sim)
-сами сообщают % доставки по оператору — для них берётся он.
+Номер попадает в «надёжные», если за последние HORIZON (7 дней) под этот сервис:
+  * не меньше MIN_TRIALS проверок;
+  * взвешенная доля успешных не ниже THRESHOLD (95%). Вес проверки падает вдвое каждые
+    HALF_LIFE (48 ч): номер, который неделю назад работал, а вчера начал сбоить, теряет процент
+    быстро, а не ждёт, пока старые успехи выйдут за 7 дней;
+  * и простая доля успешных тоже не ниже THRESHOLD;
+  * последние STREAK проверок подряд — успешные (номер не «умер» прямо сейчас).
+Данные libphonenumber (тип линии, оператор) показываются рядом, но на категорию не влияют:
+решает реальная доставка, а база отстаёт от новых диапазонов.
+Платные номера (5sim) сами сообщают % доставки по оператору — для них берётся он.
 
 quality.json: {номер: {сервис: [[время, 1|0, вид], ...]}}
 """
@@ -27,10 +34,12 @@ from pathlib import Path
 from typing import Optional
 
 PATH = Path(os.getenv("SMSFINDER_DATA", Path.home() / ".smsfinder")) / "quality.json"
-THRESHOLD = float(os.getenv("SMSFINDER_RELIABLE", 0.8))
+THRESHOLD = float(os.getenv("SMSFINDER_RELIABLE", 0.95))
 MIN_TRIALS = int(os.getenv("SMSFINDER_RELIABLE_MIN", 5))
 HORIZON = int(os.getenv("SMSFINDER_RELIABLE_DAYS", 7)) * 86400
 WINDOW = int(os.getenv("SMSFINDER_WINDOW", 3600))
+HALF_LIFE = int(os.getenv("SMSFINDER_HALF_LIFE_H", 48)) * 3600
+STREAK = int(os.getenv("SMSFINDER_STREAK", 2))
 MAX_TRIALS = 60  # на номер и сервис храним только последние проверки
 KINDS = {"test": "тест доставки", "window": "окно наблюдения", "user": "отзыв"}
 
@@ -93,36 +102,64 @@ def forget(number: str) -> None:
 
 
 def stats(number: str, service: str = "other") -> dict:
-    """{n, ok, rate, reliable, by_kind, last_ok_at} за последние HORIZON секунд."""
-    cutoff = time.time() - HORIZON
-    trials = [t for t in _load().get(number, {}).get(_norm(service), []) if t[0] >= cutoff]
+    """{n, ok, rate (взвешенная), raw_rate, streak, reliable, why, by_kind, last_ok_at} за HORIZON."""
+    now = time.time()
+    trials = sorted((t for t in _load().get(number, {}).get(_norm(service), []) if t[0] >= now - HORIZON),
+                    key=lambda t: t[0])
     n, ok = len(trials), sum(t[1] for t in trials)
     by_kind: dict[str, list[int]] = {}
-    for _, good, kind in trials:
+    wsum = wok = 0.0
+    for at, good, kind in trials:
         k = by_kind.setdefault(kind, [0, 0])
         k[0] += good
         k[1] += 1
-    rate = ok / n if n else None
-    return {"n": n, "ok": ok, "rate": rate, "reliable": n >= MIN_TRIALS and rate is not None and rate >= THRESHOLD,
-            "by_kind": by_kind, "last_ok_at": max((t[0] for t in trials if t[1]), default=None)}
+        w = 0.5 ** ((now - at) / HALF_LIFE)
+        wsum += w
+        wok += w * good
+    streak = 0
+    for t in reversed(trials):
+        if not t[1]:
+            break
+        streak += 1
+    raw = ok / n if n else None
+    rate = wok / wsum if wsum else None
+    why = ""
+    if n < MIN_TRIALS:
+        why = f"мало проверок ({n} из {MIN_TRIALS})"
+    elif streak < STREAK:
+        why = ("последняя проверка неудачная — номер, возможно, перестал работать" if streak == 0
+               else f"подряд успешных только {streak} из нужных {STREAK}")
+    elif rate < THRESHOLD or raw < THRESHOLD:
+        why = f"успешных {int(min(rate, raw) * 100)}% < {round(THRESHOLD * 100)}%"
+    return {"n": n, "ok": ok, "rate": rate, "raw_rate": raw, "streak": streak, "reliable": not why,
+            "why": why, "by_kind": by_kind, "last_ok_at": max((t[0] for t in trials if t[1]), default=None)}
 
 
 def describe(st: dict) -> str:
     if not st["n"]:
         return "надёжность: ещё не измерялась"
     parts = ", ".join(f"{KINDS.get(k, k)} {g}/{t}" for k, (g, t) in st["by_kind"].items())
-    pct = round(st["rate"] * 100)
+    pct = int(st["rate"] * 100 + 1e-9)  # вниз: 94,9% не должно выглядеть как 95%
     if st["n"] < MIN_TRIALS:
         return f"надёжность: {pct}% по {st['n']} проверкам — мало данных, нужно ≥{MIN_TRIALS} ({parts})"
-    return f"надёжность {pct}% ({st['ok']} из {st['n']} проверок за {HORIZON // 86400} дн: {parts})"
+    tail = "" if st["reliable"] else f" · не в «надёжных»: {st['why']}"
+    return f"надёжность {pct}% ({st['ok']} из {st['n']} проверок за {HORIZON // 86400} дн, " \
+           f"свежие весят больше: {parts}){tail}"
 
 
 def annotate(cand, service: str) -> dict:
     """Записать в кандидата процент работоспособности под сервис (extra['quality'])."""
+    from . import numcheck
+    from .services import profile
     if cand.public:
         st = stats(cand.number, service)
+        line_ok, line_why, li = numcheck.verdict(cand.number, bool(profile(service).get("strict")))
+        text = describe(st)
+        if not line_ok:
+            text += f" · ⚠ по базе libphonenumber: {line_why}"
         q = {"rate": st["rate"], "n": st["n"], "ok": st["ok"], "reliable": st["reliable"],
-             "source": "наблюдение", "text": describe(st)}
+             "streak": st["streak"], "why": st["why"] or line_why, "line": numcheck.label(li),
+             "source": "наблюдение", "text": text}
     else:  # платный номер: % доставки по оператору сообщает сам провайдер
         r = cand.extra.get("rate")
         rate = r / 100 if isinstance(r, (int, float)) else None

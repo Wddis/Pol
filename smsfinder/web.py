@@ -190,7 +190,8 @@ def verified_pool():
     return jsonify(pool=engine.watcher.pool(svc, country),
                    reliable=engine.watcher.reliable_pool(svc, country),
                    reliable_rule={"threshold": quality.THRESHOLD, "min_trials": quality.MIN_TRIALS,
-                                  "days": quality.HORIZON // 86400, "window_min": quality.WINDOW // 60},
+                                  "days": quality.HORIZON // 86400, "window_min": quality.WINDOW // 60,
+                                  "streak": quality.STREAK, "half_life_h": quality.HALF_LIFE // 3600},
                    watcher=engine.watcher.status(), stats=registry.stats())
 
 

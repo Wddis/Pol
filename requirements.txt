@@ -2,3 +2,4 @@ python-telegram-bot
 requests
 flask
 beautifulsoup4
+phonenumbers

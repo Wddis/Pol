@@ -23,14 +23,14 @@ from typing import Callable, Iterator, Optional
 
 import requests
 
-from . import quality, registry, sender, verify
-from .core import Candidate, ProviderError, SearchStopped, Sms
+from . import numcheck, quality, registry, sender, verify
+from .core import Candidate, ProviderError, SearchStopped, Sms, digits
 from .providers import all_providers
 from .services import country_matches, profile, service_code, service_matchers
 
 MODES = {
     "niche": "Лучшие под сервис (рекомендуется)",
-    "reliable": "Только надёжные: работают в 80%+ проверок",
+    "reliable": "Только надёжные: работают в 95%+ проверок",
     "verified": "Только проверенные тестом под сервис",
     "premium": "Только платные приватные",
     "popular": "Все рабочие номера",
@@ -360,6 +360,52 @@ class Engine:
                 yield ev
 
         cands = [c for cs in results.values() for c in cs]
+        # проверка самого номера по libphonenumber: существует ли, тип линии, оператор.
+        # Не отсеивает (база отстаёт от новых диапазонов), а понижает и предупреждает.
+        strict = bool(profile(service).get("strict"))
+        warned = fixed = 0
+        for c in cands:
+            if not (c.public and c.number):
+                continue
+            num, why_fix = numcheck.normalize(c.number)
+            if why_fix:
+                c.log(why_fix)
+                c.extra["shown_number"], c.number = c.number, num
+                c.note += f" · ✎ {why_fix}"
+                fixed += 1
+            ok, why, li = numcheck.verdict(c.number, strict)
+            c.extra["line"] = numcheck.label(li)
+            if not ok:
+                c.extra["line_warn"] = why
+                c.score = round(c.score - 25, 1)
+                c.note += f" · ⚠ по базе libphonenumber: {why}"
+                c.log(f"понижен: {why}")
+                warned += 1
+            elif li["checked"] and li["type"] not in numcheck.SMS_OK:
+                c.score = round(c.score - 10, 1)
+                c.note += f" · {li['type_ru']} номер"
+        # один и тот же номер выложен на нескольких сайтах — за код соревнуется больше людей
+        groups: dict[str, list[Candidate]] = {}
+        for c in cands:
+            if c.public and c.number:
+                groups.setdefault(digits(c.number), []).append(c)
+        dup = 0
+        for g in groups.values():
+            sites = sorted({c.provider for c in g})
+            if len(sites) < 2:
+                continue
+            dup += 1
+            for c in g:
+                c.extra["sites"] = sites
+                c.score = round(c.score - 10 * (len(sites) - 1), 1)
+                c.note += f" · выложен на {len(sites)} сайтах ({', '.join(sites)}) — больше конкурентов за код"
+        if warned or fixed or dup:
+            yield {"type": "stage", "text": "Проверка номеров по базе libphonenumber: "
+                                            + ", ".join(x for x in (
+                                                f"понижено {warned} (по базе не существуют или тип линии "
+                                                f"не подходит {svc_t})" if warned else "",
+                                                f"исправлен задвоенный код страны: {fixed}" if fixed else "",
+                                                f"на нескольких сайтах сразу: {dup} — понижены" if dup else "") if x)}
         all_found = list(cands)  # для теста доставки берём всех, включая «занятых» — там сервис пишет прямо сейчас
         # строгий режим: только нишевые и премиум
         if mode == "niche":
@@ -433,7 +479,7 @@ class Engine:
                     cands.append(c)
 
         def finalize(lst):
-            if mode == "reliable":  # строго: только номера с ≥80% успешных проверок
+            if mode == "reliable":  # строго: только номера с ≥95% успешных проверок
                 lst = [c for c in lst if quality.is_reliable(c, service)]
             for c in lst:
                 quality.annotate(c, service)

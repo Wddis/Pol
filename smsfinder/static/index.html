@@ -131,9 +131,9 @@ tr.flash td{background:color-mix(in srgb,var(--ok) 14%,transparent)}
 
   <div class="card" id="relCard">
     <div class="row" style="justify-content:space-between;align-items:center">
-      <b id="relTitle">🏆 Надёжные 80%+</b><span class="muted note" id="relInfo">загрузка…</span>
+      <b id="relTitle">🏆 Надёжные 95%+</b><span class="muted note" id="relInfo">загрузка…</span>
     </div>
-    <p class="note" id="relRule" style="margin:6px 0 8px">Только номера, которые сработали в 80% проверок и больше.</p>
+    <p class="note" id="relRule" style="margin:6px 0 8px">Только номера, которые сработали в 95% проверок и больше.</p>
     <div class="scroll"><table class="tbl"><thead><tr>
       <th>Номер</th><th>Надёжность</th><th>Страна</th><th>Источник</th><th></th>
     </tr></thead><tbody id="relRows"></tbody></table></div>
@@ -251,7 +251,7 @@ function rowHtml(c) {
 }
 function qBadge(c) {  // процент работоспособности под сервис
   const q = c.extra.quality; if (!q || q.rate == null) return '';
-  const pct = Math.round(q.rate * 100);
+  const pct = Math.floor(q.rate * 100 + 1e-9);  // 94,9% — не 95%
   const cls = q.reliable ? 'verified' : '';
   return `<div><span class="tag ${cls}" title="${esc(q.text)}">${q.reliable ? '🏆 ' : ''}${pct}%${q.n != null ? ` · ${q.ok}/${q.n}` : ''}</span></div>`;
 }
@@ -263,7 +263,7 @@ function render(r, final) {
   loadPool();
   $('rows').innerHTML = list.length ? list.map(rowHtml).join('')
     : `<tr><td colspan="6" class="muted">${!final ? 'Идёт проверка…'
-        : r.hidden_unreliable ? `Надёжных номеров (80%+ успешных проверок) для ${esc(svcName())} пока нет: у ${r.hidden_unreliable} найденных номеров процент ниже или истории мало. История копится фоновым наблюдением (проверка — каждый час) и тестами доставки; первые надёжные появятся через несколько часов работы сайта.`
+        : r.hidden_unreliable ? `Надёжных номеров (95%+ успешных проверок) для ${esc(svcName())} пока нет: у ${r.hidden_unreliable} найденных номеров процент ниже или истории мало. История копится фоновым наблюдением (проверка — каждый час) и тестами доставки; первые надёжные появятся через несколько часов работы сайта.`
         : r.hidden_unverified ? `За время теста ${esc(svcName())} не прислал SMS ни на один тестируемый номер, поэтому проверенных пока нет. Подходящих номеров найдено: <b>${r.hidden_unverified}</b> — выберите «Какие номера → Лучшие под сервис», чтобы их увидеть. Фоновый пул продолжает наблюдение и добавит номер, как только придёт SMS от ${esc(svcName())}.`
         : 'Ни один номер не прошёл проверку под этот сервис — смените страну или «Какие номера».'}</td></tr>`;
 }
@@ -467,9 +467,9 @@ async function loadPool() {
     const rr = r.reliable_rule, rel = r.reliable || [];
     $('relTitle').textContent = `🏆 Надёжные ${Math.round(rr.threshold * 100)}%+ для ${svcName()} (${rel.length})`;
     $('relInfo').textContent = `правило: ≥${Math.round(rr.threshold * 100)}% успешных из ≥${rr.min_trials} проверок за ${rr.days} дн`;
-    $('relRule').innerHTML = `Номер попадает сюда, только если сработал в ${Math.round(rr.threshold * 100)}% проверок и больше. Проверка — это тест доставки, окно наблюдения ${rr.window_min} мин (пришло ли SMS от ${esc(svcName())}) или ваш отзыв «код подошёл / не подошёл». Нужно не меньше ${rr.min_trials} проверок, поэтому один удачный SMS номер сюда не проведёт.`;
+    $('relRule').innerHTML = `Номер попадает сюда, только если сработал в ${Math.round(rr.threshold * 100)}% проверок и больше. Проверка — это тест доставки, окно наблюдения ${rr.window_min} мин (пришло ли SMS от ${esc(svcName())}) или ваш отзыв «код подошёл / не подошёл». Ещё условия: не меньше ${rr.min_trials} проверок; свежие проверки весят больше (вес падает вдвое за ${rr.half_life_h} ч); последние ${rr.streak} проверки подряд успешные. Тип линии и оператор — по базе Google libphonenumber.`;
     $('relRows').innerHTML = rel.length ? rel.map(c => `<tr>
-      <td class="num"><b>${esc(c.number)}</b></td><td>${qBadge(c)}<div class="note">${esc(c.extra.quality.text)}</div></td>
+      <td class="num"><b>${esc(c.number)}</b>${c.extra.quality.line ? `<div class="note">${esc(c.extra.quality.line)}</div>` : ''}</td><td>${qBadge(c)}<div class="note">${esc(c.extra.quality.text)}</div></td>
       <td>${esc(c.country)}</td><td>${esc(c.provider)}</td>
       <td><button data-id="${c.id}">Взять</button></td></tr>`).join('')
       : `<tr><td colspan="5" class="muted note">Пока пусто: номеру нужно накопить ≥${rr.min_trials} проверок с успехом ≥${Math.round(rr.threshold * 100)}%. Фоновое наблюдение добавляет по одной проверке в ${rr.window_min} мин на каждый номер.</td></tr>`;

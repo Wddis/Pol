@@ -19,6 +19,7 @@ from ..services import COUNTRIES, country_matches, service_matchers
 from .base import FreeProvider
 
 BASE = "https://asms.ai"
+_STATUS = re.compile(r"·\W{0,16}(Active|Inactive|Offline|Retired|Expired|Disabled|Archived)\b", re.I)
 _NUM = re.compile(r"^/number/(\d{7,15})$")
 # телефонный код -> ISO2 (длинные коды проверяются первыми)
 _DIAL = sorted(((code, iso) for iso, (_, code) in COUNTRIES.items() if code), key=lambda x: -len(x[0]))
@@ -133,6 +134,12 @@ class AsmsAi(FreeProvider):
             soup, ms = self._get(cand.ref)
         except Exception as e:
             return Health(ok=False, reason=f"страница недоступна ({e})")
+        # статус номера на сайте («Netherlands · Active»); проверка как numberIsOnline
+        # в Shelex/free-otp-api (anonymsms.com — прежний адрес asms.ai)
+        st = _STATUS.search(str(soup))
+        if st and st.group(1).lower() != "active":
+            return Health(ok=False, reason=f"сайт пометил номер как {st.group(1)} — больше не принимает",
+                          latency_ms=ms)
         sms = self._parse_sms(soup)
         if not sms:
             return Health(ok=False, reason="ни одного SMS — не подтверждено, что номер принимает", latency_ms=ms)
