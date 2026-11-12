@@ -13,6 +13,7 @@ pip install yt-dlp yt-dlp-ejs faster-whisper "rembg[cpu]"      # yt-dlp-ejs — 
 python3 -c "from faster_whisper import WhisperModel as W; [W(m,device='cpu',compute_type='int8') for m in ('base','small')]"
 # шрифты для шортсов/интро (npm pack в рабочую папку):
 npm pack @fontsource/rubik-dirt@5.3.0 @fontsource/russo-one@5.3.0 @fontsource/montserrat@5.2.5
+# шортсы v2 / интро: SHORTS_FONTS=<папка с montserrat-*-800/900-normal.woff и russo-one-*.woff>
 ```
 1. Попросить у владельца файл **cookies подтверждённой сессии** (он у него: `t2x2_verified_session_cookies.txt`).
    Положить в scratchpad (НЕ в репо). Пульт: `RB_TOKEN=<секрет> setsid nohup node tools/yt/remote_browser.js cookies.txt 8765 9222 "https://studio.youtube.com/channel/UC4R6TINYFRWa_80Vewy068g/videos/upload?d=ud" &`
@@ -66,7 +67,8 @@ VOD 2926718724, расшифровка до ~223 мин: `work/2026-11-12_vod292
 - (архив) **Зум — по смыслу речи**: зум только когда он говорит о своём; если речь про экран (показывает,
   читает, ищет, цены) — без зума (ошибка в Steam Frame 5655–5740). Сила зума: на чёрном/закрытом экране — вебка на весь кадр, f = 1920/ширина вебки, ширину МЕРИТЬ по кадру куска
   (12.11: 693x390 @1227,690 в браузере; 574x323 @1346,757 на чёрном экране → 3.34).
-- **Шортсы**: без нижнего текста; TALK-раскладка для «вебка на весь экран»; «?!» требует посимвольный шрифт (сделано).
+- **Шортсы — дизайн v2 «Чистый тёмный» (ОСНОВНОЙ с 12.11)**: `shorts_template2.py --assets clean` + `shorts_render2.sh`
+  (см. montage-style «Shorts»); старый гранж-шаблон — архив. Без нижнего текста; TALK-раскладка для «вебка на весь экран»; «?!» требует посимвольный шрифт (сделано).
 - **Жёлтая карточка** (docs/no-yellow-card.md): сексуальный контекст в моменте → не в шортс; в названиях без мата.
   Шоу Дипинса и шортс «ЛАПАЛ мужик» получили 18+ от YouTube.
 - **Конкуренты** («Т2х2.mp4», «T2x2 Slice») выкладывают те же темы быстро — публиковать основные как можно раньше.

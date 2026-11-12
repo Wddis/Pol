@@ -1,4 +1,5 @@
 # Brand template for Shorts. Needs fonts from npm @fontsource/rubik-dirt, @fontsource/russo-one and avatar.png (channel avatar) in cwd.
+# ARCHIVE: old grunge Shorts design. MAIN since 12.11.2026 = tools/shorts_template2.py --assets clean (owner chose v2 «clean»).
 """Brand template for Shorts (1080x1920): bg.png (under video) + fg.png (over video).
 usage: python3 tpl.py "TITLE LINE1|LINE2" outprefix"""
 import sys, random, math

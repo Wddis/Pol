@@ -1,5 +1,7 @@
 """Shorts design v2 (1080x1920) — modern, clean styles (owner 12.11.2026: old grunge template is «too scary»).
 Five styles: clean | glass | light | neon | sticker. Panels are inset cards with rounded corners.
+**MAIN STYLE = clean** (owner 12.11.2026: «1 вариант … теперь основной»). Others = archive.
+Render: python3 shorts_template2.py --assets clean "LINE1|LINE2" prefix [--talk]  ->  tools/shorts_render2.sh
 
 As a library: build(style, lines, talk) -> dict(bg=RGBA, fg=RGBA, panels=[(x,y,w,h,r)...], blur_bg=bool)
   bg   — static layer under everything (for glass/sticker it is a tint over the blurred video, blur_bg=True)
@@ -155,6 +157,21 @@ def compose(style, lines, panel_imgs, talk=False, cover_src=None):
         p = p.crop(((p.width - w) // 2, (p.height - h) // 2, (p.width - w) // 2 + w, (p.height - h) // 2 + h)); base.paste(p, (x, y), rr_mask(w, h, r))
     base.alpha_composite(t["fg"]); return base.convert("RGB")
 
+def assets(style, lines, prefix, talk=False):
+    """files for tools/shorts_render2.sh: prefix_bg.png (under the panels) + prefix_fg.png (over them).
+    Rounded panel corners: fg carries the background pixels outside each rounded card (static-bg styles)."""
+    t = build(style, lines, talk)
+    if t["blur_bg"]: raise SystemExit("blurred-background styles need a different renderer; use clean/light/neon")
+    bg = Image.new("RGBA", (W, H), (0, 0, 0, 255)); bg.alpha_composite(t["bg"])
+    fg = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    for x, y, w, h, r in t["panels"]:
+        corner = bg.crop((x, y, x + w, y + h)); inv = Image.eval(rr_mask(w, h, r), lambda v: 255 - v); corner.putalpha(inv); fg.alpha_composite(corner, (x, y))
+    fg.alpha_composite(t["fg"])
+    bg.convert("RGB").save(prefix + "_bg.png"); fg.save(prefix + "_fg.png")
+    print("ok", prefix, "panels", t["panels"])
+
+if __name__ == "__main__" and sys.argv[1] == "--assets":       # --assets STYLE "L1|L2" prefix [--talk]
+    assets(sys.argv[2], sys.argv[3].split("|"), sys.argv[4], "--talk" in sys.argv); sys.exit(0)
 if __name__ == "__main__":
     style, title, frame, out = sys.argv[1:5]; talk = "--talk" in sys.argv
     fr = Image.open(frame).convert("RGB")

@@ -1,4 +1,5 @@
 #!/bin/bash
+# ARCHIVE: renderer for the old grunge template. MAIN = tools/shorts_render2.sh (design v2 «clean», 12.11.2026).
 # shorts_render.sh src.mp4 prefix out.mp4 "s1-e1 s2-e2 ..."   (times in src seconds)
 # Layout crops per stream layout (x:y in the 1920x1080 source), override via env:
 #   SCR="w:h:x:y"  screen part -> 1080x607 panel   (default: browser layout of T2x2, centre of the player,
