@@ -21,6 +21,7 @@ class ReceiveSmsCo(FreeProvider):
     title = "receivesms.co (бесплатно, публично)"
 
     def __init__(self):
+        super().__init__()
         self.s = http()
 
     def _get(self, path: str) -> tuple[BeautifulSoup, int]:

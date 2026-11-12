@@ -24,9 +24,10 @@ _HREF = re.compile(r"^/([a-z]{2})/receive-sms/(\d+)$")
 class FreePhoneNum(FreeProvider):
     name = "freephonenum"
     title = "freephonenum.com (бесплатно, публично, редкие страны)"
-    max_check = 90
+    max_check = 45
 
     def __init__(self):
+        super().__init__()
         self.s = http()
 
     def _get(self, path):

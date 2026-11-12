@@ -147,10 +147,11 @@ class Verification:
     """Тест доставки одного номера под сервис."""
 
     def __init__(self, engine, cand: Candidate, wait: int = 180, emit: Emit = noop_emit,
-                 method: str = "auto", service: str = "other"):
+                 method: str = "auto", service: str = "other", stop: Optional[threading.Event] = None):
         self.id = uuid.uuid4().hex[:12]
         self.engine, self.cand, self.wait, self.emit = engine, cand, wait, emit
         self.service = _norm(service)
+        self.stop = stop or threading.Event()
         self.provider = engine.providers[cand.provider]
         if method == "auto":
             method = "active" if (self.service == "other" and not sender.describe()["free"]) else "passive"
@@ -211,7 +212,8 @@ class Verification:
             self._say(True, f"жду новое SMS от {svc_title(self.service)} до {self.wait // 60} мин")
 
         while time.time() - t0 < self.wait:
-            time.sleep(5 if self.method == "active" else 15)
+            if self.stop.wait(5 if self.method == "active" else 10):
+                return self._fail("тест остановлен вместе с подбором")
             try:
                 msgs = _msgs(self.provider, c)
             except Exception:
@@ -260,16 +262,24 @@ class Watcher:
         del self.events[:-60]
 
     def _refill(self):
+        """Пополнить наблюдение. Сначала берём номера, уже найденные подборами пользователя
+        (без лишней нагрузки на сайты); свой поиск — только если их не хватает и сейчас
+        не идёт пользовательский подбор."""
         from . import registry
-        try:
-            res = self.engine.find("other", "", None, self.size, "popular", 0, track=False)
-        except Exception as e:
-            self.log(f"обновление списка не удалось: {e}")
-            return
+        busy = any(not j.finished for j in self.engine.jobs.values())
+        pool = [c for c in self.engine.candidates.values()
+                if c.public and c.number not in self.watch and not registry.is_blocked(c.number)]
+        if len(pool) < self.size // 2 and not busy:
+            try:
+                res = self.engine.find("other", "", None, self.size, "popular", 0, track=False)
+                pool += [self.engine.candidates[d["id"]] for d in res.get("candidates", [])
+                         if d["id"] in self.engine.candidates]
+            except Exception as e:
+                self.log(f"обновление списка не удалось: {e}")
+        pool.sort(key=lambda c: c.score, reverse=True)
         added = 0
-        for d in res.get("candidates", []):
-            c = self.engine.candidates.get(d["id"])
-            if not c or not c.public or c.number in self.watch or registry.is_blocked(c.number):
+        for c in pool:
+            if not c.public or c.number in self.watch or registry.is_blocked(c.number):
                 continue
             if len(self.watch) >= self.size:
                 break
@@ -308,6 +318,7 @@ class Watcher:
                 del self.watch[num]
 
     def _loop(self):
+        time.sleep(45)  # дать первому пользовательскому подбору отработать без конкуренции
         while True:
             try:
                 if time.time() - self.last_refresh > self.refresh or len(self.watch) < self.size // 2:

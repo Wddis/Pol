@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 from typing import Optional
 
 from ..core import Candidate, Emit, Health, Sms, noop_emit
@@ -51,6 +53,20 @@ class FreeProvider(Provider):
 
     max_check = 40          # сколько номеров проверять за один поиск
     max_age = 24 * 3600     # номер без SMS дольше этого считается нерабочим
+    dead_ttl = 3600         # «мёртвый» номер (архив / нет SMS) не перепроверяем час
+    workers = 12
+
+    def __init__(self):
+        self._dead: dict[str, tuple[float, str]] = {}
+        self._dead_lock = threading.Lock()
+
+    def _is_dead(self, number: str) -> bool:
+        rec = self._dead.get(number)
+        return bool(rec) and rec[0] > time.time()
+
+    def _mark_dead(self, number: str, reason: str):
+        with self._dead_lock:
+            self._dead[number] = (time.time() + self.dead_ttl, reason)
 
     def listing(self, country: str, mode: str) -> list[Candidate]:
         raise NotImplementedError
@@ -59,11 +75,19 @@ class FreeProvider(Provider):
         from ..core import fmt_ago, score_free  # локально, чтобы не плодить циклы импорта
         from .. import registry
 
-        items = self.listing(country, mode)[: self.max_check]
-        emit({"type": "stage", "provider": self.name, "text": f"{len(items)} номеров на проверку",
-              "total": len(items)})
+        listed = self.listing(country, mode)
+        alive = [c for c in listed if not self._is_dead(c.number)]
+        skipped = len(listed) - len(alive)
+        items = alive[: self.max_check]
+        emit({"type": "stage", "provider": self.name, "total": len(items),
+              "text": f"{len(items)} номеров на проверку"
+                      + (f" (ещё {skipped} пропущено — признаны мёртвыми за последний час)" if skipped else "")})
+        limited = {"n": 0}
 
         def check(c: Candidate):
+            emit({"type": "_ping"})  # если подбор остановлен, движок прервёт проверку здесь
+            if limited["n"] >= 4:  # сайт начал ограничивать запросы — не долбим его дальше
+                return None
             if registry.is_used(c.number, service):
                 why = "остановлен / не подошёл ранее" if registry.is_blocked(c.number) else "уже выдавался"
                 c.log(f"отсеян: {why}")
@@ -72,6 +96,13 @@ class FreeProvider(Provider):
             h = self.health(c, service)
             if h.ok and h.last_s is not None and h.last_s > self.max_age:
                 h.ok, h.reason = False, f"нет SMS {fmt_ago(h.last_s)}"
+            if not h.ok and any(k in h.reason for k in ("HTTP 403", "HTTP 429", "HTTP 503")):
+                limited["n"] += 1
+                if limited["n"] == 4:
+                    emit({"type": "error", "provider": self.name,
+                          "text": "сайт ограничил частоту запросов — остальные номера этого сайта пропущены"})
+            elif not h.ok and any(k in h.reason for k in ("архив", "ни одного SMS", "снят", "нет SMS", "отключён")):
+                self._mark_dead(c.number, h.reason)
             if not h.ok:
                 c.log(f"отсеян: {h.reason}")
                 emit({"type": "check", "provider": self.name, "number": c.number, "ok": False,
@@ -105,7 +136,7 @@ class FreeProvider(Provider):
             return c
 
         from concurrent.futures import ThreadPoolExecutor
-        with ThreadPoolExecutor(max_workers=12) as ex:
+        with ThreadPoolExecutor(max_workers=self.workers) as ex:
             out = [c for c in ex.map(check, items) if c]
         out.sort(key=lambda c: c.score, reverse=True)
         return out[:limit]

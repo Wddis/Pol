@@ -112,7 +112,7 @@ tr.flash td{background:color-mix(in srgb,var(--ok) 14%,transparent)}
 
     <details style="margin-top:12px"><summary>Дополнительные настройки</summary>
       <div class="row" style="margin-top:10px">
-        <label>Живая перепроверка, с<input id="probe" type="number" value="20" min="0" max="120" style="min-width:80px"></label>
+        <label>Живая перепроверка, с<input id="probe" type="number" value="10" min="0" max="120" style="min-width:80px"></label>
         <label>Ожидание кода после «Взять», мин<input id="timeout" type="number" value="10" min="1" max="60" style="min-width:80px"></label>
       </div>
       <div class="provs" id="provs"></div>
@@ -248,58 +248,100 @@ function updateRow(ev) {  // тест доставки обновляет стр
   if (ev.status === 'verified') { tr.classList.add('flash'); }
 }
 
-let findT0 = 0, clock = null;
+let findT0 = 0, clock = null, job = null, S = null, pollT = null;
 function setStep(n) {
   [1, 2, 3].forEach(i => { $('st' + i).className = 'step' + (i < n ? ' ok' : i === n ? ' on' : ''); });
 }
 function stopProgress(text) {
-  clearInterval(clock); $('spin').classList.add('done'); $('pTitle').textContent = text;
+  clearInterval(clock); clearTimeout(pollT); job = null;
+  try { sessionStorage.removeItem('smsf_job'); } catch (e) {}
+  $('spin').classList.add('done'); $('pTitle').textContent = text;
   $('find').disabled = false; $('stopFind').hidden = true; $('pBar').style.width = '100%';
 }
-function find() {
-  es?.close();
-  const p = params(); let n = 0, ok = 0, bad = 0, ver = 0, total = 0, stage = 1, vstart = 0;
+function resetProgress(p, startedAgo) {
+  S = {p, n: 0, ok: 0, bad: 0, ver: 0, total: 0, stage: 1, vstart: 0};
   $('find').disabled = true; $('stopFind').hidden = false;
   $('progress').hidden = false; $('spin').classList.remove('done'); $('log').innerHTML = '';
   ['sChecked', 'sOk', 'sBad', 'sVer'].forEach(i => $(i).textContent = '0');
   $('pTitle').textContent = `Ищу номера для ${svcName()}…`; $('pLast').textContent = ''; $('pBar').style.width = '3%'; setStep(1);
   $('resCard').hidden = true;
-  findT0 = Date.now(); clearInterval(clock);
+  findT0 = Date.now() - (startedAgo || 0) * 1000; clearInterval(clock);
   clock = setInterval(() => {
     const t = Math.round((Date.now() - findT0) / 1000);
     $('pTime').textContent = `· ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
-    if (stage === 3 && p.vwait) $('pBar').style.width = Math.min(99, 80 + (Date.now() - vstart) / 1000 / p.vwait * 19) + '%';
+    if (S.stage === 3 && S.p.vwait) $('pBar').style.width = Math.min(99, 80 + (Date.now() - S.vstart) / 1000 / S.p.vwait * 19) + '%';
   }, 500);
-  es = new EventSource(q(`/api/find/stream?service=${encodeURIComponent(p.service)}&country=${encodeURIComponent(p.country)}&mode=${p.mode}&probe=${p.probe}&verify=${p.verify}&vwait=${p.vwait}&providers=${provs().join(',')}&limit=15`));
-  es.onmessage = (e) => {
-    const ev = JSON.parse(e.data);
-    if (ev.type === 'stage') {
-      if (ev.total) total += ev.total;
-      if (ev.stage) { stage = ev.stage; setStep(stage); $('pTitle').textContent = ev.text; if (stage === 2) $('pBar').style.width = '65%'; if (stage === 3) vstart = Date.now(); }
-      logLine('st', '» ' + (ev.provider ? `[${ev.provider}] ` : '') + ev.text);
-    } else if (ev.type === 'error') logLine('no', `[${ev.provider}] ошибка: ${ev.text}`);
-    else if (ev.type === 'check') {
-      if (stage === 1) { n++; ev.ok ? ok++ : bad++; } else if (!ev.ok) { bad++; ok--; }
-      $('sChecked').textContent = n; $('sOk').textContent = Math.max(ok, 0); $('sBad').textContent = bad;
-      if (stage === 1 && total) $('pBar').style.width = Math.min(60, 3 + n / total * 57) + '%';
-      $('pLast').textContent = `${ev.ok ? '✓' : '✗'} ${ev.number} — ${ev.reason}`;
-      logLine(ev.ok ? 'ok' : 'no', `${ev.ok ? '✓' : '✗'} ${ev.provider} ${ev.number} — ${ev.reason}`);
-    } else if (ev.type === 'verify') {
-      if (ev.status === 'verified' || (ev.ok && /проверенный/.test(ev.reason))) { ver++; $('sVer').textContent = ver; }
-      $('pLast').textContent = `✉ ${ev.number} — ${ev.reason}`;
-      logLine(ev.ok ? 'ok' : 'no', `✉ ${ev.number} — ${ev.reason}`); updateRow(ev);
-    } else if (ev.type === 'results') {
-      render(ev, false); $('pBar').style.width = '80%';
-      if (!p.verify) setStep(4);
-    } else if (ev.type === 'done') {
-      es.close(); render(ev, true); setStep(4);
-      stopProgress(`Готово: ${ev.candidates.length} номеров для ${svcName()}` + (p.verify ? `, прошли тест доставки: ${ver}` : ''));
-      $('resCard').scrollIntoView({behavior: 'smooth', block: 'start'}); loadPool();
-    }
-  };
-  es.onerror = () => { es.close(); if ($('find').disabled) stopProgress('Соединение прервано — нажмите «Подобрать номер» ещё раз'); };
 }
-$('stopFind').onclick = () => { es?.close(); stopProgress('Подбор остановлен'); };
+function handle(ev) {
+  const st = S;
+  if (ev.type === 'stage') {
+    if (ev.total) st.total += ev.total;
+    if (ev.stage) { st.stage = ev.stage; setStep(st.stage); $('pTitle').textContent = ev.text; if (st.stage === 2) $('pBar').style.width = '65%'; if (st.stage === 3) st.vstart = Date.now(); }
+    logLine('st', '» ' + (ev.provider ? `[${ev.provider}] ` : '') + ev.text);
+  } else if (ev.type === 'error') logLine('no', `[${ev.provider}] ${ev.text}`);
+  else if (ev.type === 'check') {
+    if (st.stage === 1) { st.n++; ev.ok ? st.ok++ : st.bad++; } else if (!ev.ok) { st.bad++; st.ok--; }
+    $('sChecked').textContent = st.n; $('sOk').textContent = Math.max(st.ok, 0); $('sBad').textContent = st.bad;
+    if (st.stage === 1 && st.total) $('pBar').style.width = Math.min(60, 3 + st.n / st.total * 57) + '%';
+    $('pLast').textContent = `${ev.ok ? '✓' : '✗'} ${ev.number} — ${ev.reason}`;
+    logLine(ev.ok ? 'ok' : 'no', `${ev.ok ? '✓' : '✗'} ${ev.provider} ${ev.number} — ${ev.reason}`);
+  } else if (ev.type === 'verify') {
+    if (ev.status === 'verified' || (ev.ok && /проверенный/.test(ev.reason))) { st.ver++; $('sVer').textContent = st.ver; }
+    $('pLast').textContent = `✉ ${ev.number} — ${ev.reason}`;
+    logLine(ev.ok ? 'ok' : 'no', `✉ ${ev.number} — ${ev.reason}`); updateRow(ev);
+  } else if (ev.type === 'results') {
+    render(ev, false); $('pBar').style.width = '80%';
+    if (!st.p.verify) setStep(4);
+  } else if (ev.type === 'done') {
+    render(ev, true); setStep(4);
+    stopProgress(ev.stopped ? `Подбор остановлен · найдено ${ev.candidates.length}`
+      : `Готово: ${ev.candidates.length} номеров для ${svcName()}` + (st.p.verify ? `, прошли тест доставки: ${st.ver}` : ''));
+    $('resCard').scrollIntoView({behavior: 'smooth', block: 'start'}); loadPool();
+  }
+}
+async function poll() {
+  if (!job) return;
+  try {
+    const r = await api(`/api/search/${job.id}?after=${job.next}`);
+    if (job && $('pTitle').dataset.offline) { delete $('pTitle').dataset.offline; logLine('ok', 'связь восстановлена'); }
+    job.next = r.next;
+    r.events.forEach(handle);
+    if (!job) return;  // пришло «done»
+    if (!r.running && !r.events.length) { stopProgress('Подбор завершён'); return; }
+  } catch (e) {
+    if (String(e.message).includes('404')) { stopProgress('Подбор не найден на сервере (сайт перезапускался) — нажмите «Подобрать номер»'); return; }
+    // нет связи: подбор продолжается на сервере, просто пробуем снова
+    $('pTitle').dataset.offline = 1; $('pLast').textContent = 'Нет связи с сайтом — переподключаюсь, подбор продолжается на сервере…';
+  }
+  pollT = setTimeout(poll, 1000);
+}
+async function find() {
+  const p = params();
+  resetProgress(p, 0);
+  try {
+    const r = await api('/api/search', {...p, providers: provs(), limit: 15});
+    job = {id: r.id, next: 0, p};
+    try { sessionStorage.setItem('smsf_job', JSON.stringify(job)); } catch (e) {}
+    poll();
+  } catch (e) { stopProgress('Не удалось запустить подбор: ' + e.message); }
+}
+async function resumeJob() {  // после перезагрузки страницы / сна телефона
+  let saved = null;
+  try { saved = JSON.parse(sessionStorage.getItem('smsf_job') || 'null'); } catch (e) {}
+  if (!saved) return;
+  try {
+    const r = await api(`/api/search/${saved.id}?after=0`);
+    if (saved.p) { $('service').value = saved.p.service; }
+    resetProgress(saved.p, r.elapsed);
+    job = {id: saved.id, next: 0, p: saved.p};
+    poll();
+  } catch (e) { try { sessionStorage.removeItem('smsf_job'); } catch (_) {} }
+}
+$('stopFind').onclick = async () => {
+  if (!job) return;
+  $('pTitle').textContent = 'Останавливаю…';
+  try { await api(`/api/search/${job.id}/stop`, {}); } catch (e) { stopProgress('Подбор остановлен'); }
+};
 
 const ACTIVE = ['waiting', 'starting', 'received'];
 function dropNumber(num) {  // остановленный / не подошедший номер исчезает из всех списков
@@ -392,7 +434,7 @@ $('poolRows').addEventListener('click', async (e) => {
   e.target.disabled = false;
 });
 loadPool(); setInterval(loadPool, 20000);
-init().catch(e => $('errors').textContent = e.message);
+init().then(resumeJob).catch(e => $('errors').textContent = e.message);
 </script>
 </body>
 </html>

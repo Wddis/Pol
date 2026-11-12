@@ -24,7 +24,7 @@ from typing import Callable, Iterator, Optional
 import requests
 
 from . import registry, sender, verify
-from .core import Candidate, ProviderError, Sms
+from .core import Candidate, ProviderError, SearchStopped, Sms
 from .providers import all_providers
 from .services import country_matches, profile, service_code, service_matchers
 
@@ -242,6 +242,49 @@ class Activation:
         return self._failover("заменён вручную")
 
 
+class SearchJob:
+    """Подбор номеров, выполняемый на сервере в фоне.
+
+    Раньше страница получала события одним длинным потоком (SSE), но Cloudflare-туннель
+    буферизует такой поток целиком и рвёт «молчащее» соединение ~через 100 с — на телефоне
+    было видно «Проверено 0», а затем «Соединение прервано». Теперь подбор идёт здесь, а
+    страница раз в секунду забирает новые события короткими запросами и может
+    переподключиться в любой момент без потери прогресса.
+    """
+
+    def __init__(self, engine: "Engine", params: dict):
+        self.id = uuid.uuid4().hex[:12]
+        self.engine, self.params = engine, params
+        self.events: list[dict] = []
+        self.stop = threading.Event()
+        self.started = time.time()
+        self.finished = 0.0
+        self.lock = threading.Lock()
+
+    def _run(self):
+        try:
+            for ev in self.engine.find_stream(**self.params, stop=self.stop):
+                with self.lock:
+                    self.events.append(ev)
+        except Exception as e:  # не даём задаче «зависнуть» молча
+            with self.lock:
+                self.events.append({"type": "error", "provider": "движок", "text": f"{type(e).__name__}: {e}"})
+                self.events.append({"type": "done", "candidates": [], "errors": {"движок": str(e)},
+                                    "took": round(time.time() - self.started, 1), "stopped": False})
+        self.finished = time.time()
+
+    def start(self) -> "SearchJob":
+        threading.Thread(target=self._run, daemon=True).start()
+        return self
+
+    def poll(self, after: int) -> dict:
+        with self.lock:
+            evs = self.events[after:]
+            n = len(self.events)
+        return {"id": self.id, "events": evs, "next": n, "running": not self.finished,
+                "elapsed": int(time.time() - self.started)}
+
+
 class Engine:
     def __init__(self, providers: Optional[dict] = None):
         self.providers = providers or all_providers()
@@ -250,6 +293,7 @@ class Engine:
         self.last_order: list[str] = []
         self.verifications: dict[str, verify.Verification] = {}
         self.watcher = verify.Watcher(self)
+        self.jobs: dict[str, "SearchJob"] = {}
 
     def provider_info(self) -> list[dict]:
         out = []
@@ -263,7 +307,7 @@ class Engine:
     def find_stream(self, service: str, country: str = "", providers: Optional[list[str]] = None,
                     limit: int = 15, mode: str = "niche", probe_s: int = 20,
                     verify_n: int = 0, verify_wait: int = 180, track: bool = True,
-                    verify_method: str = "auto") -> Iterator[dict]:
+                    verify_method: str = "auto", stop: Optional[threading.Event] = None) -> Iterator[dict]:
         """Генератор событий проверки; последнее событие — {'type': 'done', ...}."""
         names = providers or [p["name"] for p in self.provider_info() if p["enabled"]]
         if mode == "premium":
@@ -275,10 +319,20 @@ class Engine:
         results: dict[str, list[Candidate]] = {}
         errors: dict[str, str] = {}
 
+        stop = stop or threading.Event()
+
+        def emit(ev):
+            if stop.is_set():
+                raise SearchStopped()
+            if ev.get("type") != "_ping":
+                q.put(ev)
+
         def run(name):
             try:
                 pmode = "popular" if mode == "verified" else mode
-                results[name] = self.providers[name].find(service, country, limit * 2, pmode, q.put)
+                results[name] = self.providers[name].find(service, country, limit * 2, pmode, emit)
+            except SearchStopped:
+                pass
             except Exception as e:
                 errors[name] = str(e)
                 q.put({"type": "error", "provider": name, "text": str(e)})
@@ -291,7 +345,10 @@ class Engine:
             threading.Thread(target=run, args=(n,), daemon=True).start()
         left = len(names)
         while left:
-            ev = q.get()
+            try:
+                ev = q.get(timeout=1)
+            except queue.Empty:
+                continue
             if ev["type"] == "_finished":
                 left -= 1
             else:
@@ -318,7 +375,8 @@ class Engine:
             yield {"type": "stage", "stage": 2, "text": f"Этап 2 из 3: живая перепроверка {len(free)} лучших номеров "
                                                         f"({probe_s} с)"}
             for rnd in (1, 2):
-                time.sleep(probe_s / 2)
+                if stop.wait(probe_s / 2):
+                    break
                 with ThreadPoolExecutor(max_workers=12) as ex:
                     res = list(ex.map(lambda c: (c, self.providers[c.provider].health(c, service)), free))
                 alive = []
@@ -393,7 +451,7 @@ class Engine:
                                                         f"жду новое SMS от {svc_t} до {max(1, verify_wait // 60)} мин "
                                                         "(номера уже можно брать)"}
             vq: queue.Queue = queue.Queue()
-            jobs = [verify.Verification(self, c, verify_wait, vq.put, verify_method, service) for c in todo]
+            jobs = [verify.Verification(self, c, verify_wait, vq.put, verify_method, service, stop) for c in todo]
 
             def run_v(j):
                 try:
@@ -405,19 +463,31 @@ class Engine:
                 threading.Thread(target=run_v, args=(j,), daemon=True).start()
             left = len(jobs)
             while left:
-                ev = vq.get()
+                try:
+                    ev = vq.get(timeout=1)
+                except queue.Empty:
+                    continue
                 if ev["type"] == "_vdone":
                     left -= 1
                 else:
                     yield ev
-        if mode == "verified":
+        if mode == "verified" and not stop.is_set():
             cands = [c for c in cands if c.tier == "verified"]
             yield {"type": "stage", "text": f"Проверенных для {svc_t}: {len(cands)}"}
         cands = finalize(cands)
         if track:
             self.last_order = [c.id for c in cands if c.extra["can_buy"]]
         yield {"type": "done", "candidates": [c.to_dict() for c in cands], "errors": errors,
-               "took": round(time.time() - t0, 1), "used_total": registry.count()}
+               "took": round(time.time() - t0, 1), "used_total": registry.count(), "stopped": stop.is_set()}
+
+    # --- подбор как фоновая задача (переживает обрывы соединения) ------------
+    def start_search(self, **kw) -> "SearchJob":
+        job = SearchJob(self, kw).start()
+        self.jobs[job.id] = job
+        for jid, j in list(self.jobs.items()):  # чистим старые задачи
+            if j.finished and time.time() - j.finished > 1800:
+                del self.jobs[jid]
+        return job
 
     def find(self, *a, **kw) -> dict:
         last = {}

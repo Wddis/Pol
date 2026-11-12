@@ -16,6 +16,7 @@ class OnlineSimFree(FreeProvider):
     title = "onlinesim.io free (бесплатно, публично)"
 
     def __init__(self):
+        super().__init__()
         self.s = http()
 
     def _json(self, method, **params):

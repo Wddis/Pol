@@ -76,6 +76,34 @@ def find_stream():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 
+@app.post("/api/search")
+@guarded
+def search_start():
+    """Запустить подбор в фоне; страница опрашивает /api/search/<id>."""
+    d = request.get_json(force=True)
+    job = engine.start_search(
+        service=d.get("service", "other"), country=d.get("country", ""),
+        providers=d.get("providers") or None, limit=int(d.get("limit", 15)), mode=d.get("mode", "niche"),
+        probe_s=max(0, min(int(d.get("probe", 10)), 120)), verify_n=max(0, min(int(d.get("verify", 0)), 8)),
+        verify_wait=max(30, min(int(d.get("vwait", 180)), 600)), verify_method=d.get("vmethod", "auto"))
+    return jsonify(job.poll(0))
+
+
+@app.get("/api/search/<jid>")
+@guarded
+def search_poll(jid):
+    job = engine.jobs.get(jid) or abort(404)
+    return jsonify(job.poll(int(request.args.get("after", 0))))
+
+
+@app.post("/api/search/<jid>/stop")
+@guarded
+def search_stop(jid):
+    job = engine.jobs.get(jid) or abort(404)
+    job.stop.set()
+    return jsonify(job.poll(len(job.events)))
+
+
 @app.post("/api/start")
 @guarded
 def start():

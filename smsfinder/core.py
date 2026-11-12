@@ -31,6 +31,10 @@ class ProviderError(Exception):
     pass
 
 
+class SearchStopped(Exception):
+    """Пользователь остановил подбор — прекратить проверки как можно быстрее."""
+
+
 @dataclass
 class Health:
     """Результат проверки номера на работоспособность."""
