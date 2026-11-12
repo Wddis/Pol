@@ -1,7 +1,8 @@
 import os
 import requests
 import json
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup,
+                      ReplyKeyboardMarkup, BotCommand)
 from telegram.ext import (ApplicationBuilder, MessageHandler, CommandHandler,
                            CallbackQueryHandler, filters, ContextTypes)
 
@@ -21,6 +22,20 @@ def clear_button():
     return InlineKeyboardMarkup([[
         InlineKeyboardButton("🗑 Очистить диалог", callback_data="clear")
     ]])
+
+CLEAR_TEXT = "🗑 Новый диалог"
+
+def main_keyboard():
+    # Постоянная кнопка внизу экрана
+    return ReplyKeyboardMarkup([[CLEAR_TEXT]], resize_keyboard=True, is_persistent=True)
+
+async def reset_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_histories.pop(update.effective_user.id, None)
+    await update.effective_message.reply_text(
+        "🗑 *Диалог очищен.* Начнём с чистого листа!",
+        parse_mode="Markdown",
+        reply_markup=main_keyboard()
+    )
 
 def ask_nvidia(user_id, user_message):
     if user_id not in chat_histories:
@@ -78,6 +93,9 @@ def ask_nvidia(user_id, user_message):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     user_text = update.message.text
+    if user_text == CLEAR_TEXT:
+        await reset_dialog(update, context)
+        return
 
     thinking = await update.message.reply_text("⏳ Думаю...")
     answer = ask_nvidia(user_id, user_text)
@@ -96,22 +114,32 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
-    chat_histories[user_id] = []
+    chat_histories.pop(user_id, None)
     await query.answer("Диалог очищен!")
     await query.edit_message_reply_markup(reply_markup=None)
     await context.bot.send_message(
         chat_id=query.message.chat_id,
         text="🗑 *Диалог очищен.* Начнём с чистого листа!",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=main_keyboard()
     )
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Привет! Я готов отвечать на твои вопросы.\nПросто напиши мне что-нибудь!"
+        "👋 Привет! Я готов отвечать на твои вопросы.\nПросто напиши мне что-нибудь!\n\n"
+        "Чтобы начать заново — нажми «🗑 Новый диалог» внизу или отправь /clear.",
+        reply_markup=main_keyboard()
     )
 
-app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
+async def post_init(application):
+    await application.bot.set_my_commands([
+        BotCommand("clear", "🗑 Очистить контекст диалога"),
+        BotCommand("start", "Начать"),
+    ])
+
+app = ApplicationBuilder().token(TELEGRAM_TOKEN).post_init(post_init).build()
 app.add_handler(CommandHandler("start", start))
+app.add_handler(CommandHandler(["clear", "new", "reset"], reset_dialog))
 app.add_handler(CallbackQueryHandler(clear_callback, pattern="clear"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 app.run_polling()
