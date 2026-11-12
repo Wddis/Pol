@@ -2,7 +2,7 @@
 
 Читать ПЕРВЫМ в новой сессии. Дальше — `docs/STATUS.md` (детальный статус), правила — `docs/montage-style.md`,
 `docs/playbook-vod.md`, `docs/no-yellow-card.md`, `docs/youtube-rules.md`, `docs/whisper.md`,
-публикация — `docs/publishing-methods.md`, интро — `assets/intro/README.md`.
+публикация — `docs/publishing-methods.md`, интро — `assets/intro/README.md` (основное с 12.11 вечер — **«Ретро-ТВ»**).
 
 Рабочая ветка: `ccr-afb88262-upss12` (основа — `claude/status-docs-liyeqk`). Всё ценное — в репо;
 scratchpad сессии (видео, cookies, кэш) при новой сессии ПРОПАДАЕТ.
