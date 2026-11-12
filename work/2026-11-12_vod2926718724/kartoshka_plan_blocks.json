@@ -1,0 +1,110 @@
+{
+ "vod": 2926718724,
+ "note": "potato game main video; blocks cut with vodcut.py (offset = file start); no zoom (owner rule 12.11)",
+ "blur": [
+  [
+   0,
+   0,
+   262,
+   105
+  ],
+  [
+   1600,
+   18,
+   320,
+   245
+  ]
+ ],
+ "blocks": [
+  {
+   "block": "b01",
+   "vod_from": 10081.0,
+   "vod_to": 10347.8,
+   "file_offset": 10070.0
+  },
+  {
+   "block": "b02",
+   "vod_from": 10365.9,
+   "vod_to": 10479.0,
+   "file_offset": 10360.0
+  },
+  {
+   "block": "b03",
+   "vod_from": 10565.6,
+   "vod_to": 10619.0,
+   "file_offset": 10560.0
+  },
+  {
+   "block": "b04",
+   "vod_from": 10625.0,
+   "vod_to": 10686.8,
+   "file_offset": 10620.0
+  },
+  {
+   "block": "b05",
+   "vod_from": 10752.7,
+   "vod_to": 10899.0,
+   "file_offset": 10740.0
+  },
+  {
+   "block": "b06",
+   "vod_from": 10920.5,
+   "vod_to": 11133.1,
+   "file_offset": 10910.0
+  },
+  {
+   "block": "b07",
+   "vod_from": 11280.2,
+   "vod_to": 11372.0,
+   "file_offset": 11270.0
+  },
+  {
+   "block": "b08",
+   "vod_from": 11437.8,
+   "vod_to": 11499.0,
+   "file_offset": 11430.0
+  },
+  {
+   "block": "b09",
+   "vod_from": 12161.5,
+   "vod_to": 12198.4,
+   "file_offset": 12150.0
+  },
+  {
+   "block": "b10",
+   "vod_from": 12851.5,
+   "vod_to": 12892.9,
+   "file_offset": 12840.0
+  },
+  {
+   "block": "b11",
+   "vod_from": 13960.4,
+   "vod_to": 13993.9,
+   "file_offset": 13950.0
+  },
+  {
+   "block": "b12a",
+   "vod_from": 14643.5,
+   "vod_to": 14662.0,
+   "file_offset": 14640.0
+  },
+  {
+   "block": "b12b",
+   "vod_from": 14702.7,
+   "vod_to": 14776.2,
+   "file_offset": 14690.0
+  },
+  {
+   "block": "b14",
+   "vod_from": 22082.9,
+   "vod_to": 22215.0,
+   "file_offset": 22070.0
+  },
+  {
+   "block": "b15",
+   "vod_from": 22835.1,
+   "vod_to": 23083.2,
+   "file_offset": 22830.0
+  }
+ ]
+}
