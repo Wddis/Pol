@@ -252,7 +252,7 @@ class Watcher:
     """Фоновый пул: постоянно наблюдает живые номера и записывает, от каких сервисов
     на них реально приходят SMS прямо сейчас."""
 
-    def __init__(self, engine, size: int = 60, cycle: int = 30, refresh: int = 600):
+    def __init__(self, engine, size: int = 120, cycle: int = 30, refresh: int = 600):
         self.engine, self.size, self.cycle, self.refresh = engine, size, cycle, refresh
         self.watch: dict[str, dict] = {}   # number -> {cand, baseline, since, last_new}
         self.events: list[str] = []
@@ -306,7 +306,7 @@ class Watcher:
                 return num, _msgs(self.engine.providers[w["cand"].provider], w["cand"])
             except Exception:
                 return num, None
-        with ThreadPoolExecutor(max_workers=10) as ex:
+        with ThreadPoolExecutor(max_workers=16) as ex:
             fetched = dict(ex.map(fetch, items))
         for num, w in items:
             c = w["cand"]

@@ -63,6 +63,7 @@ class Activation:
         self.codes: list[dict] = []     # все коды сервиса, пришедшие после выдачи номера
         self.seen_at: dict[str, int] = {}  # отпечаток SMS -> секунда с начала ожидания
         self.warning = ""
+        self.before: list[dict] = []
         self.error = ""
         self.started = time.time()
         self.events: list[str] = []
@@ -91,7 +92,7 @@ class Activation:
             "public": self.cand.public, "tier": self.cand.tier, "elapsed": int(time.time() - self.started),
             "timeout": self.timeout, "candidate": self.cand.to_dict(), "events": self.events[-30:],
             "history": self.history, "reserve": len(self.reserve), "warning": self.warning,
-            "codes": self.codes, "hint": profile(self.service).get("hint", ""),
+            "codes": self.codes, "hint": profile(self.service).get("hint", ""), "before": self.before,
             "messages": [dict(m.to_dict(), since_s=self.seen_at.get(m.key),
                               is_service=bool(self._service_code(m))) for m in self.messages],
         }
@@ -119,7 +120,9 @@ class Activation:
         if self.cand.public:
             # публичный номер: запоминаем уже пришедшие SMS, ждём только новые
             try:
-                self._baseline = {m.key for m in self.provider.messages(self.state)}
+                msgs = self.provider.messages(self.state)
+                self._baseline = {m.key for m in msgs}
+                self.before = [m.to_dict() for m in msgs[:5]]  # лента до выдачи — видно, что она работает
             except Exception:
                 self._baseline = set(self.cand.extra.get("keys") or [])
         self.log(f"выдан номер {self.number} ({self.cand.provider}, {self.cand.tier})"
@@ -356,6 +359,7 @@ class Engine:
                 yield ev
 
         cands = [c for cs in results.values() for c in cs]
+        all_found = list(cands)  # для теста доставки берём всех, включая «занятых» — там сервис пишет прямо сейчас
         # строгий режим: только нишевые и премиум
         if mode == "niche":
             dropped = [c for c in cands if c.tier == "regular"]
@@ -449,7 +453,8 @@ class Engine:
         # тестируем сначала номера, куда сервис писал недавно (шанс поймать его SMS выше)
         def recent(c):
             return c.extra.get("svc_last_s") if c.extra.get("svc_last_s") is not None else 10 ** 9
-        pool_t = sorted((c for c in cands if c.public and c.tier != "verified"), key=lambda c: (recent(c), -c.score))
+        pool_t = sorted((c for c in all_found if c.public and c.tier != "verified"),
+                        key=lambda c: (recent(c), -c.score))
         todo = pool_t[:verify_n]
         have_ver = sum(1 for c in cands if c.tier == "verified")
         if todo and not (verify_target and have_ver >= verify_target):
@@ -481,6 +486,9 @@ class Engine:
                 else:
                     yield ev
                     if ev.get("status") == "verified":
+                        vc = self.candidates.get(ev.get("id")) or next((c for c in all_found if c.id == ev.get("id")), None)
+                        if vc and vc not in cands:
+                            cands.append(vc)  # проверенный «занятый» номер тоже показываем (с предупреждением)
                         have_ver += 1
                         if verify_target and have_ver >= verify_target and not vstop.is_set():
                             vstop.set()
