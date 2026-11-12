@@ -11,27 +11,28 @@ ax, ay = plan.get("zoom", {}).get("anchor", [1, 1])
 RAMP, PAD = 0.35, 0.4
 tmp = out + ".parts"; os.makedirs(tmp, exist_ok=True)
 
-def blur(inp):
+def blur(inp, boxes=None):
     f, cur = "", inp
-    for i, (x, y, w, h) in enumerate(plan.get("blur", [])):
+    for i, (x, y, w, h) in enumerate(plan.get("blur", []) if boxes is None else boxes):
         f += f"[{cur}]split[b{i}a][b{i}b];[b{i}b]crop={w}:{h}:{x}:{y},gblur=sigma=25[b{i}c];[b{i}a][b{i}c]overlay={x}:{y}[bl{i}];"
         cur = f"bl{i}"
     return cur, f
 
 # build sub-parts: (start, end, zoom_window_relative or None)
+# a clip may carry its own "blur" list (e.g. a full-screen-webcam part must not get screen boxes)
 subs = []
 for c in plan["clips"]:
-    s, e = c["s"], c["e"]; cur = s
+    s, e = c["s"], c["e"]; cur = s; bl = c.get("blur")
     for a, b in sorted(c.get("zoom", [])):
         za, zb = max(s, s + a - PAD), min(e, s + b + PAD)
-        if za > cur + 0.05: subs.append((cur, za, None))
-        subs.append((za, zb, (s + a - za, s + b - za))); cur = zb
-    if e > cur + 0.05: subs.append((cur, e, None))
+        if za > cur + 0.05: subs.append((cur, za, None, bl))
+        subs.append((za, zb, (s + a - za, s + b - za), bl)); cur = zb
+    if e > cur + 0.05: subs.append((cur, e, None, bl))
 
 def render(i_sub):
-    i, (s, e, zw) = i_sub
+    i, (s, e, zw, bl) = i_sub
     p = f"{tmp}/{i:04d}.mp4"
-    lab, bf = blur("0:v")
+    lab, bf = blur("0:v", bl)
     if zw:
         a, b = zw
         k = f"min(clip((t-{a})/{RAMP},0,1),clip(({b}-t)/{RAMP},0,1))"
