@@ -25,7 +25,7 @@ npm pack @fontsource/rubik-dirt@5.3.0 @fontsource/russo-one@5.3.0 @fontsource/mo
 - ЗАЧЕМ ДУШ НА ПОДИУМЕ?! — https://youtu.be/Od9xHXYs28U (08.11)
 - ЗАЧЕМ ТЫ УБЕГАЕШЬ?! (4 дикие погони) — https://youtu.be/d8Y2j1WE6Mk (08.11)
 - ГЛАВА NVIDIA И КИТАЙСКАЯ ШПИОНКА?! — https://youtu.be/zNd_s0iyrkc (12.11, с интро)
-- ЦЕНА STEAM FRAME — ПЕРЕБОР?! — https://youtu.be/K26CcbSrqD4 (12.11, с интро)
+- ~~ЦЕНА STEAM FRAME — ПЕРЕБОР?!~~ (K26CcbSrqD4) — получил 18+, УДАЛЁН по решению владельца 12.11
 - T2x2 НАВАЙБКОДИЛ ИГРУ?! — ВЕРИТИ… — https://youtu.be/W0C8zdVUkIU (12.11, с интро)
 - ранее: Я Алкоголик, Айсберг ВК, GTA 6 (11.11); «Шоу Дипинса» удалено со стороны канала 12.11.
 Шортсы: XmpS7N7qTis (душ), 3Kjq2OIFEew (цвет стен), R1UwPew2ZWg (звёзды ГТА), dWZIKKNsP4s (Никс),
