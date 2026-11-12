@@ -52,7 +52,8 @@ def _find_args():
                 limit=int(a.get("limit", 15)), mode=a.get("mode", "niche"),
                 probe_s=max(0, min(int(a.get("probe", 20)), 120)),
                 verify_n=max(0, min(int(a.get("verify", 0)), 5)),
-                verify_wait=max(30, min(int(a.get("vwait", 180)), 600)))
+                verify_wait=max(30, min(int(a.get("vwait", 180)), 600)),
+                verify_method=a.get("vmethod", "auto"))
 
 
 @app.get("/api/find")
@@ -104,7 +105,7 @@ def auto():
 def verify_start():
     d = request.get_json(force=True)
     try:
-        job = engine.verify(d["id"], max(30, min(int(d.get("wait", 180)), 600)))
+        job = engine.verify(d["id"], max(30, min(int(d.get("wait", 180)), 900)), d.get("method", "auto"))
     except ProviderError as e:
         return jsonify(error=str(e)), 400
     return jsonify(job.to_dict())
@@ -140,12 +141,21 @@ def switch(aid):
     return jsonify(act.to_dict())
 
 
+@app.get("/api/verified")
+@guarded
+def verified_pool():
+    """Пул «проверенных» номеров + состояние фонового наблюдения."""
+    return jsonify(pool=engine.watcher.pool(), watcher=engine.watcher.status())
+
+
 @app.get("/healthz")
 def health():
     return "ok"
 
 
 def main():
+    if os.getenv("SMSFINDER_WATCH", "1") != "0":
+        engine.watcher.start()  # фоновый пул проверенных номеров
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", 8000)), threaded=True)
 
 

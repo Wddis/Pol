@@ -29,6 +29,7 @@ jobs:
     env:
       PORT: "8000"
       SMSFINDER_DATA: ${{ github.workspace }}/.smsfinder
+      SMSFINDER_WATCH: "1"   # фоновый пул проверенных номеров
       # ключи платных провайдеров (необязательно): Settings → Secrets → Actions
       FIVESIM_API_KEY: ${{ secrets.FIVESIM_API_KEY }}
       SMSACT_KEY: ${{ secrets.SMSACT_KEY }}

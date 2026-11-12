@@ -32,7 +32,9 @@ def main(argv=None):
         p.add_argument("--mode", default="niche", choices=["verified", "niche", "premium", "popular"])
         p.add_argument("--verify", type=int, default=0,
                        help="сколько лучших номеров проверить тестовым SMS (тратит квоту отправки)")
-        p.add_argument("--verify-wait", type=int, default=180, help="сколько ждать доставки тестового SMS, сек")
+        p.add_argument("--verify-wait", type=int, default=180, help="сколько ждать подтверждения доставки, сек")
+        p.add_argument("--verify-method", default="auto", choices=["auto", "passive", "active"],
+                       help="passive — ждать новое входящее SMS (бесплатно); active — отправить тестовое SMS")
         p.add_argument("--probe", type=int, default=20, help="длительность живой проверки, сек")
         p.add_argument("-v", "--verbose", action="store_true", help="показывать каждую проверку")
         if name == "get":
@@ -43,7 +45,8 @@ def main(argv=None):
     eng = Engine()
     provs = [x.strip() for x in a.providers.split(",") if x.strip()] or None
     res = {}
-    for ev in eng.find_stream(a.service, a.country, provs, a.limit, a.mode, a.probe, a.verify, a.verify_wait):
+    for ev in eng.find_stream(a.service, a.country, provs, a.limit, a.mode, a.probe, a.verify, a.verify_wait,
+                              verify_method=a.verify_method):
         if ev["type"] == "stage":
             print(f"» {ev['text']}" + (f" [{ev['provider']}]" if ev.get("provider") else ""))
         elif ev["type"] == "verify":

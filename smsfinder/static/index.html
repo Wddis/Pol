@@ -60,7 +60,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px}
       <label>Сервис<select id="service"></select></label>
       <label>Страна<input id="country" placeholder="de, usa, 49… (все)"></label>
       <label>Живая проверка, с<input id="probe" type="number" value="20" min="0" max="120" style="min-width:80px"></label>
-      <label>Проверка SMS, номеров<input id="verify" type="number" value="0" min="0" max="5" style="min-width:80px" title="Скольким лучшим номерам отправить тестовое SMS"></label>
+      <label>Подтвердить доставку, номеров<input id="verify" type="number" value="0" min="0" max="5" style="min-width:80px" title="Скольким лучшим номерам отправить тестовое SMS"></label>
       <label>Ожидание SMS, мин<input id="timeout" type="number" value="10" min="1" max="60" style="min-width:80px"></label>
     </div>
     <div class="row" style="margin-top:12px">
@@ -69,6 +69,15 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px}
     </div>
     <div class="provs" id="provs"></div>
     <div class="note" id="senderInfo" style="margin-top:8px"></div>
+  </div>
+
+  <div class="card" id="poolCard">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <b>✅ Пул проверенных номеров</b><span class="muted note" id="poolInfo">загрузка…</span>
+    </div>
+    <p class="note" style="margin:6px 0 8px">Фоновая проверка: скрипт постоянно наблюдает лучшие номера, и как только на номер приходит новое SMS — это доказательство доставки, номер попадает сюда (действует 6 ч).</p>
+    <div class="scroll"><table class="tbl"><tbody id="poolRows"></tbody></table></div>
+    <details style="margin-top:8px"><summary>Журнал наблюдения</summary><div class="log" id="poolLog"></div></details>
   </div>
 
   <div class="card" id="actCard" hidden>
@@ -111,7 +120,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px}
       <th>Score</th><th>Номер</th><th>Класс</th><th>Страна</th><th>Источник</th><th>Цена</th><th>Проверка</th><th></th>
     </tr></thead><tbody id="rows"><tr><td colspan="8" class="muted">Нажмите «Подобрать и проверить».</td></tr></tbody></table></div>
   </div>
-  <p class="note"><b>Проверенный</b> — на номер отправлено SMS со случайным кодом, и оно реально дошло до входящих: номер принимает SMS прямо сейчас. Статус действует 6 ч. <b>Нишевый</b> — бесплатный номер, на котором выбранный сервис ещё не регистрировался, с малой нагрузкой и подтверждённым приёмом SMS. <b>Премиум</b> — приватный платный номер (реальная SIM или высокий % доставки), новый для сервиса; нужен API-ключ провайдера. Бесплатные номера публичны: их SMS видны всем.</p>
+  <p class="note"><b>Проверенный</b> — доставка SMS подтверждена: во время наблюдения на номер пришло новое SMS (бесплатно, без отправки) или дошло наше тестовое SMS с кодом (если подключён шлюз textbee/httpSMS/Twilio). Статус действует 6 ч. <b>Нишевый</b> — бесплатный номер, на котором выбранный сервис ещё не регистрировался, с малой нагрузкой и подтверждённым приёмом SMS. <b>Премиум</b> — приватный платный номер (реальная SIM или высокий % доставки), новый для сервиса; нужен API-ключ провайдера. Бесплатные номера публичны: их SMS видны всем.</p>
 </div>
 <script>
 const T = new URLSearchParams(location.search).get('t');
@@ -136,7 +145,9 @@ async function init() {
   $('mode').innerHTML = Object.entries(m.modes).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
   $('service').innerHTML = m.services.map(s => `<option>${s}</option>`).join('');
   const sd = m.sender;
-  $('senderInfo').textContent = `Отправка тестовых SMS: ${sd.via}` + (sd.quota != null ? ` (квота: ${sd.quota})` : '') + (sd.note ? ` · ${sd.note}` : '');
+  $('senderInfo').textContent = sd.free
+    ? 'Подтверждение доставки: пассивное — по новым входящим SMS (бесплатно, без отправки). Активная отправка тестового SMS не подключена: задайте TEXTBEE_KEY (github.com/textbee/textbee), HTTPSMS_KEY или Twilio.'
+    : `Подтверждение доставки: тестовое SMS через ${sd.via}` + (sd.quota != null ? ` (квота: ${sd.quota})` : '') + '; если шлюз не отправит — пассивное по входящим SMS.';
   $('mode').onchange = () => { if ($('mode').value === 'verified' && +$('verify').value === 0) $('verify').value = 2; };
   $('mode').onchange();
   $('provs').innerHTML = m.providers.map(p => `<label><input type="checkbox" value="${p.name}" ${p.enabled ? 'checked' : 'disabled'}> ${esc(p.title)} ${p.note ? `<small>(${esc(p.note)})</small>` : ''}</label>`).join('');
@@ -159,7 +170,7 @@ function render(r) {
     <td class="num">${c.public ? 'free' : c.price.toFixed(2)}</td>
     <td class="note">${esc(c.note)}<details><summary>журнал проверки</summary>${c.checks.map(esc).join('<br>')}</details></td>
     <td>${c.extra.can_buy ? `<button data-id="${c.id}">Взять</button>` : '<span class="note" title="Задайте API-ключ провайдера">нужен ключ</span>'}
-      ${c.public && c.tier !== 'verified' ? `<br><button class="ghost vbtn" data-verify="${c.id}">Проверить SMS</button>` : ''}
+      ${c.public && c.tier !== 'verified' ? `<br><button class="ghost vbtn" data-verify="${c.id}">Подтвердить доставку</button>` : ''}
       <div class="note" id="v-${c.id}"></div></td></tr>`).join('')
     : '<tr><td colspan="8" class="muted">Ни один номер не прошёл проверку — смените страну, сервис или режим.</td></tr>';
 }
@@ -212,14 +223,15 @@ $('rows').addEventListener('click', async (e) => {
   if (vid) {
     e.target.disabled = true; const out = $('v-' + vid);
     try {
-      let j = await api('/api/verify', {id: vid, wait: 180});
-      out.textContent = `отправляю код ${j.token}…`;
-      while (['pending', 'sent'].includes(j.status)) {
+      let j = await api('/api/verify', {id: vid, wait: 600});
+      out.textContent = 'запускаю проверку…';
+      while (['pending', 'sent', 'watching'].includes(j.status)) {
         await new Promise(r => setTimeout(r, 3000));
         j = await api('/api/verify/' + j.id);
-        out.textContent = j.status === 'sent' ? `код ${j.token} отправлен через ${j.via}, жду доставку… ${j.elapsed} с` : '';
+        out.textContent = j.status === 'sent' ? `код ${j.token} отправлен через ${j.via}, жду доставку… ${j.elapsed} с`
+          : j.status === 'watching' ? `наблюдаю входящие, жду новое SMS… ${j.elapsed} / ${j.wait} с` : '';
       }
-      out.innerHTML = j.status === 'verified' ? `<b style="color:var(--ok)">✅ проверенный: SMS дошло за ${j.delivered_s} с</b>` : `<span class="err">✗ ${esc(j.detail)}</span>`;
+      out.innerHTML = j.status === 'verified' ? `<b style="color:var(--ok)">✅ проверенный: SMS дошло через ${j.delivered_s} с</b>` : `<span class="err">✗ ${esc(j.detail)}</span>`;
       if (j.status !== 'verified') e.target.disabled = false;
     } catch (err) { out.textContent = err.message; e.target.disabled = false; }
     return;
@@ -239,6 +251,26 @@ $('actCancel').onclick = async () => current && show(await api(`/api/activation/
 $('actSwitch').onclick = async () => current && show(await api(`/api/activation/${current.id}/switch`, {}));
 $('actNum').onclick = () => current && copy(current.number);
 $('actCode').onclick = () => current?.code && copy(current.code);
+async function loadPool() {
+  try {
+    const r = await api('/api/verified');
+    const w = r.watcher;
+    $('poolInfo').textContent = `проверенных: ${r.pool.length} · под наблюдением: ${w.watching}` + (w.running ? '' : ' · фоновая проверка выключена');
+    $('poolRows').innerHTML = r.pool.length ? r.pool.map(c => `<tr>
+      <td class="num"><b>${esc(c.number)}</b></td><td>${esc(c.country)}</td><td>${esc(c.provider)}</td>
+      <td class="note">${esc(c.note.split(' · ')[0])}</td>
+      <td><button data-id="${c.id}">Взять</button></td></tr>`).join('')
+      : '<tr><td class="muted note">Пока пусто — первые номера появятся, когда на наблюдаемые номера придут новые SMS (обычно 1–10 мин).</td></tr>';
+    $('poolLog').innerHTML = w.events.map(esc).join('<br>');
+  } catch (e) { $('poolInfo').textContent = e.message; }
+}
+$('poolRows').addEventListener('click', async (e) => {
+  const id = e.target.dataset?.id; if (!id) return;
+  e.target.disabled = true;
+  try { watch(await api('/api/start', {id, ...params()})); } catch (err) { alert(err.message); }
+  e.target.disabled = false;
+});
+loadPool(); setInterval(loadPool, 20000);
 init().catch(e => $('errors').textContent = e.message);
 </script>
 </body>
