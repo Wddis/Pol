@@ -49,7 +49,7 @@ def _ago(iso: str) -> str:
 class AsmsAi(FreeProvider):
     name = "asms"
     title = "asms.ai (бесплатно, публично, новые номера)"
-    max_check = 50
+    max_check = 90
 
     def __init__(self):
         super().__init__()
@@ -62,15 +62,30 @@ class AsmsAi(FreeProvider):
             raise ProviderError(f"HTTP {r.status_code}")
         return BeautifulSoup(r.text, "html.parser"), int((time.time() - t0) * 1000)
 
+    pages = int(__import__("os").getenv("SMSFINDER_ASMS_PAGES", "15"))  # 60 номеров на страницу
+
     def listing(self, country, mode):
+        """Все страницы списка параллельно. Карточка списка уже содержит число SMS и время
+        последнего SMS — по ним отсеиваем «спящие» номера, не открывая каждый."""
+        from concurrent.futures import ThreadPoolExecutor
+        from ..core import ago_to_seconds
         iso = country.lower().strip() if country and len(country.strip()) == 2 else ""
-        pages = ([f"/free-phone-numbers?country={iso}"] if iso else
-                 ["/new-numbers", "/free-phone-numbers", "/free-phone-numbers?page=2", "/new-numbers?page=2"])
-        seen, out = set(), []
-        for path in pages:
+        if iso:
+            paths = [f"/free-phone-numbers?country={iso}&page={i}" for i in range(1, 4)]
+        else:
+            paths = ["/new-numbers", "/new-numbers?page=2"] + [f"/free-phone-numbers?page={i}"
+                                                              for i in range(1, self.pages + 1)]
+
+        def fetch(path):
             try:
-                soup, _ = self._get(path)
+                return path, self._get(path)[0]
             except Exception:
+                return path, None
+        with ThreadPoolExecutor(max_workers=8) as ex:
+            soups = list(ex.map(fetch, paths))
+        seen, out = set(), []
+        for path, soup in soups:
+            if soup is None:
                 continue
             for a in soup.select("a[href^='/number/']"):
                 m = _NUM.match(a.get("href", ""))
@@ -78,14 +93,22 @@ class AsmsAi(FreeProvider):
                     continue
                 num = m.group(1)
                 seen.add(num)
+                parts = [p.strip() for p in a.get_text("|", strip=True).split("|") if p.strip()]
+                total = next((int(p) for p in parts if p.isdigit()), None)
+                last_s = next((ago_to_seconds(p) for p in parts if ago_to_seconds(p) is not None), None)
+                if last_s is not None and last_s > self.max_age:
+                    continue  # больше суток без SMS — не тратим на него запрос
                 ciso = _iso_for(num)
-                if not country_matches(country, ciso, COUNTRIES.get(ciso, ("",))[0]):
+                if not country_matches(country, ciso, COUNTRIES.get(ciso, ("",))[0], *parts[1:2]):
                     continue
-                out.append(Candidate(provider=self.name, number="+" + num, country=ciso.upper(),
+                out.append(Candidate(provider=self.name, number="+" + num, country=ciso.upper() or (parts[1:2] or [""])[0],
                                      ref=m.group(0), price=0.0, public=True,
-                                     extra={"fresh_list": path.startswith("/new-numbers")}))
+                                     extra={"fresh_list": path.startswith("/new-numbers"), "list_total": total,
+                                            "list_last_s": last_s}))
         if not out and not country:
             raise ProviderError(f"{self.name}: не удалось получить список номеров")
+        # самые «живые» — первыми (их и проверяем подробно)
+        out.sort(key=lambda c: (c.extra["list_last_s"] if c.extra["list_last_s"] is not None else 10 ** 9))
         return out
 
     @staticmethod
