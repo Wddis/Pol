@@ -53,35 +53,89 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px}
 .codes .c.old b{color:var(--muted);font-size:17px}
 .fb{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:10px}
 .sms.other{opacity:.55}
+.primary-big{font-size:16px;padding:11px 22px}
+.progress{margin-top:14px;border-top:1px solid var(--line);padding-top:12px}
+.ptop{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.spin{width:16px;height:16px;border-radius:50%;border:2px solid var(--line);border-top-color:var(--acc);animation:sp 0.8s linear infinite;display:inline-block}
+.spin.done{animation:none;border-color:var(--ok)}
+@keyframes sp{to{transform:rotate(360deg)}}
+.steps{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.step{flex:1;min-width:150px;font-size:13px;color:var(--muted);padding:6px 8px;border:1px solid var(--line);border-radius:8px}
+.step i{font-style:normal;display:inline-block;width:18px;height:18px;line-height:18px;text-align:center;border-radius:50%;background:var(--line);margin-right:6px;font-size:11px}
+.step.on{color:var(--fg);border-color:var(--acc)}.step.on i{background:var(--acc);color:#fff}
+.step.ok{color:var(--ok);border-color:var(--ok)}.step.ok i{background:var(--ok);color:#fff}
+.bar.big{height:8px;margin:4px 0 10px}.bar i{transition:width .4s}
+.bestc{border:2px solid var(--ok);border-radius:10px;padding:12px;margin:8px 0 12px;display:flex;gap:12px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.bestc .n{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
+tr.flash td{background:color-mix(in srgb,var(--ok) 14%,transparent)}
 </style>
 </head>
 <body>
 <div class="wrap">
   <h1>SMS Finder</h1>
-  <p class="sub">Подбирает нишевые и премиум номера: проверяет каждый в процессе работы, нерабочие отсекает сразу, затем ждёт SMS и показывает код.</p>
+  <p class="sub">Выберите сервис → «Подобрать номер». Скрипт проверит номера под этот сервис, покажет лучшие и протестирует доставку SMS именно от него.</p>
 
-  <div class="card">
+  <div class="card" id="searchCard">
     <div class="row">
-      <label>Режим<select id="mode"></select></label>
       <label>Сервис<select id="service"></select></label>
-      <label>Страна<input id="country" placeholder="de, usa, 49… (все)"></label>
-      <label>Живая проверка, с<input id="probe" type="number" value="20" min="0" max="120" style="min-width:80px"></label>
-      <label>Подтвердить доставку, номеров<input id="verify" type="number" value="0" min="0" max="5" style="min-width:80px" title="Скольким лучшим номерам отправить тестовое SMS"></label>
-      <label>Ожидание SMS, мин<input id="timeout" type="number" value="10" min="1" max="60" style="min-width:80px"></label>
+      <label>Страна<input id="country" placeholder="все страны (или de, usa, 49…)"></label>
+      <label>Какие номера<select id="mode"></select></label>
+      <label>Тест доставки сервиса<select id="vtest">
+        <option value="0:0">без теста</option>
+        <option value="3:180" selected>3 лучших номера, до 3 мин</option>
+        <option value="5:300">5 лучших номеров, до 5 мин</option>
+        <option value="8:600">8 лучших номеров, до 10 мин</option>
+      </select></label>
     </div>
-    <div class="row" style="margin-top:12px">
-      <button id="find">Подобрать и проверить</button>
-      <button id="auto" class="ghost">Взять лучший и ждать SMS</button>
+    <div class="row" style="margin-top:14px;align-items:center">
+      <button id="find" class="primary-big">Подобрать номер</button>
+      <button id="stopFind" class="ghost" hidden>Остановить подбор</button>
     </div>
-    <div class="provs" id="provs"></div>
-    <div class="note" id="senderInfo" style="margin-top:8px"></div>
+
+    <div id="progress" class="progress" hidden>
+      <div class="ptop"><span class="spin" id="spin"></span><b id="pTitle">Запуск…</b><span class="muted" id="pTime"></span></div>
+      <div class="steps">
+        <div class="step" id="st1"><i>1</i>Отсев нерабочих</div>
+        <div class="step" id="st2"><i>2</i>Живая перепроверка</div>
+        <div class="step" id="st3"><i>3</i>Тест доставки сервиса</div>
+      </div>
+      <div class="bar big"><i id="pBar"></i></div>
+      <div class="stats">
+        <span>Проверено <b id="sChecked">0</b></span>
+        <span style="color:var(--ok)">Подходят <b id="sOk">0</b></span>
+        <span style="color:var(--bad)">Отсеяно <b id="sBad">0</b></span>
+        <span style="color:var(--ok)">Прошли тест <b id="sVer">0</b></span>
+      </div>
+      <div class="note" id="pLast"></div>
+      <details><summary>Подробный журнал проверки</summary><div class="log" id="log"></div></details>
+    </div>
+
+    <details style="margin-top:12px"><summary>Дополнительные настройки</summary>
+      <div class="row" style="margin-top:10px">
+        <label>Живая перепроверка, с<input id="probe" type="number" value="20" min="0" max="120" style="min-width:80px"></label>
+        <label>Ожидание кода после «Взять», мин<input id="timeout" type="number" value="10" min="1" max="60" style="min-width:80px"></label>
+      </div>
+      <div class="provs" id="provs"></div>
+      <div class="note" id="senderInfo" style="margin-top:8px"></div>
+    </details>
+  </div>
+
+  <div class="card" id="resCard" hidden>
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <b id="resTitle">Подобранные номера</b><span class="muted" id="took"></span>
+    </div>
+    <div id="errors" class="err note"></div>
+    <div id="best"></div>
+    <div class="scroll"><table class="tbl"><thead><tr>
+      <th>Номер</th><th>Статус</th><th>Страна</th><th>Источник</th><th>Проверка</th><th></th>
+    </tr></thead><tbody id="rows"></tbody></table></div>
   </div>
 
   <div class="card" id="poolCard">
     <div class="row" style="justify-content:space-between;align-items:center">
-      <b>✅ Пул проверенных номеров</b><span class="muted note" id="poolInfo">загрузка…</span>
+      <b id="poolTitle">✅ Пул проверенных номеров</b><span class="muted note" id="poolInfo">загрузка…</span>
     </div>
-    <p class="note" style="margin:6px 0 8px">Фоновая проверка: скрипт постоянно наблюдает лучшие номера, и как только на номер приходит новое SMS — это доказательство доставки, номер попадает сюда (действует 6 ч).</p>
+    <p class="note" style="margin:6px 0 8px">Фоновый тест: скрипт постоянно наблюдает живые номера; как только на номер приходит SMS от выбранного сервиса, номер попадает сюда (действует 6 ч). Ночью и для Telegram пул наполняется медленнее — коды Telegram приходят на номер раз в несколько часов.</p>
     <div class="scroll"><table class="tbl"><tbody id="poolRows"></tbody></table></div>
     <details style="margin-top:8px"><summary>Журнал наблюдения</summary><div class="log" id="poolLog"></div></details>
   </div>
@@ -120,26 +174,7 @@ details summary{cursor:pointer;color:var(--muted);font-size:12px}
     <details style="margin-top:8px"><summary>Журнал активации</summary><div class="log" id="actLog"></div></details>
   </div>
 
-  <div class="card" id="progCard" hidden>
-    <div class="stats">
-      <span>Проверено <b id="sChecked">0</b></span>
-      <span style="color:var(--ok)">Прошли <b id="sOk">0</b></span>
-      <span style="color:var(--bad)">Отсеяно <b id="sBad">0</b></span>
-      <span class="muted" id="sStage"></span>
-    </div>
-    <div class="log" id="log"></div>
-  </div>
-
-  <div class="card">
-    <div class="row" style="justify-content:space-between;align-items:center">
-      <b>Подобранные номера</b><span class="muted" id="took"></span>
-    </div>
-    <div id="errors" class="err note"></div>
-    <div class="scroll"><table class="tbl"><thead><tr>
-      <th>Score</th><th>Номер</th><th>Класс</th><th>Страна</th><th>Источник</th><th>Цена</th><th>Проверка</th><th></th>
-    </tr></thead><tbody id="rows"><tr><td colspan="8" class="muted">Нажмите «Подобрать и проверить».</td></tr></tbody></table></div>
-  </div>
-  <p class="note"><b>Проверенный</b> — доставка SMS подтверждена: во время наблюдения на номер пришло новое SMS (бесплатно, без отправки) или дошло наше тестовое SMS с кодом (если подключён шлюз textbee/httpSMS/Twilio). Статус действует 6 ч. <b>Нишевый</b> — бесплатный номер, на котором выбранный сервис ещё не регистрировался, с малой нагрузкой и подтверждённым приёмом SMS. <b>Премиум</b> — приватный платный номер (реальная SIM или высокий % доставки), новый для сервиса; нужен API-ключ провайдера. Бесплатные номера публичны: их SMS видны всем.</p>
+  <p class="note"><b>Проверенный</b> — во время нашего наблюдения на номер пришло новое SMS именно от выбранного сервиса (для Telegram — «Telegram code …»): сервис доставляет SMS сюда прямо сейчас. Статус действует 6 ч. <b>Нишевый</b> — номер, на который выбранный сервис уже доставлял SMS, но сейчас его никто не занимает и нагрузка небольшая. <b>Премиум</b> — приватный платный номер (реальная SIM или высокий % доставки), новый для сервиса; нужен API-ключ провайдера. Бесплатные номера публичны: их SMS видны всем.</p>
 </div>
 <script>
 const T = new URLSearchParams(location.search).get('t');
@@ -156,20 +191,24 @@ async function api(path, body) {
   return j;
 }
 const provs = () => [...document.querySelectorAll('#provs input:checked')].map(i => i.value);
-const params = () => ({service: $('service').value, country: $('country').value.trim(), mode: $('mode').value,
-                       probe: +$('probe').value, verify: +$('verify').value, timeout: +$('timeout').value * 60});
+const params = () => {
+  const [vn, vw] = $('vtest').value.split(':').map(Number);
+  return {service: $('service').value, country: $('country').value.trim(), mode: $('mode').value,
+          probe: +$('probe').value, verify: vn, vwait: vw, timeout: +$('timeout').value * 60};
+};
+const svcName = () => { const v = $('service').value; return v === 'other' ? 'любого сервиса' : v[0].toUpperCase() + v.slice(1); };
 
 async function init() {
   const m = await api('/api/meta');
   $('mode').innerHTML = Object.entries(m.modes).map(([k, v]) => `<option value="${k}">${esc(v)}</option>`).join('');
-  $('service').innerHTML = m.services.map(s => `<option>${s}</option>`).join('');
+  $('service').innerHTML = m.services.map(s => `<option value="${s}">${s === 'other' ? 'любой сервис' : s}</option>`).join('');
   const sd = m.sender;
   $('senderInfo').textContent = sd.free
-    ? 'Подтверждение доставки: пассивное — по новым входящим SMS (бесплатно, без отправки). Активная отправка тестового SMS не подключена: задайте TEXTBEE_KEY (github.com/textbee/textbee), HTTPSMS_KEY или Twilio.'
-    : `Подтверждение доставки: тестовое SMS через ${sd.via}` + (sd.quota != null ? ` (квота: ${sd.quota})` : '') + '; если шлюз не отправит — пассивное по входящим SMS.';
-  $('mode').onchange = () => { if ($('mode').value === 'verified' && +$('verify').value === 0) $('verify').value = 2; };
-  $('mode').onchange();
+    ? 'Тест доставки: по новым входящим SMS от выбранного сервиса (бесплатно). Своё тестовое SMS (только для «любой сервис») — после подключения TEXTBEE_KEY / HTTPSMS_KEY / Twilio.'
+    : `Тест доставки: для «любой сервис» — тестовое SMS через ${sd.via}; для конкретного сервиса — по SMS от него.`;
   $('provs').innerHTML = m.providers.map(p => `<label><input type="checkbox" value="${p.name}" ${p.enabled ? 'checked' : 'disabled'}> ${esc(p.title)} ${p.note ? `<small>(${esc(p.note)})</small>` : ''}</label>`).join('');
+  const upd = () => { $('find').textContent = `Подобрать номер для ${svcName()}`; $('poolTitle').textContent = `✅ Проверенные для ${svcName()}`; loadPool(); };
+  $('service').onchange = upd; upd();
 }
 function copy(t) { navigator.clipboard?.writeText(t); }
 function logLine(cls, text) {
@@ -177,43 +216,90 @@ function logLine(cls, text) {
   $('log').prepend(d);
 }
 
-function render(r) {
-  $('took').textContent = `${r.candidates.length} шт. · ${r.took} с · выдано ранее: ${r.used_total}`;
-  $('errors').textContent = Object.entries(r.errors).map(([k, v]) => `${k}: ${v}`).join(' · ');
-  $('rows').innerHTML = r.candidates.length ? r.candidates.map(c => `<tr>
-    <td class="num"><b>${c.score}</b></td>
-    <td class="num">${c.number ? esc(c.number) : '<span class="muted">после покупки</span>'}</td>
-    <td><span class="tag ${c.tier}">${c.tier === 'verified' ? '✅ ' : ''}${TIER[c.tier] || c.tier}</span>${c.extra.live ? ' <span class="tag live">живой</span>' : ''}</td>
+function rowHtml(c) {
+  return `<tr data-row="${c.id}">
+    <td class="num"><b>${c.number ? esc(c.number) : '<span class="muted">после покупки</span>'}</b><div class="note">score ${c.score}</div></td>
+    <td class="tiercell"><span class="tag ${c.tier}">${c.tier === 'verified' ? '✅ ' : ''}${TIER[c.tier] || c.tier}</span>${c.extra.live ? ' <span class="tag live">живой</span>' : ''}</td>
     <td>${esc(c.country)}</td>
-    <td>${esc(c.provider)} <span class="tag ${c.public ? 'pub' : 'priv'}">${c.public ? 'публичный' : 'приватный'}</span></td>
-    <td class="num">${c.public ? 'free' : c.price.toFixed(2)}</td>
-    <td class="note">${esc(c.note)}<details><summary>журнал проверки</summary>${c.checks.map(esc).join('<br>')}</details></td>
+    <td>${esc(c.provider)}<br><span class="tag ${c.public ? 'pub' : 'priv'}">${c.public ? 'бесплатный, публичный' : 'платный ' + c.price.toFixed(2)}</span></td>
+    <td class="note notecell">${esc(c.note)}<details><summary>журнал проверки</summary>${c.checks.map(esc).join('<br>')}</details></td>
     <td>${c.extra.can_buy ? `<button data-id="${c.id}">Взять</button>` : '<span class="note" title="Задайте API-ключ провайдера">нужен ключ</span>'}
-      ${c.public && c.tier !== 'verified' ? `<br><button class="ghost vbtn" data-verify="${c.id}">Подтвердить доставку</button>` : ''}
-      <div class="note" id="v-${c.id}"></div></td></tr>`).join('')
-    : '<tr><td colspan="8" class="muted">Ни один номер не прошёл проверку — смените страну, сервис или режим.</td></tr>';
+      ${c.public && c.tier !== 'verified' ? `<br><button class="ghost vbtn" data-verify="${c.id}">Тест доставки</button>` : ''}
+      <div class="note" id="v-${c.id}"></div></td></tr>`;
+}
+function render(r, final) {
+  $('resCard').hidden = false;
+  const list = r.candidates;
+  $('resTitle').textContent = `Номера для ${svcName()}`;
+  $('took').textContent = `${list.length} шт. · ${r.took} с`;
+  $('errors').textContent = Object.entries(r.errors || {}).map(([k, v]) => `${k}: ${v}`).join(' · ');
+  const best = list.find(c => c.extra.can_buy && !c.extra.busy_left) || list.find(c => c.extra.can_buy);
+  $('best').innerHTML = best ? `<div class="bestc"><div><div class="note">Рекомендуемый номер для ${esc(svcName())}</div>
+      <div class="n">${esc(best.number || '(выдаётся после покупки)')}</div><div class="note">${esc(best.note.split(' · ').slice(0, 2).join(' · '))}</div></div>
+      <button data-id="${best.id}" class="primary-big">Взять этот номер</button></div>` : '';
+  $('rows').innerHTML = list.length ? list.map(rowHtml).join('')
+    : `<tr><td colspan="6" class="muted">${final ? 'Ни один номер не прошёл проверку под этот сервис — смените страну или режим «Какие номера».' : 'Идёт проверка…'}</td></tr>`;
+}
+function updateRow(ev) {  // тест доставки обновляет строку на лету
+  const tr = document.querySelector(`tr[data-row="${ev.id}"]`); if (!tr) return;
+  if (ev.tier) tr.querySelector('.tiercell').innerHTML = `<span class="tag ${ev.tier}">${ev.tier === 'verified' ? '✅ ' : ''}${TIER[ev.tier] || ev.tier}</span>`;
+  if (ev.note) tr.querySelector('.notecell').firstChild.textContent = ev.note;
+  const v = $('v-' + ev.id); if (v) v.innerHTML = ev.status === 'watching' ? '⏳ тест идёт…' : ev.status === 'verified' ? '<b style="color:var(--ok)">✅ тест пройден</b>' : ev.status === 'failed' ? '<span class="muted">тест: SMS от сервиса не было</span>' : '';
+  if (ev.status === 'verified') { tr.classList.add('flash'); }
 }
 
+let findT0 = 0, clock = null;
+function setStep(n) {
+  [1, 2, 3].forEach(i => { $('st' + i).className = 'step' + (i < n ? ' ok' : i === n ? ' on' : ''); });
+}
+function stopProgress(text) {
+  clearInterval(clock); $('spin').classList.add('done'); $('pTitle').textContent = text;
+  $('find').disabled = false; $('stopFind').hidden = true; $('pBar').style.width = '100%';
+}
 function find() {
   es?.close();
-  const p = params(); let n = 0, ok = 0, bad = 0;
-  $('find').disabled = true; $('progCard').hidden = false; $('log').innerHTML = '';
-  ['sChecked', 'sOk', 'sBad'].forEach(i => $(i).textContent = '0');
-  $('rows').innerHTML = '<tr><td colspan="8" class="muted">Идёт проверка…</td></tr>';
-  es = new EventSource(q(`/api/find/stream?service=${encodeURIComponent(p.service)}&country=${encodeURIComponent(p.country)}&mode=${p.mode}&probe=${p.probe}&verify=${p.verify}&providers=${provs().join(',')}&limit=15`));
+  const p = params(); let n = 0, ok = 0, bad = 0, ver = 0, total = 0, stage = 1, vstart = 0;
+  $('find').disabled = true; $('stopFind').hidden = false;
+  $('progress').hidden = false; $('spin').classList.remove('done'); $('log').innerHTML = '';
+  ['sChecked', 'sOk', 'sBad', 'sVer'].forEach(i => $(i).textContent = '0');
+  $('pTitle').textContent = `Ищу номера для ${svcName()}…`; $('pLast').textContent = ''; $('pBar').style.width = '3%'; setStep(1);
+  $('resCard').hidden = true;
+  findT0 = Date.now(); clearInterval(clock);
+  clock = setInterval(() => {
+    const t = Math.round((Date.now() - findT0) / 1000);
+    $('pTime').textContent = `· ${Math.floor(t / 60)}:${String(t % 60).padStart(2, '0')}`;
+    if (stage === 3 && p.vwait) $('pBar').style.width = Math.min(99, 80 + (Date.now() - vstart) / 1000 / p.vwait * 19) + '%';
+  }, 500);
+  es = new EventSource(q(`/api/find/stream?service=${encodeURIComponent(p.service)}&country=${encodeURIComponent(p.country)}&mode=${p.mode}&probe=${p.probe}&verify=${p.verify}&vwait=${p.vwait}&providers=${provs().join(',')}&limit=15`));
   es.onmessage = (e) => {
     const ev = JSON.parse(e.data);
-    if (ev.type === 'stage') { $('sStage').textContent = ev.text; logLine('st', '» ' + (ev.provider ? `[${ev.provider}] ` : '') + ev.text); }
-    else if (ev.type === 'verify') logLine(ev.ok ? 'ok' : 'no', `✉ ${ev.number} — ${ev.reason}`);
-    else if (ev.type === 'error') logLine('no', `[${ev.provider}] ошибка: ${ev.text}`);
+    if (ev.type === 'stage') {
+      if (ev.total) total += ev.total;
+      if (ev.stage) { stage = ev.stage; setStep(stage); $('pTitle').textContent = ev.text; if (stage === 2) $('pBar').style.width = '65%'; if (stage === 3) vstart = Date.now(); }
+      logLine('st', '» ' + (ev.provider ? `[${ev.provider}] ` : '') + ev.text);
+    } else if (ev.type === 'error') logLine('no', `[${ev.provider}] ошибка: ${ev.text}`);
     else if (ev.type === 'check') {
-      n++; ev.ok ? ok++ : bad++;
-      $('sChecked').textContent = n; $('sOk').textContent = ok; $('sBad').textContent = bad;
+      if (stage === 1) { n++; ev.ok ? ok++ : bad++; } else if (!ev.ok) { bad++; ok--; }
+      $('sChecked').textContent = n; $('sOk').textContent = Math.max(ok, 0); $('sBad').textContent = bad;
+      if (stage === 1 && total) $('pBar').style.width = Math.min(60, 3 + n / total * 57) + '%';
+      $('pLast').textContent = `${ev.ok ? '✓' : '✗'} ${ev.number} — ${ev.reason}`;
       logLine(ev.ok ? 'ok' : 'no', `${ev.ok ? '✓' : '✗'} ${ev.provider} ${ev.number} — ${ev.reason}`);
-    } else if (ev.type === 'done') { es.close(); render(ev); $('sStage').textContent = 'Готово'; $('find').disabled = false; }
+    } else if (ev.type === 'verify') {
+      if (ev.status === 'verified' || (ev.ok && /проверенный/.test(ev.reason))) { ver++; $('sVer').textContent = ver; }
+      $('pLast').textContent = `✉ ${ev.number} — ${ev.reason}`;
+      logLine(ev.ok ? 'ok' : 'no', `✉ ${ev.number} — ${ev.reason}`); updateRow(ev);
+    } else if (ev.type === 'results') {
+      render(ev, false); $('pBar').style.width = '80%';
+      if (!p.verify) setStep(4);
+    } else if (ev.type === 'done') {
+      es.close(); render(ev, true); setStep(4);
+      stopProgress(`Готово: ${ev.candidates.length} номеров для ${svcName()}` + (p.verify ? `, прошли тест доставки: ${ver}` : ''));
+      $('resCard').scrollIntoView({behavior: 'smooth', block: 'start'}); loadPool();
+    }
   };
-  es.onerror = () => { es.close(); $('find').disabled = false; if ($('sStage').textContent !== 'Готово') logLine('no', 'Соединение прервано'); };
+  es.onerror = () => { es.close(); if ($('find').disabled) stopProgress('Соединение прервано — нажмите «Подобрать номер» ещё раз'); };
 }
+$('stopFind').onclick = () => { es?.close(); stopProgress('Подбор остановлен'); };
 
 const ACTIVE = ['waiting', 'starting', 'received'];
 function dropNumber(num) {  // остановленный / не подошедший номер исчезает из всех списков
@@ -249,20 +335,20 @@ function watch(a) {
   $('actCard').scrollIntoView({behavior: 'smooth'});
 }
 
-$('rows').addEventListener('click', async (e) => {
+async function onTake(e) {
   const vid = e.target.dataset?.verify;
   if (vid) {
     e.target.disabled = true; const out = $('v-' + vid);
     try {
-      let j = await api('/api/verify', {id: vid, wait: 600});
+      let j = await api('/api/verify', {id: vid, wait: 600, service: $('service').value});
       out.textContent = 'запускаю проверку…';
       while (['pending', 'sent', 'watching'].includes(j.status)) {
         await new Promise(r => setTimeout(r, 3000));
         j = await api('/api/verify/' + j.id);
         out.textContent = j.status === 'sent' ? `код ${j.token} отправлен через ${j.via}, жду доставку… ${j.elapsed} с`
-          : j.status === 'watching' ? `наблюдаю входящие, жду новое SMS… ${j.elapsed} / ${j.wait} с` : '';
+          : j.status === 'watching' ? `жду SMS от ${svcName()}… ${j.elapsed} / ${j.wait} с` : '';
       }
-      out.innerHTML = j.status === 'verified' ? `<b style="color:var(--ok)">✅ проверенный: SMS дошло через ${j.delivered_s} с</b>` : `<span class="err">✗ ${esc(j.detail)}</span>`;
+      out.innerHTML = j.status === 'verified' ? `<b style="color:var(--ok)">✅ проверен для ${svcName()}: SMS пришло через ${j.delivered_s} с</b>` : `<span class="err">✗ ${esc(j.detail)}</span>`;
       if (j.status !== 'verified') e.target.disabled = false;
     } catch (err) { out.textContent = err.message; e.target.disabled = false; }
     return;
@@ -271,12 +357,9 @@ $('rows').addEventListener('click', async (e) => {
   e.target.disabled = true;
   try { watch(await api('/api/start', {id, ...params()})); } catch (err) { alert(err.message); }
   e.target.disabled = false;
-});
-$('auto').onclick = async () => {
-  $('auto').disabled = true; $('auto').textContent = 'Подбираю и проверяю…';
-  try { watch(await api('/api/auto', {...params(), providers: provs()})); } catch (err) { alert(err.message); }
-  $('auto').disabled = false; $('auto').textContent = 'Взять лучший и ждать SMS';
-};
+}
+$('rows').addEventListener('click', onTake);
+$('best').addEventListener('click', onTake);
 $('find').onclick = find;
 $('actCancel').onclick = async () => current && show(await api(`/api/activation/${current.id}/cancel`, {}));
 $('actSwitch').onclick = async () => current && show(await api(`/api/activation/${current.id}/switch`, {}));
@@ -291,14 +374,14 @@ $('actNum').onclick = () => current && copy(current.number);
 $('actCode').onclick = () => current?.code && copy(current.code);
 async function loadPool() {
   try {
-    const r = await api('/api/verified');
+    const r = await api(`/api/verified?service=${encodeURIComponent($('service').value)}`);
     const w = r.watcher;
     $('poolInfo').textContent = `проверенных: ${r.pool.length} · под наблюдением: ${w.watching} · убрано (остановлены/не подошли): ${r.stats.blocked}` + (w.running ? '' : ' · фоновая проверка выключена');
     $('poolRows').innerHTML = r.pool.length ? r.pool.map(c => `<tr>
       <td class="num"><b>${esc(c.number)}</b></td><td>${esc(c.country)}</td><td>${esc(c.provider)}</td>
       <td class="note">${esc(c.note.split(' · ')[0])}</td>
       <td><button data-id="${c.id}">Взять</button></td></tr>`).join('')
-      : '<tr><td class="muted note">Пока пусто — первые номера появятся, когда на наблюдаемые номера придут новые SMS (обычно 1–10 мин).</td></tr>';
+      : `<tr><td class="muted note">Пока пусто — номер появится здесь, когда на один из наблюдаемых номеров придёт SMS от ${esc(svcName())}.</td></tr>`;
     $('poolLog').innerHTML = w.events.map(esc).join('<br>');
   } catch (e) { $('poolInfo').textContent = e.message; }
 }

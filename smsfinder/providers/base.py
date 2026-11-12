@@ -60,7 +60,8 @@ class FreeProvider(Provider):
         from .. import registry
 
         items = self.listing(country, mode)[: self.max_check]
-        emit({"type": "stage", "provider": self.name, "text": f"{len(items)} номеров на проверку"})
+        emit({"type": "stage", "provider": self.name, "text": f"{len(items)} номеров на проверку",
+              "total": len(items)})
 
         def check(c: Candidate):
             if registry.is_used(c.number, service):

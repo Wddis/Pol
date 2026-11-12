@@ -105,7 +105,8 @@ def auto():
 def verify_start():
     d = request.get_json(force=True)
     try:
-        job = engine.verify(d["id"], max(30, min(int(d.get("wait", 180)), 900)), d.get("method", "auto"))
+        job = engine.verify(d["id"], max(30, min(int(d.get("wait", 180)), 900)), d.get("method", "auto"),
+                            d.get("service", "other"))
     except ProviderError as e:
         return jsonify(error=str(e)), 400
     return jsonify(job.to_dict())
@@ -155,7 +156,9 @@ def switch(aid):
 def verified_pool():
     """Пул «проверенных» номеров + состояние фонового наблюдения."""
     from . import registry
-    return jsonify(pool=engine.watcher.pool(), watcher=engine.watcher.status(), stats=registry.stats())
+    a = request.args
+    return jsonify(pool=engine.watcher.pool(a.get("service", "other"), a.get("country", "")),
+                   watcher=engine.watcher.status(), stats=registry.stats())
 
 
 @app.get("/healthz")

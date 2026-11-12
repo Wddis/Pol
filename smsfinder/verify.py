@@ -1,18 +1,21 @@
-"""Подтверждение доставки SMS — категория «проверенный».
+"""Тест доставки под выбранный сервис — категория «проверенный».
 
-Два способа:
-  passive (по умолчанию, бесплатно) — номер ставится под наблюдение; если во время
-      наблюдения во входящие приходит НОВОЕ SMS (которого не было в начале), значит
-      SMS доходят до номера прямо сейчас. Подход как в
-      github.com/LayorX/Temporary-SMS-Receiver-Monitor, но с доказательством: фиксируем
-      отпечаток нового SMS, отправителя и время с начала наблюдения.
-  active — на номер отправляется SMS со случайным кодом через свой шлюз
-      (textbee / httpSMS / Twilio / Textbelt, см. sender.py) и ищется во входящих.
+Номер получает статус «проверенный для <сервис>», только если во время НАШЕГО наблюдения
+во входящие пришло новое SMS именно от этого сервиса (для Telegram — SMS в формате
+«Telegram code …»). Для «любого сервиса» (other) засчитывается любое новое SMS.
 
-Плюс фоновый «пул проверенных» (Watcher): постоянно наблюдает лучшие номера и
-переводит в «проверенные» те, на которые пришло новое SMS.
+Способы:
+  passive (по умолчанию, бесплатно) — номер ставится под наблюдение, фиксируется отпечаток
+      нового SMS сервиса, отправитель и время с начала наблюдения. Подход как в
+      github.com/LayorX/Temporary-SMS-Receiver-Monitor.
+  active (только для «любого сервиса») — своё тестовое SMS со случайным кодом через шлюз
+      textbee / httpSMS / Twilio / Textbelt (sender.py). Для Telegram и т.п. бессмысленно:
+      важно, доставляет ли сюда SMS сам сервис, а не наш шлюз.
 
-Статус хранится в verified.json и действует SMSFINDER_VERIFY_TTL секунд (6 ч).
+Watcher — фоновый пул: постоянно наблюдает ~24 живых номера и записывает, от каких сервисов
+на них реально приходят SMS прямо сейчас.
+
+verified.json: {номер: {provider, ref, country, svc: {сервис: запись}}}; запись действует TTL (6 ч).
 """
 from __future__ import annotations
 
@@ -27,40 +30,28 @@ from typing import Optional
 
 from . import sender
 from .core import Candidate, Emit, Sms, noop_emit
+from .services import SERVICES, profile, service_code
 
 PATH = Path(os.getenv("SMSFINDER_DATA", Path.home() / ".smsfinder")) / "verified.json"
 TTL = int(os.getenv("SMSFINDER_VERIFY_TTL", 6 * 3600))
 _lock = threading.Lock()
 
 
+def _norm(service: str) -> str:
+    s = (service or "other").lower().strip()
+    return s or "other"
+
+
 def _load() -> dict:
     try:
-        return json.loads(PATH.read_text())
+        data = json.loads(PATH.read_text())
     except (OSError, ValueError):
         return {}
-
-
-def cached(number: str) -> Optional[dict]:
-    rec = _load().get(number)
-    if rec and rec.get("ok") and time.time() - rec.get("at", 0) < TTL:
-        return rec
-    return None
-
-
-def _save(number: str, rec: dict):
-    with _lock:
-        data = _load()
-        data[number] = rec
-        PATH.parent.mkdir(parents=True, exist_ok=True)
-        PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1))
-
-
-def invalidate(number: str):
-    """Снять статус «проверенный» (номер остановлен или не подошёл)."""
-    with _lock:
-        data = _load()
-        if data.pop(number, None) is not None:
-            _write(data)
+    for num, e in list(data.items()):  # старый формат: одна запись на номер
+        if "svc" not in e:
+            data[num] = {"provider": e.get("provider"), "ref": e.get("ref"), "country": e.get("country"),
+                         "svc": {"other": e} if e.get("ok") else {}}
+    return data
 
 
 def _write(data: dict):
@@ -68,30 +59,84 @@ def _write(data: dict):
     PATH.write_text(json.dumps(data, ensure_ascii=False, indent=1))
 
 
-def mark(cand: Candidate, rec: dict):
-    """Перевести кандидата в категорию «проверенный»."""
+def sms_services(m: Sms) -> set[str]:
+    """От каких сервисов это SMS (для сервисов с профилем — строго по формату кода)."""
+    text = f"{m.sender} {m.text}".lower()
+    out = {"other"}
+    for key, info in SERVICES.items():
+        if key == "other":
+            continue
+        if profile(key).get("code_re"):
+            if service_code(key, f"{m.sender} {m.text}"):
+                out.add(key)
+        elif any(k in text for k in info["match"]):
+            out.add(key)
+    return out
+
+
+def cached(number: str, service: str = "other") -> Optional[dict]:
+    e = _load().get(number)
+    if not e:
+        return None
+    rec = e["svc"].get(_norm(service))
+    if rec and time.time() - rec.get("at", 0) < TTL:
+        return rec
+    return None
+
+
+def _save(cand: Candidate, service: str, rec: dict):
+    with _lock:
+        data = _load()
+        e = data.setdefault(cand.number, {"svc": {}})
+        e.update(provider=cand.provider, ref=cand.ref, country=cand.country)
+        e["svc"][_norm(service)] = rec
+        _write(data)
+
+
+def invalidate(number: str):
+    """Снять все статусы «проверенный» (номер остановлен или не подошёл)."""
+    with _lock:
+        data = _load()
+        if data.pop(number, None) is not None:
+            _write(data)
+
+
+def svc_title(service: str) -> str:
+    s = _norm(service)
+    return "любого сервиса" if s == "other" else s.capitalize()
+
+
+def mark(cand: Candidate, rec: dict, service: str = "other"):
+    """Перевести кандидата в категорию «проверенный» (для данного сервиса)."""
     if cand.tier != "verified":
         cand.tier = "verified"
         cand.score = round(cand.score + 50, 1)
         cand.extra["base_note"] = cand.note
-    cand.extra["verified"] = rec
+    cand.extra["verified"] = dict(rec, service=_norm(service))
     ago = int((time.time() - rec["at"]) // 60)
-    if rec.get("kind") == "passive":
-        how = f"новое SMS от {rec.get('sender', '?')} через {rec['delivered_s']} с наблюдения"
+    if rec.get("kind") == "active":
+        how = f"наше тестовое SMS дошло за {rec['delivered_s']} с ({rec['via']})"
     else:
-        how = f"тестовое SMS дошло за {rec['delivered_s']} с ({rec['via']})"
-    cand.note = f"✅ доставка подтверждена: {how}, {ago} мин назад" + (
-        f" · {cand.extra['base_note']}" if cand.extra.get("base_note") else "")
+        how = f"{rec.get('sender', '?')} прислал SMS через {rec['delivered_s']} с наблюдения"
+    busy = ""
+    b = profile(service).get("busy_s", 0)
+    left = int(b - (time.time() - rec["at"])) if b else 0
+    cand.extra["busy_left"] = max(left, 0)
+    base = cand.extra.get("base_note") or ""
+    if left > 0:
+        busy = f" · ⚠ код сейчас запрашивал кто-то другой — номер освободится через ~{left // 60 + 1} мин"
+        base = base.replace(", сейчас свободен", "")
+    cand.note = f"✅ проверен для {svc_title(service)}: {how}, {ago} мин назад{busy}" + (f" · {base}" if base else "")
 
 
-def record_passive(cand: Candidate, sms: Sms, observed_s: int) -> dict:
-    """Зафиксировать доказательство доставки: новое SMS, пришедшее во время наблюдения."""
+def record_sms(cand: Candidate, sms: Sms, observed_s: int) -> set[str]:
+    """Новое SMS пришло во время наблюдения — записать доказательство для каждого его сервиса."""
+    svcs = sms_services(sms)
     rec = {"ok": True, "at": time.time(), "kind": "passive", "via": "входящий трафик",
-           "delivered_s": observed_s, "sender": sms.sender[:30], "proof": sms.key[:12],
-           "provider": cand.provider, "ref": cand.ref, "country": cand.country}
-    _save(cand.number, rec)
-    mark(cand, rec)
-    return rec
+           "delivered_s": observed_s, "sender": sms.sender[:30], "proof": sms.key[:12]}
+    for s in svcs:
+        _save(cand, s, rec)
+    return svcs
 
 
 def _msgs(provider, cand) -> list[Sms]:
@@ -99,12 +144,18 @@ def _msgs(provider, cand) -> list[Sms]:
 
 
 class Verification:
-    def __init__(self, engine, cand: Candidate, wait: int = 180, emit: Emit = noop_emit, method: str = "auto"):
+    """Тест доставки одного номера под сервис."""
+
+    def __init__(self, engine, cand: Candidate, wait: int = 180, emit: Emit = noop_emit,
+                 method: str = "auto", service: str = "other"):
         self.id = uuid.uuid4().hex[:12]
         self.engine, self.cand, self.wait, self.emit = engine, cand, wait, emit
+        self.service = _norm(service)
         self.provider = engine.providers[cand.provider]
         if method == "auto":
-            method = "active" if not sender.describe()["free"] else "passive"
+            method = "active" if (self.service == "other" and not sender.describe()["free"]) else "passive"
+        if self.service != "other":
+            method = "passive"
         self.method = method
         self.token = f"{secrets.randbelow(900000) + 100000}" if method == "active" else ""
         self.status = "pending"   # pending → sent|watching → verified | failed
@@ -115,29 +166,29 @@ class Verification:
 
     def to_dict(self) -> dict:
         return {"id": self.id, "cand_id": self.cand.id, "number": self.cand.number, "status": self.status,
-                "method": self.method, "detail": self.detail, "token": self.token, "via": self.via,
-                "delivered_s": self.delivered_s, "elapsed": int(time.time() - self.started),
+                "service": self.service, "method": self.method, "detail": self.detail, "token": self.token,
+                "via": self.via, "delivered_s": self.delivered_s, "elapsed": int(time.time() - self.started),
                 "wait": self.wait, "candidate": self.cand.to_dict()}
 
     def _say(self, ok, reason):
-        self.cand.log(f"проверка доставки: {reason}")
+        self.cand.log(f"тест доставки ({svc_title(self.service)}): {reason}")
         self.emit({"type": "verify", "provider": self.cand.provider, "number": self.cand.number,
-                   "ok": ok, "reason": reason, "status": self.status})
+                   "ok": ok, "reason": reason, "status": self.status, "id": self.cand.id,
+                   "note": self.cand.note, "tier": self.cand.tier})
 
     def _fail(self, detail):
         self.status, self.detail = "failed", detail
         self.cand.extra["verify_failed"] = True
-        self.cand.score = round(self.cand.score - 40, 1)
-        self.cand.note = f"⚠ {detail} · " + self.cand.note
+        self.cand.note = f"⏳ {detail} · " + self.cand.note
         self._say(False, detail)
         return self
 
     def run(self) -> "Verification":
         c = self.cand
-        rec = cached(c.number)
+        rec = cached(c.number, self.service)
         if rec:
             self.status, self.delivered_s, self.via = "verified", rec["delivered_s"], rec["via"]
-            mark(c, rec)
+            mark(c, rec, self.service)
             self._say(True, "уже проверен ранее")
             return self
         try:  # всё, что уже лежит во входящих, — не в счёт
@@ -150,15 +201,14 @@ class Verification:
             res = sender.send(c.number, f"SMSFinder check {self.token}")
             self.via = res.via
             if not res.ok:
-                # шлюз не отправил — переходим на пассивное подтверждение
-                self._say(False, f"шлюз {res.via} не отправил ({res.error}) → пассивная проверка")
+                self._say(False, f"шлюз {res.via} не отправил ({res.error}) → жду входящие SMS")
                 self.method, self.token = "passive", ""
             else:
                 self.status = "sent"
                 self._say(True, f"отправлено SMS с кодом {self.token} через {res.via}")
         if self.method == "passive":
             self.status, self.via = "watching", "входящий трафик"
-            self._say(True, f"наблюдение: жду новое входящее SMS до {self.wait} с")
+            self._say(True, f"жду новое SMS от {svc_title(self.service)} до {self.wait // 60} мин")
 
         while time.time() - t0 < self.wait:
             time.sleep(5 if self.method == "active" else 15)
@@ -167,21 +217,27 @@ class Verification:
             except Exception:
                 continue
             new = [m for m in msgs if m.key not in baseline]
-            hit = [m for m in new if self.token and self.token in m.text] if self.method == "active" else new
+            baseline |= {m.key for m in new}
+            for m in new:  # всё новое — в общую копилку доказательств
+                record_sms(c, m, int(time.time() - t0))
+            if self.method == "active":
+                hit = [m for m in new if self.token in m.text]
+            else:
+                hit = [m for m in new if self.service in sms_services(m)]
             if hit:
                 self.delivered_s = int(time.time() - t0)
                 self.status = "verified"
                 if self.method == "active":
                     rec = {"ok": True, "at": time.time(), "kind": "active", "delivered_s": self.delivered_s,
-                           "via": self.via, "provider": c.provider}
-                    _save(c.number, rec)
-                    mark(c, rec)
+                           "via": self.via}
+                    _save(c, "other", rec)
                 else:
-                    record_passive(c, hit[0], self.delivered_s)
-                self._say(True, f"SMS дошло ({hit[0].sender}) через {self.delivered_s} с → «проверенный»")
+                    rec = cached(c.number, self.service)
+                mark(c, rec, self.service)
+                self._say(True, f"{hit[0].sender} прислал SMS через {self.delivered_s} с → «проверенный»")
                 return self
-        return self._fail(("тестовое SMS не дошло" if self.method == "active" else "новых SMS не было")
-                          + f" за {self.wait} с")
+        return self._fail(f"за {self.wait // 60} мин SMS от {svc_title(self.service)} не было — "
+                          "номер не подтверждён (фоновый пул продолжит наблюдение)")
 
     def start(self) -> "Verification":
         threading.Thread(target=self.run, daemon=True).start()
@@ -189,21 +245,22 @@ class Verification:
 
 
 class Watcher:
-    """Фоновый пул: постоянно наблюдает лучшие номера и пополняет «проверенные»."""
+    """Фоновый пул: постоянно наблюдает живые номера и записывает, от каких сервисов
+    на них реально приходят SMS прямо сейчас."""
 
     def __init__(self, engine, size: int = 24, cycle: int = 60, refresh: int = 900):
         self.engine, self.size, self.cycle, self.refresh = engine, size, cycle, refresh
-        self.watch: dict[str, dict] = {}   # number -> {cand, baseline, since}
+        self.watch: dict[str, dict] = {}   # number -> {cand, baseline, since, last_new}
         self.events: list[str] = []
         self.last_refresh = 0.0
-        self.started = time.time()
         self.running = False
 
     def log(self, msg):
         self.events.append(f"{time.strftime('%H:%M:%S')} {msg}")
-        del self.events[:-50]
+        del self.events[:-60]
 
     def _refill(self):
+        from . import registry
         try:
             res = self.engine.find("other", "", None, self.size, "popular", 0, track=False)
         except Exception as e:
@@ -212,45 +269,52 @@ class Watcher:
         added = 0
         for d in res.get("candidates", []):
             c = self.engine.candidates.get(d["id"])
-            from . import registry
-            if not c or not c.public or c.number in self.watch or cached(c.number) or registry.is_blocked(c.number):
+            if not c or not c.public or c.number in self.watch or registry.is_blocked(c.number):
                 continue
             if len(self.watch) >= self.size:
                 break
-            self.watch[c.number] = {"cand": c, "baseline": set(c.extra.get("keys") or []), "since": time.time()}
+            now = time.time()
+            self.watch[c.number] = {"cand": c, "baseline": set(c.extra.get("keys") or []),
+                                    "since": now, "last_new": now}
             added += 1
         self.last_refresh = time.time()
         self.log(f"под наблюдением: {len(self.watch)} (добавлено {added})")
 
     def _tick(self):
+        from . import registry
         for num, w in list(self.watch.items()):
             c = w["cand"]
-            if cached(num):  # уже подтверждён другим способом
+            if registry.is_blocked(num):
                 del self.watch[num]
                 continue
-            prov = self.engine.providers[c.provider]
             try:
-                msgs = _msgs(prov, c)
+                msgs = _msgs(self.engine.providers[c.provider], c)
             except Exception:
                 continue
             if not w["baseline"]:
                 w["baseline"] = {m.key for m in msgs}
                 continue
             new = [m for m in msgs if m.key not in w["baseline"]]
-            if new:
-                rec = record_passive(c, new[0], int(time.time() - w["since"]))
-                self.engine.candidates[c.id] = c
-                self.log(f"✅ {num} — новое SMS от {rec['sender']} → «проверенный»")
-                del self.watch[num]
-            elif time.time() - w["since"] > 3 * 3600:
+            w["baseline"] |= {m.key for m in new}
+            for m in new:
+                svcs = record_sms(c, m, int(time.time() - w["since"])) - {"other"}
+                w["last_new"] = time.time()
+                if svcs:
+                    self.log(f"✅ {num}: SMS от {', '.join(sorted(svcs))} → проверен для {', '.join(sorted(svcs))}")
+                elif not any(e.startswith(f"✅ {num}") for e in self.events[-1:]):
+                    self.log(f"✅ {num}: новое SMS ({m.sender[:20]}) → проверен (любой сервис)")
+            if time.time() - w["last_new"] > 3 * 3600:
                 self.log(f"✗ {num} — 3 ч без новых SMS, снят с наблюдения")
                 del self.watch[num]
 
     def _loop(self):
         while True:
-            if time.time() - self.last_refresh > self.refresh or len(self.watch) < self.size // 3:
-                self._refill()
-            self._tick()
+            try:
+                if time.time() - self.last_refresh > self.refresh or len(self.watch) < self.size // 2:
+                    self._refill()
+                self._tick()
+            except Exception as e:
+                self.log(f"ошибка: {e}")
             time.sleep(self.cycle)
 
     def start(self):
@@ -259,31 +323,34 @@ class Watcher:
             threading.Thread(target=self._loop, daemon=True).start()
         return self
 
-    def pool(self) -> list[dict]:
-        """Все действующие «проверенные» номера (с кандидатами для выдачи)."""
+    def drop(self, number: str):
+        self.watch.pop(number, None)
+
+    def pool(self, service: str = "other", country: str = "") -> list[dict]:
+        """Номера, проверенные для сервиса (новое SMS от него пришло при нашем наблюдении)."""
+        from . import registry
+        from .services import country_matches
+        service = _norm(service)
         by_num = {c.number: c for c in self.engine.candidates.values() if c.public}
         out = []
-        from . import registry
-        for num, rec in _load().items():
-            if not (rec.get("ok") and time.time() - rec.get("at", 0) < TTL) or registry.is_blocked(num):
+        for num, e in _load().items():
+            rec = e["svc"].get(service)
+            if not rec or time.time() - rec.get("at", 0) >= TTL or registry.is_used(num, service):
+                continue
+            if not country_matches(country, e.get("country") or ""):
                 continue
             c = by_num.get(num)
-            if c is None and rec.get("ref"):  # восстановить кандидата из записи (после перезапуска)
-                c = Candidate(provider=rec["provider"], number=num, country=rec.get("country", ""),
-                              ref=rec["ref"], price=0.0, public=True)
+            if c is None and e.get("ref"):  # восстановить кандидата из записи (после перезапуска)
+                c = Candidate(provider=e["provider"], number=num, country=e.get("country") or "",
+                              ref=e["ref"], price=0.0, public=True)
                 self.engine.candidates[c.id] = c
             if c is None:
                 continue
-            mark(c, rec)
+            mark(c, rec, service)
             c.extra["can_buy"] = True
             out.append(c)
         out.sort(key=lambda c: c.extra["verified"]["at"], reverse=True)
         return [c.to_dict() for c in out]
 
-    def drop(self, number: str):
-        self.watch.pop(number, None)
-
     def status(self) -> dict:
-        return {"running": self.running, "watching": len(self.watch), "events": self.events[-15:][::-1],
-                "watch_list": [{"number": n, "provider": w["cand"].provider,
-                                "since": int(time.time() - w["since"])} for n, w in self.watch.items()]}
+        return {"running": self.running, "watching": len(self.watch), "events": self.events[-20:][::-1]}

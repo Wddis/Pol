@@ -29,10 +29,10 @@ from .providers import all_providers
 from .services import country_matches, profile, service_code, service_matchers
 
 MODES = {
-    "verified": "Проверенные: тестовое SMS дошло до номера",
-    "niche": "Нишевые и премиум: редко используемые + приватные",
-    "premium": "Только премиум: приватные платные номера",
-    "popular": "Все рабочие: максимум активности",
+    "niche": "Лучшие под сервис (рекомендуется)",
+    "verified": "Только проверенные тестом под сервис",
+    "premium": "Только платные приватные",
+    "popular": "Все рабочие номера",
 }
 
 
@@ -284,7 +284,9 @@ class Engine:
                 q.put({"type": "error", "provider": name, "text": str(e)})
             q.put({"type": "_finished", "provider": name})
 
-        yield {"type": "stage", "text": f"Этап 1: быстрый отсев · источники: {', '.join(names)}"}
+        svc_t = verify.svc_title(service)
+        yield {"type": "stage", "stage": 1, "text": f"Этап 1 из 3: собираю номера и отсеиваю нерабочие под "
+                                                    f"{svc_t} · источники: {', '.join(names)}"}
         for n in names:
             threading.Thread(target=run, args=(n,), daemon=True).start()
         left = len(names)
@@ -313,7 +315,8 @@ class Engine:
         # этап 2: живая проверка лучших бесплатных номеров
         free = sorted([c for c in cands if c.public], key=lambda c: c.score, reverse=True)[:limit]
         if free and probe_s > 0:
-            yield {"type": "stage", "text": f"Этап 2: живая проверка {len(free)} номеров в течение {probe_s} с"}
+            yield {"type": "stage", "stage": 2, "text": f"Этап 2 из 3: живая перепроверка {len(free)} лучших номеров "
+                                                        f"({probe_s} с)"}
             for rnd in (1, 2):
                 time.sleep(probe_s / 2)
                 with ThreadPoolExecutor(max_workers=12) as ex:
@@ -331,14 +334,16 @@ class Engine:
                         c.extra["live"] = True
                         c.score = round(c.score + 15, 1)
                         c.note += " · SMS пришло во время проверки"
-                        # новое SMS во время наблюдения = доказательство доставки → «проверенный»
+                        # новое SMS во время наблюдения — записываем, от каких сервисов оно
                         try:
                             msgs = self.providers[c.provider].messages({"ref": c.ref, "number": c.number})
-                            sms = next((m for m in msgs if m.key in new), None)
-                            if sms:
-                                verify.record_passive(c, sms, int(probe_s / 2 * rnd))
-                                yield {"type": "verify", "provider": c.provider, "number": c.number, "ok": True,
-                                       "reason": f"во время проверки пришло SMS от {sms.sender} → «проверенный»"}
+                            for sms in (m for m in msgs if m.key in new):
+                                if service in verify.record_sms(c, sms, int(probe_s / 2 * rnd)):
+                                    verify.mark(c, verify.cached(c.number, service), service)
+                                    yield {"type": "verify", "provider": c.provider, "number": c.number,
+                                           "ok": True, "id": c.id, "tier": c.tier, "note": c.note,
+                                           "reason": f"во время проверки пришло SMS от {sms.sender} → "
+                                                     f"«проверенный» для {svc_t}"}
                         except Exception:
                             pass
                     c.extra["keys"] = h.keys
@@ -350,27 +355,45 @@ class Engine:
                     alive.append(c)
                 free = alive
 
-        # этап 3: проверка доставкой тестового SMS
+        # статус «проверенный» под выбранный сервис из прошлых наблюдений и фонового пула
         for c in cands:
-            rec = verify.cached(c.number) if c.public else None
+            rec = verify.cached(c.number, service) if c.public else None
             if rec:
-                verify.mark(c, rec)
-        if mode == "verified":  # добавить номера из фонового пула проверенных
+                verify.mark(c, rec, service)
+        if mode == "verified":
             have = {c.number for c in cands}
-            for d in self.watcher.pool():
+            for d in self.watcher.pool(service, country):
                 c = self.candidates.get(d["id"])
-                if c and c.number not in have and country_matches(country, c.country):
+                if c and c.number not in have:
                     cands.append(c)
-        todo = [c for c in sorted(cands, key=lambda c: c.score, reverse=True)
-                if c.public and c.tier != "verified"][:verify_n]
+
+        def finalize(lst):
+            for c in lst:
+                if not c.public and not c.extra.get("_paid_bonus"):
+                    c.score = round(c.score + 15, 1)  # приватный номер надёжнее
+                    c.extra["_paid_bonus"] = True
+                c.extra["can_buy"] = self.providers[c.provider].can_acquire()
+                self.candidates[c.id] = c
+            # сначала доступные, затем НЕ занятые другим человеком, затем проверенные, затем score
+            lst.sort(key=lambda c: (c.extra["can_buy"], not c.extra.get("busy_left"), c.tier == "verified",
+                                    c.score), reverse=True)
+            return lst[: limit * 2]
+
+        cands = finalize(cands)
+        if track:
+            self.last_order = [c.id for c in cands if c.extra["can_buy"]]
+        # результаты показываем сразу, тест доставки идёт поверх них
+        yield {"type": "results", "candidates": [c.to_dict() for c in cands], "errors": errors,
+               "took": round(time.time() - t0, 1)}
+
+        # этап 3: тест доставки под выбранный сервис
+        todo = [c for c in cands if c.public and c.tier != "verified"][:verify_n]
         if todo:
-            info = sender.describe()
-            how = (f"тестовое SMS через {info['via']}" if not info["free"]
-                   else "пассивно: ждём новое входящее SMS")
-            yield {"type": "stage", "text": f"Этап 3: подтверждение доставки на {len(todo)} номер(а) — {how}, "
-                                            f"до {verify_wait} с"}
+            yield {"type": "stage", "stage": 3, "text": f"Этап 3 из 3: тест доставки {svc_t} на {len(todo)} номерах — "
+                                                        f"жду новое SMS от {svc_t} до {max(1, verify_wait // 60)} мин "
+                                                        "(номера уже можно брать)"}
             vq: queue.Queue = queue.Queue()
-            jobs = [verify.Verification(self, c, verify_wait, vq.put, verify_method) for c in todo]
+            jobs = [verify.Verification(self, c, verify_wait, vq.put, verify_method, service) for c in todo]
 
             def run_v(j):
                 try:
@@ -388,17 +411,9 @@ class Engine:
                 else:
                     yield ev
         if mode == "verified":
-            dropped = [c for c in cands if c.tier != "verified"]
             cands = [c for c in cands if c.tier == "verified"]
-            yield {"type": "stage", "text": f"Проверенных: {len(cands)}, без подтверждения доставки: {len(dropped)}"}
-
-        for c in cands:
-            if not c.public:
-                c.score = round(c.score + 15, 1)  # приватный номер надёжнее
-            c.extra["can_buy"] = self.providers[c.provider].can_acquire()
-            self.candidates[c.id] = c
-        cands.sort(key=lambda c: (c.extra["can_buy"], c.score), reverse=True)
-        cands = cands[: limit * 2]
+            yield {"type": "stage", "text": f"Проверенных для {svc_t}: {len(cands)}"}
+        cands = finalize(cands)
         if track:
             self.last_order = [c.id for c in cands if c.extra["can_buy"]]
         yield {"type": "done", "candidates": [c.to_dict() for c in cands], "errors": errors,
@@ -410,14 +425,15 @@ class Engine:
             last = ev
         return last
 
-    def verify(self, cand_id: str, wait: int = 180, method: str = "auto") -> verify.Verification:
+    def verify(self, cand_id: str, wait: int = 180, method: str = "auto",
+               service: str = "other") -> verify.Verification:
         """Проверить один номер доставкой тестового SMS (в фоне)."""
         cand = self.candidates.get(cand_id)
         if not cand:
             raise ProviderError("кандидат не найден — выполните поиск заново")
         if not cand.public:
             raise ProviderError("платный номер можно проверить только после покупки")
-        job = verify.Verification(self, cand, wait, method=method).start()
+        job = verify.Verification(self, cand, wait, method=method, service=service).start()
         self.verifications[job.id] = job
         return job
 
