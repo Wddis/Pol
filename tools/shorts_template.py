@@ -25,7 +25,9 @@ bg=bg.filter(ImageFilter.GaussianBlur(0.6))
 bg.save(out+'_bg.png')
 fg=Image.new('RGBA',(W,H),(0,0,0,0)); d=ImageDraw.Draw(fg)
 # panel frames (white rough borders)
-for y,h in ((SCR_Y,SCR_H),(CAM_Y,CAM_H)):
+import os as _os
+PANELS=((SCR_Y,CAM_Y+CAM_H-SCR_Y),) if _os.environ.get('TALK')=='1' else ((SCR_Y,SCR_H),(CAM_Y,CAM_H))   # TALK=1: one big webcam panel
+for y,h in PANELS:
     d.rectangle([0,y-6,W-1,y-1],fill=(245,245,245,255)); d.rectangle([0,y+h,W-1,y+h+5],fill=(245,245,245,255))
 # title: grunge white with black outline, slight tilt
 def tilted_text(txt,font,size,maxw,rot):

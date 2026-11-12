@@ -4,16 +4,16 @@
 #   SCR="w:h:x:y"  screen part -> 1080x607 panel   (default: browser layout of T2x2, centre of the player,
 #                                                  above the webcam and left of chat/banner)
 #   CAM="w:h:x:y"  webcam      -> 1080x615 panel   (default: webcam bottom-right 640x364)
+#   TALK="w:h:x:y" one big panel 1080x1235 from a full-screen-webcam layout (no screen content) — build the
+#                  template with TALK=1 too. Default crop for T2x2 full-cam: 956:1080:402:0 (face centre, no overlays).
 # The webcam is NEVER blurred (owner's rule, 11.11.2026).
 src=$1; pre=$2; out=$3; segs=$4
 SCR=${SCR:-1099:618:405:100}; CAM=${CAM:-640:364:1280:716}
 i=0; list=""
 for r in $segs; do a=${r%-*}; b=${r#*-}
-ffmpeg -loglevel error -y -ss $a -to $b -i $src -i ${pre}_bg.png -i ${pre}_fg.png -filter_complex "\
-[0:v]split[s][c];\
-[s]crop=$SCR,scale=1080:607:flags=lanczos[scr];\
-[c]crop=$CAM,scale=1080:615:flags=lanczos[cam];\
-[1:v][scr]overlay=0:380[t1];[t1][cam]overlay=0:1000[t2];[t2][2:v]overlay=0:0,fps=60,format=yuv420p[v]" \
+if [ -n "$TALK" ]; then FC="[0:v]crop=$TALK,scale=1080:1235:flags=lanczos[cam];[1:v][cam]overlay=0:380[t2];[t2][2:v]overlay=0:0,fps=60,format=yuv420p[v]"
+else FC="[0:v]split[s][c];[s]crop=$SCR,scale=1080:607:flags=lanczos[scr];[c]crop=$CAM,scale=1080:615:flags=lanczos[cam];[1:v][scr]overlay=0:380[t1];[t1][cam]overlay=0:1000[t2];[t2][2:v]overlay=0:0,fps=60,format=yuv420p[v]"; fi
+ffmpeg -loglevel error -y -ss $a -to $b -i $src -i ${pre}_bg.png -i ${pre}_fg.png -filter_complex "$FC" \
  -map "[v]" -map 0:a -c:v libx264 -preset veryfast -crf 19 -c:a aac -b:a 192k -ar 48000 part_${pre}_$i.mp4 || exit 1
 list="$list file '$PWD/part_${pre}_$i.mp4'\n"; i=$((i+1)); done
 printf "$list" > parts_${pre}.txt
