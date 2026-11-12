@@ -27,6 +27,12 @@ class ReceiveSmss(FreeProvider):
         super().__init__()
         self.s = http()
 
+    def available(self):
+        import os
+        if os.getenv("SMSFINDER_RECEIVESMSS") == "1":
+            return True, ""
+        return False, "сайт закрыт защитой Cloudflare для серверов (403); включить: SMSFINDER_RECEIVESMSS=1"
+
     def _get(self, path):
         t0 = time.time()
         r = self.s.get(BASE + path, timeout=TIMEOUT)
