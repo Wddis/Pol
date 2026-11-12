@@ -76,7 +76,16 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
       } catch (e) { log('tags skipped', e.message.slice(0, 80)); }
     }
     await p.screenshot({ path: `${shot}/step1.png` });
-    for (let i = 0; i < 3; i++) { await p.locator('#next-button').click(); await p.waitForTimeout(1500); }
+    // the limit banner can appear late (seen 12.11: after the tags step, «Далее» hidden) — check again, and on a failed click
+    const limitCheck = async () => {
+      if (await p.getByText(/Загрузка недоступна|Daily upload limit reached/).first().isVisible().catch(() => false))
+        throw new Error('UPLOAD_LIMIT: Studio says the daily upload limit is reached (try in 24 h or pass verification)');
+    };
+    await limitCheck();
+    for (let i = 0; i < 3; i++) {
+      try { await p.locator('#next-button').click({ timeout: 20000 }); } catch (e) { await limitCheck(); throw e; }
+      await p.waitForTimeout(1500);
+    }
     await p.locator(`tp-yt-paper-radio-button[name="${m.visibility || 'PUBLIC'}"]`).click(); log('visibility', m.visibility || 'PUBLIC');
     // wait for upload to finish (progress label / done button enabled)
     const done = p.locator('#done-button');
