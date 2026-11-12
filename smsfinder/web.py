@@ -183,10 +183,14 @@ def switch(aid):
 @app.get("/api/verified")
 @guarded
 def verified_pool():
-    """Пул «проверенных» номеров + состояние фонового наблюдения."""
-    from . import registry
+    """Пул «проверенных», категория «надёжные 80%+» и состояние фонового наблюдения."""
+    from . import quality, registry
     a = request.args
-    return jsonify(pool=engine.watcher.pool(a.get("service", "other"), a.get("country", "")),
+    svc, country = a.get("service", "other"), a.get("country", "")
+    return jsonify(pool=engine.watcher.pool(svc, country),
+                   reliable=engine.watcher.reliable_pool(svc, country),
+                   reliable_rule={"threshold": quality.THRESHOLD, "min_trials": quality.MIN_TRIALS,
+                                  "days": quality.HORIZON // 86400, "window_min": quality.WINDOW // 60},
                    watcher=engine.watcher.status(), stats=registry.stats())
 
 

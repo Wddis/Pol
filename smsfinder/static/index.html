@@ -129,6 +129,16 @@ tr.flash td{background:color-mix(in srgb,var(--ok) 14%,transparent)}
     </details>
   </div>
 
+  <div class="card" id="relCard">
+    <div class="row" style="justify-content:space-between;align-items:center">
+      <b id="relTitle">🏆 Надёжные 80%+</b><span class="muted note" id="relInfo">загрузка…</span>
+    </div>
+    <p class="note" id="relRule" style="margin:6px 0 8px">Только номера, которые сработали в 80% проверок и больше.</p>
+    <div class="scroll"><table class="tbl"><thead><tr>
+      <th>Номер</th><th>Надёжность</th><th>Страна</th><th>Источник</th><th></th>
+    </tr></thead><tbody id="relRows"></tbody></table></div>
+  </div>
+
   <div class="card" id="poolCard">
     <div class="row" style="justify-content:space-between;align-items:center">
       <b id="poolTitle">✅ Проверенные номера</b><span class="muted note" id="poolInfo">загрузка…</span>
@@ -230,7 +240,7 @@ function logLine(cls, text) {
 
 function rowHtml(c) {
   return `<tr data-row="${c.id}">
-    <td class="num"><b>${c.number ? esc(c.number) : '<span class="muted">после покупки</span>'}</b><div class="note">score ${c.score}</div></td>
+    <td class="num"><b>${c.number ? esc(c.number) : '<span class="muted">после покупки</span>'}</b><div class="note">score ${c.score}</div>${qBadge(c)}</td>
     <td class="tiercell"><span class="tag ${c.tier}">${c.tier === 'verified' ? '✅ ' : ''}${TIER[c.tier] || c.tier}</span>${c.extra.live ? ' <span class="tag live">живой</span>' : ''}</td>
     <td>${esc(c.country)}</td>
     <td>${esc(c.provider)}<br><span class="tag ${c.public ? 'pub' : 'priv'}">${c.public ? 'бесплатный, публичный' : 'платный ' + c.price.toFixed(2)}</span></td>
@@ -238,6 +248,12 @@ function rowHtml(c) {
     <td>${c.extra.can_buy ? `<button data-id="${c.id}">Взять</button>` : '<span class="note" title="Задайте API-ключ провайдера">нужен ключ</span>'}
       ${c.public && c.tier !== 'verified' ? `<br><button class="ghost vbtn" data-verify="${c.id}">Тест доставки</button>` : ''}
       <div class="note" id="v-${c.id}"></div></td></tr>`;
+}
+function qBadge(c) {  // процент работоспособности под сервис
+  const q = c.extra.quality; if (!q || q.rate == null) return '';
+  const pct = Math.round(q.rate * 100);
+  const cls = q.reliable ? 'verified' : '';
+  return `<div><span class="tag ${cls}" title="${esc(q.text)}">${q.reliable ? '🏆 ' : ''}${pct}%${q.n != null ? ` · ${q.ok}/${q.n}` : ''}</span></div>`;
 }
 function render(r, final) {
   $('resCard').hidden = false;
@@ -247,6 +263,7 @@ function render(r, final) {
   loadPool();
   $('rows').innerHTML = list.length ? list.map(rowHtml).join('')
     : `<tr><td colspan="6" class="muted">${!final ? 'Идёт проверка…'
+        : r.hidden_unreliable ? `Надёжных номеров (80%+ успешных проверок) для ${esc(svcName())} пока нет: у ${r.hidden_unreliable} найденных номеров процент ниже или истории мало. История копится фоновым наблюдением (проверка — каждый час) и тестами доставки; первые надёжные появятся через несколько часов работы сайта.`
         : r.hidden_unverified ? `За время теста ${esc(svcName())} не прислал SMS ни на один тестируемый номер, поэтому проверенных пока нет. Подходящих номеров найдено: <b>${r.hidden_unverified}</b> — выберите «Какие номера → Лучшие под сервис», чтобы их увидеть. Фоновый пул продолжает наблюдение и добавит номер, как только придёт SMS от ${esc(svcName())}.`
         : 'Ни один номер не прошёл проверку под этот сервис — смените страну или «Какие номера».'}</td></tr>`;
 }
@@ -447,9 +464,19 @@ async function loadPool() {
       <td><button data-id="${c.id}">Взять</button></td></tr>`).join('')
       : `<tr><td colspan="5" class="muted note">Пока пусто — номер появится здесь, когда на один из наблюдаемых номеров придёт SMS от ${esc(svcName())}. Нажмите «Подобрать номер» с тестом, чтобы ускорить.</td></tr>`;
     $('poolLog').innerHTML = w.events.map(esc).join('<br>');
+    const rr = r.reliable_rule, rel = r.reliable || [];
+    $('relTitle').textContent = `🏆 Надёжные ${Math.round(rr.threshold * 100)}%+ для ${svcName()} (${rel.length})`;
+    $('relInfo').textContent = `правило: ≥${Math.round(rr.threshold * 100)}% успешных из ≥${rr.min_trials} проверок за ${rr.days} дн`;
+    $('relRule').innerHTML = `Номер попадает сюда, только если сработал в ${Math.round(rr.threshold * 100)}% проверок и больше. Проверка — это тест доставки, окно наблюдения ${rr.window_min} мин (пришло ли SMS от ${esc(svcName())}) или ваш отзыв «код подошёл / не подошёл». Нужно не меньше ${rr.min_trials} проверок, поэтому один удачный SMS номер сюда не проведёт.`;
+    $('relRows').innerHTML = rel.length ? rel.map(c => `<tr>
+      <td class="num"><b>${esc(c.number)}</b></td><td>${qBadge(c)}<div class="note">${esc(c.extra.quality.text)}</div></td>
+      <td>${esc(c.country)}</td><td>${esc(c.provider)}</td>
+      <td><button data-id="${c.id}">Взять</button></td></tr>`).join('')
+      : `<tr><td colspan="5" class="muted note">Пока пусто: номеру нужно накопить ≥${rr.min_trials} проверок с успехом ≥${Math.round(rr.threshold * 100)}%. Фоновое наблюдение добавляет по одной проверке в ${rr.window_min} мин на каждый номер.</td></tr>`;
   } catch (e) { $('poolInfo').textContent = e.message; }
 }
 $('poolRows').addEventListener('click', onTake);
+$('relRows').addEventListener('click', onTake);
 loadPool(); setInterval(() => loadPool(), 10000);
 init().then(resumeJob).catch(e => $('errors').textContent = e.message);
 </script>

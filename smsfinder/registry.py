@@ -78,6 +78,8 @@ def feedback(number: str, service: str, ok: bool, reason: str = "") -> None:
         if not ok:
             rec["blocked"], rec["reason"] = True, reason or "не подошёл"
     _update(number, f)
+    from . import quality
+    quality.add(number, service, ok, "user")
 
 
 def stats() -> dict:

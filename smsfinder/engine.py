@@ -23,13 +23,14 @@ from typing import Callable, Iterator, Optional
 
 import requests
 
-from . import registry, sender, verify
+from . import quality, registry, sender, verify
 from .core import Candidate, ProviderError, SearchStopped, Sms
 from .providers import all_providers
 from .services import country_matches, profile, service_code, service_matchers
 
 MODES = {
     "niche": "Лучшие под сервис (рекомендуется)",
+    "reliable": "Только надёжные: работают в 80%+ проверок",
     "verified": "Только проверенные тестом под сервис",
     "premium": "Только платные приватные",
     "popular": "Все рабочие номера",
@@ -333,7 +334,7 @@ class Engine:
 
         def run(name):
             try:
-                pmode = "popular" if mode == "verified" else mode
+                pmode = "popular" if mode in ("verified", "reliable") else mode
                 results[name] = self.providers[name].find(service, country, limit * 2, pmode, emit)
             except SearchStopped:
                 pass
@@ -423,26 +424,39 @@ class Engine:
             rec = verify.cached(c.number, service) if c.public else None
             if rec:
                 verify.mark(c, rec, service)
-        if mode == "verified":
+        if mode in ("verified", "reliable"):
             have = {c.number for c in cands}
-            for d in self.watcher.pool(service, country):
+            pool = self.watcher.reliable_pool if mode == "reliable" else self.watcher.pool
+            for d in pool(service, country):
                 c = self.candidates.get(d["id"])
                 if c and c.number not in have:
                     cands.append(c)
 
         def finalize(lst):
+            if mode == "reliable":  # строго: только номера с ≥80% успешных проверок
+                lst = [c for c in lst if quality.is_reliable(c, service)]
             for c in lst:
+                quality.annotate(c, service)
                 if not c.public and not c.extra.get("_paid_bonus"):
                     c.score = round(c.score + 15, 1)  # приватный номер надёжнее
                     c.extra["_paid_bonus"] = True
                 c.extra["can_buy"] = self.providers[c.provider].can_acquire()
                 self.candidates[c.id] = c
             # сначала доступные, затем НЕ занятые другим человеком, затем проверенные, затем score
-            lst.sort(key=lambda c: (c.extra["can_buy"], not c.extra.get("busy_left"), c.tier == "verified",
-                                    c.score), reverse=True)
+            lst.sort(key=lambda c: (c.extra["can_buy"], not c.extra.get("busy_left"),
+                                    c.extra["quality"]["reliable"], c.tier == "verified",
+                                    c.extra["quality"]["rate"] or 0, c.score), reverse=True)
             return lst[: limit * 2]
 
-        cands = finalize(cands)
+        if mode == "reliable":
+            hidden = len(cands)
+            cands = finalize(cands)
+            hidden -= len(cands)
+            yield {"type": "stage", "text": f"Надёжных (≥{round(quality.THRESHOLD * 100)}% успешных проверок, "
+                                            f"не меньше {quality.MIN_TRIALS}) для {svc_t}: {len(cands)}"
+                                            + (f", отсеяно с меньшим % или без истории: {hidden}" if hidden else "")}
+        else:
+            cands = finalize(cands)
         if track:
             self.last_order = [c.id for c in cands if c.extra["can_buy"]]
         # результаты показываем сразу, тест доставки идёт поверх них
@@ -495,6 +509,10 @@ class Engine:
                             yield {"type": "stage", "text": f"Цель достигнута: {have_ver} проверенных для {svc_t} — "
                                                             "тест остальных номеров остановлен"}
         hidden = 0
+        if mode == "reliable":
+            before = len(cands)
+            cands = [c for c in cands if quality.is_reliable(c, service)]
+            hidden = before - len(cands)
         if mode == "verified" and not stop.is_set():
             hidden = sum(1 for c in cands if c.tier != "verified")
             cands = [c for c in cands if c.tier == "verified"]
@@ -504,7 +522,8 @@ class Engine:
             self.last_order = [c.id for c in cands if c.extra["can_buy"]]
         yield {"type": "done", "candidates": [c.to_dict() for c in cands], "errors": errors,
                "took": round(time.time() - t0, 1), "used_total": registry.count(), "stopped": stop.is_set(),
-               "hidden_unverified": hidden}
+               "hidden_unverified": hidden if mode == "verified" else 0,
+               "hidden_unreliable": hidden if mode == "reliable" else 0}
 
     # --- подбор как фоновая задача (переживает обрывы соединения) ------------
     def start_search(self, **kw) -> "SearchJob":

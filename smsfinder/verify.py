@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 from typing import Optional
 
-from . import sender
+from . import quality, sender
 from .core import Candidate, Emit, Sms, noop_emit
 from .services import SERVICES, profile, service_code
 
@@ -180,7 +180,11 @@ class Verification:
     def _fail(self, detail):
         self.status, self.detail = "failed", detail
         self.cand.extra["verify_failed"] = True
-        self.cand.note = f"⏳ {detail} · " + self.cand.note
+        quality.add(self.cand.number, self.service, False, "test")
+        note = self.cand.note
+        if note.startswith("⏳ ") and " · " in note:  # не копить префиксы от прошлых тестов
+            note = note.split(" · ", 1)[1]
+        self.cand.note = f"⏳ {detail} · " + note
         self._say(False, detail)
         return self
 
@@ -231,6 +235,7 @@ class Verification:
             if hit:
                 self.delivered_s = int(time.time() - t0)
                 self.status = "verified"
+                quality.add(c.number, self.service, True, "test")
                 if self.method == "active":
                     rec = {"ok": True, "at": time.time(), "kind": "active", "delivered_s": self.delivered_s,
                            "via": self.via}
@@ -290,7 +295,8 @@ class Watcher:
                 break
             now = time.time()
             self.watch[c.number] = {"cand": c, "baseline": set(c.extra.get("keys") or []),
-                                    "since": now, "last_new": now}
+                                    "since": now, "last_new": now, "win_start": now,
+                                    "win_svcs": set(), "win_fetched": 0}
             added += 1
         self.last_refresh = time.time()
         self.log(f"под наблюдением: {len(self.watch)} (добавлено {added})")
@@ -315,22 +321,40 @@ class Watcher:
                 continue
             msgs = fetched.get(num)
             if msgs is None:
+                self._close_window(num, w)
                 continue
+            w["win_fetched"] += 1
             if not w["baseline"]:
                 w["baseline"] = {m.key for m in msgs}
                 continue
             new = [m for m in msgs if m.key not in w["baseline"]]
             w["baseline"] |= {m.key for m in new}
             for m in new:
-                svcs = record_sms(c, m, int(time.time() - w["since"])) - {"other"}
+                svcs = record_sms(c, m, int(time.time() - w["since"]))
+                w["win_svcs"] |= svcs
+                svcs -= {"other"}
                 w["last_new"] = time.time()
                 if svcs:
                     self.log(f"✅ {num}: SMS от {', '.join(sorted(svcs))} → проверен для {', '.join(sorted(svcs))}")
                 elif not any(e.startswith(f"✅ {num}") for e in self.events[-1:]):
                     self.log(f"✅ {num}: новое SMS ({m.sender[:20]}) → проверен (любой сервис)")
+            self._close_window(num, w)
             if time.time() - w["last_new"] > 3 * 3600:
                 self.log(f"✗ {num} — 3 ч без новых SMS, снят с наблюдения")
                 del self.watch[num]
+
+    def _close_window(self, num: str, w: dict):
+        """Окно наблюдения закончилось — записать по проверке на каждый сервис номера:
+        успех, если за окно от сервиса пришло SMS. Окно без единого удачного опроса
+        страницы (сайт лежал) не засчитывается ни в плюс, ни в минус."""
+        now = time.time()
+        if now - w["win_start"] < quality.WINDOW:
+            return
+        if w["win_fetched"]:
+            known = set((_load().get(num) or {}).get("svc", {})) | quality.services_of(num)
+            for s in known | w["win_svcs"] | {"other"}:
+                quality.add(num, s, s in w["win_svcs"], "window")
+        w.update(win_start=now, win_svcs=set(), win_fetched=0)
 
     def _loop(self):
         time.sleep(20)  # дать первому пользовательскому подбору отработать без конкуренции
@@ -373,9 +397,40 @@ class Watcher:
             if c is None:
                 continue
             mark(c, rec, service)
+            quality.annotate(c, service)
             c.extra["can_buy"] = True
             out.append(c)
         out.sort(key=lambda c: c.extra["verified"]["at"], reverse=True)
+        return [c.to_dict() for c in out]
+
+    def reliable_pool(self, service: str = "other", country: str = "") -> list[dict]:
+        """Категория «надёжные 80%+»: номера, которые сработали не меньше чем в 80% проверок
+        под сервис (минимум quality.MIN_TRIALS проверок за quality.HORIZON)."""
+        from . import registry
+        from .services import country_matches
+        service = _norm(service)
+        by_num = {c.number: c for c in self.engine.candidates.values() if c.public}
+        meta = _load()
+        out = []
+        for num in list(quality._load()):
+            st = quality.stats(num, service)
+            if not st["reliable"] or registry.is_used(num, service):
+                continue
+            e = meta.get(num) or {}
+            c = by_num.get(num)
+            if c is None and e.get("ref"):  # восстановить кандидата после перезапуска
+                c = Candidate(provider=e["provider"], number=num, country=e.get("country") or "",
+                              ref=e["ref"], price=0.0, public=True)
+                self.engine.candidates[c.id] = c
+            if c is None or not country_matches(country, c.country or ""):
+                continue
+            rec = cached(num, service)
+            if rec:
+                mark(c, rec, service)
+            quality.annotate(c, service)
+            c.extra["can_buy"] = True
+            out.append(c)
+        out.sort(key=lambda c: (c.extra["quality"]["rate"], c.extra["quality"]["n"]), reverse=True)
         return [c.to_dict() for c in out]
 
     def status(self) -> dict:
