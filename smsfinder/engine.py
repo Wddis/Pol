@@ -351,11 +351,14 @@ class Engine:
             except Exception as e:
                 errors[name] = str(e)
                 q.put({"type": "error", "provider": name, "text": str(e)})
+            finally:
+                done_ev[name].set()
             q.put({"type": "_finished", "provider": name})
 
         svc_t = verify.svc_title(service)
         yield {"type": "stage", "stage": 1, "text": f"Этап 1 из 3: собираю номера и отсеиваю нерабочие под "
                                                     f"{svc_t} · источники: {', '.join(names)}"}
+        done_ev = {n: threading.Event() for n in names}
         for n in names:
             threading.Thread(target=run, args=(n,), daemon=True).start()
         left, finished = len(names), set()
@@ -363,12 +366,13 @@ class Engine:
         # подмешается позже (в момент досмотра на этапе 2)
         hard = deadline + FreeProvider.grace + 0.05 if deadline is not None else None
         while left:
+            # проверяем на каждой итерации: при 15 источниках очередь событий почти не пустеет
+            if hard and time.time() > hard and any(
+                    results.get(n) and isinstance(self.providers[n], FreeProvider) for n in finished):
+                break
             try:
                 ev = q.get(timeout=0.05 if hard else 1)
             except queue.Empty:
-                if hard and time.time() > hard and any(
-                        results.get(n) and isinstance(self.providers[n], FreeProvider) for n in finished):
-                    break
                 continue
             if ev["type"] == "_finished":
                 left -= 1
@@ -380,7 +384,23 @@ class Engine:
             yield {"type": "stage", "text": f"Не дождался за отведённое время: {', '.join(late_names)} — "
                                             "их номера добавятся во время перепроверки"}
 
-        cands = [c for cs in results.values() for c in cs]
+        def dedupe(lst):
+            """Один номер бывает на нескольких сайтах-зеркалах — оставляем лучшую карточку."""
+            best: dict[str, Candidate] = {}
+            for c in lst:
+                if not c.public or not c.number:
+                    best[c.id] = c
+                    continue
+                o = best.get(c.number)
+                if o is None or c.score > o.score:
+                    if o is not None:
+                        c.extra["also_on"] = sorted(set(o.extra.get("also_on", [])) | {o.provider})
+                    best[c.number] = c
+                else:
+                    o.extra["also_on"] = sorted(set(o.extra.get("also_on", [])) | {c.provider})
+            return list(best.values())
+
+        cands = dedupe([c for cs in results.values() for c in cs])
         all_found = list(cands)  # для теста доставки берём всех, включая «занятых» — там сервис пишет прямо сейчас
         # строгий режим: только нишевые и премиум
         if mode == "niche":
@@ -426,16 +446,40 @@ class Engine:
                     raise SearchStopped()
 
             def run_more(name):
+                # досмотр сайта начинается, когда закончился его этап 1 (в т. ч. у опоздавших)
+                while not done_ev[name].wait(0.2):
+                    if stop.is_set():
+                        return
+                if name in errors or stop.is_set():
+                    return
                 try:
                     pmode = "popular" if mode == "verified" else mode
                     topup[name] = self.providers[name].find(service, country, limit * 2, pmode, quiet)
                 except Exception:
                     pass
             for n in names:
-                if isinstance(self.providers[n], FreeProvider) and n not in errors and n not in late_names:
+                if isinstance(self.providers[n], FreeProvider) and n not in errors:
                     t = threading.Thread(target=run_more, args=(n,), daemon=True)
                     t.start()
                     topup_threads.append(t)
+
+        def merge_more(wait_s):
+            """Подмешать номера из досмотра и опоздавших сайтов; вернуть новые подходящие."""
+            nonlocal all_found
+            end = time.time() + wait_s
+            for t in topup_threads:
+                t.join(timeout=max(0.0, end - time.time()))
+            have = {c.number for c in all_found}
+            pools = [results.get(n) or [] for n in late_names] + list(topup.values())
+            added = []
+            for c in (c for cs in pools for c in cs):
+                if c.number not in have:
+                    have.add(c.number)
+                    added.append(c)
+            all_found += added
+            extra = dedupe([c for c in added if keep(c)])
+            cands.extend(extra)
+            return extra
 
         # номера показываем сразу после этапа 1 — живая перепроверка обновит их поверх
         if probe_s > 0 and cands:
@@ -456,20 +500,8 @@ class Engine:
                 if stop.wait(probe_s / 2):
                     break
                 if rnd == 1 and (topup_threads or late_names):
-                    end = time.time() + 1.0
-                    for t in topup_threads:
-                        t.join(timeout=max(0.0, end - time.time()))
-                    have = {c.number for c in all_found}
-                    pools = list(topup.values()) + [results.get(n) or [] for n in late_names]
-                    added = []
-                    for c in (c for cs in pools for c in cs):
-                        if c.number not in have:
-                            have.add(c.number)
-                            added.append(c)
-                    all_found += added
-                    extra = [c for c in added if keep(c)]
+                    extra = merge_more(1.0)
                     if extra:
-                        cands += extra
                         free = sorted([c for c in cands if c.public], key=lambda c: c.score, reverse=True)[:limit]
                         yield {"type": "stage", "text": f"Досмотр в фоне: найдено ещё {len(extra)} подходящих "
                                                         f"номеров — добавлены в перепроверку"}
@@ -508,6 +540,12 @@ class Engine:
                                      + (" · пришло новое SMS ✓" if new else "")}
                     alive.append(c)
                 free = alive
+            # что досмотр успел найти после первого раунда — тоже в выдачу (проверено только что)
+            if not stop.is_set() and (topup_threads or late_names):
+                extra = merge_more(min(3.0, max(1.0, probe_s / 2)))
+                if extra:
+                    yield {"type": "stage", "text": f"Досмотр в фоне: ещё {len(extra)} подходящих номеров "
+                                                    f"(проверены только что)"}
 
         # статус «проверенный» под выбранный сервис из прошлых наблюдений и фонового пула
         for c in cands:

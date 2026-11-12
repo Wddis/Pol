@@ -115,25 +115,51 @@ def extract_code(text: str) -> str:
 
 
 # «5 minutes ago», «an hour ago» и короткая запись asms.ai: «59m ago», «4h ago», «2d ago», «3mo ago»
-_AGO = re.compile(r"(\d+|an?|one)\s*(second|sec|minute|min|hour|hr|day|week|month|year|mo|s|m|h|d|w|y)s?\s+ago\b",
-                  re.I)
+_UNITS = r"(second|sec|minute|min|hour|hr|day|week|month|year|mo|s|m|h|d|w|y)"
+_AGO = re.compile(r"(\d+|an?|one)\s*" + _UNITS + r"s?\s+ago\b", re.I)
+# составная запись: «1 year 2 months ago», «2 minutes 2 seconds ago» — суммируем все части
+_AGO_SEQ = re.compile(r"((?:(?:\d+|an?|one)\s*" + _UNITS + r"s?,?\s+)+)ago\b", re.I)
+_AGO_PAIR = re.compile(r"(\d+|an?|one)\s*" + _UNITS + r"s?\b", re.I)
 _UNIT = {"second": 1, "sec": 1, "minute": 60, "min": 60, "hour": 3600, "hr": 3600,
          "day": 86400, "week": 604800, "month": 2592000, "year": 31536000,
          "s": 1, "m": 60, "h": 3600, "d": 86400, "w": 604800, "mo": 2592000, "y": 31536000}
+
+
+_AGO_ZH = re.compile(r"(\d+)\s*(秒|分钟|分|小时|天|周|个月|月|年)前")
+_UNIT_ZH = {"秒": 1, "分钟": 60, "分": 60, "小时": 3600, "天": 86400, "周": 604800, "个月": 2592000,
+            "月": 2592000, "年": 31536000}
+
+
+def ago_str(sec: Optional[float]) -> str:
+    """Секунды -> '5 minutes ago' (формат, который понимает ago_to_seconds)."""
+    if sec is None:
+        return ""
+    sec = max(0, int(sec))
+    for unit, n in (("day", 86400), ("hour", 3600), ("minute", 60)):
+        if sec >= n:
+            k = sec // n
+            return f"{k} {unit}{'s' if k != 1 else ''} ago"
+    return f"{sec} seconds ago"
 
 
 def ago_to_seconds(s: str) -> Optional[int]:
     """'5 minutes ago' -> 300. None, если не распознано."""
     if not s:
         return None
-    if "just now" in s.lower():
+    low = s.lower()
+    if "just now" in low or "recently" in low or "刚刚" in s:
         return 0
-    m = _AGO.search(s)
+    m = _AGO_ZH.search(s)  # китайские сайты: «2小时前», «15分钟前»
+    if m:
+        return int(m.group(1)) * _UNIT_ZH[m.group(2)]
+    m = _AGO_SEQ.search(s)
     if not m:
         return None
-    n = m.group(1).lower()
-    n = 1 if n in ("a", "an", "one") else int(n)
-    return n * _UNIT[m.group(2).lower()]
+    total = 0
+    for p in _AGO_PAIR.finditer(m.group(1)):
+        n = p.group(1).lower()
+        total += (1 if n in ("a", "an", "one") else int(n)) * _UNIT[p.group(2).lower()]
+    return total
 
 
 def digits(s: str) -> str:
