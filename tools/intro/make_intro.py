@@ -78,7 +78,7 @@ def head_state(t):
 yy, xx = np.mgrid[0:H, 0:W].astype(np.float32)
 th = math.radians(-28); U = xx * math.cos(th) + yy * math.sin(th); V = -xx * math.sin(th) + yy * math.cos(th)
 vign = 1 - 0.38 * np.clip(((xx - W / 2) / (W * 0.62)) ** 2 + ((yy - H / 2) / (H * 0.62)) ** 2, 0, 1)
-HUES = [(0.45, 272), (1.5, 318), (2.6, 352), (3.3, 22), (3.9, 52), (4.7, 115), (5.6, 160), (6.6, 190)]
+HUES = [(0.45, 272), (1.5, 318), (2.6, 352), (3.3, 382), (3.9, 412), (4.7, 475), (5.6, 520), (6.6, 550)]   # monotonic (hsv wraps %360)
 def hue_at(t):
     if t <= HUES[0][0]: return HUES[0][1]
     for (t0, h0), (t1, h1) in zip(HUES, HUES[1:]):
