@@ -239,9 +239,23 @@ def search_files(uid: int, pattern: str, glob: str = "*", regex: bool = False, c
     for f in ws.list_files(uid):
         if not _match_glob(f["name"], glob):
             continue
-        raw = ws.read_bytes(uid, f["name"])
-        if not ws.is_text(raw):
+        with open(ws._path(uid, f["name"]), "rb") as fh:
+            if not ws.is_text(fh.read(8192)):
+                continue
+        if f["size"] > ws.BIG:            # огромный текст — построчно, без загрузки целиком
+            import bigfiles
+            n_hits = 0
+            for i, ln in enumerate(bigfiles.iter_text_lines(uid, f["name"])):
+                if rx.search(ln):
+                    n_hits += 1
+                    if mode == "content" and hits < max_hits:
+                        out.append(f"{f['name']}:{i + 1}: {ln[:300]}"); hits += 1
+            if n_hits:
+                files_hit.append(f["name"]); counts.append(f"{f['name']}: {n_hits}")
+            if hits >= max_hits:
+                return "\n".join(out) + f"\n… (показано {max_hits} совпадений, уточни запрос или glob)"
             continue
+        raw = ws.read_bytes(uid, f["name"])
         lines = ws.decode_text(raw).splitlines()
         idx = [i for i, ln in enumerate(lines) if rx.search(ln)]
         if not idx:
@@ -375,17 +389,192 @@ def diff_files(uid: int, a: str, b: str) -> str:
 def make_zip(uid: int, names: list, archive: str) -> str:
     files = ws.list_files(uid)
     pats = names or ["*"]
-    chosen = [f["name"] for f in files if any(fnmatch.fnmatch(f["name"], p) for p in pats)]
+    chosen = [f["name"] for f in files if any(_match_glob(f["name"], p) for p in pats)]
     archive = ws.safe_name(archive if archive.endswith(".zip") else archive + ".zip")
     chosen = [n for n in chosen if n != archive]
     if not chosen:
         raise ValueError("нет подходящих файлов")
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+    target = ws._path(uid, archive)
+    os.makedirs(os.path.dirname(target), exist_ok=True)
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as z:     # сразу на диск, не в память
         for n in chosen:
-            z.writestr(n, ws.read_bytes(uid, n))
-    ws.save_file(uid, archive, buf.getvalue())
+            z.write(ws._path(uid, n), arcname=n)
+    os.chmod(target, 0o600)
     return archive, len(chosen)
+
+
+# ---------- Структура кода ----------
+
+LANGS = {".py": "Python", ".c": "C", ".h": "C/C++", ".cpp": "C++", ".cc": "C++", ".cxx": "C++", ".hpp": "C++",
+         ".cs": "C#", ".java": "Java", ".kt": "Kotlin", ".kts": "Kotlin", ".js": "JavaScript", ".mjs": "JavaScript",
+         ".jsx": "JavaScript", ".ts": "TypeScript", ".tsx": "TypeScript", ".go": "Go", ".rs": "Rust",
+         ".lua": "Lua", ".gd": "GDScript", ".swift": "Swift", ".php": "PHP", ".rb": "Ruby", ".m": "Objective-C",
+         ".mm": "Objective-C++", ".shader": "Shader", ".hlsl": "HLSL", ".glsl": "GLSL", ".json": "JSON",
+         ".yaml": "YAML", ".yml": "YAML", ".xml": "XML", ".html": "HTML", ".css": "CSS", ".sh": "Shell",
+         ".gradle": "Gradle", ".cmake": "CMake", ".sql": "SQL", ".ini": "INI", ".toml": "TOML", ".md": "Markdown",
+         ".tscn": "Godot сцена", ".unity": "Unity сцена", ".prefab": "Unity префаб", ".asset": "Unity ассет"}
+_CTRL = {"if", "for", "while", "switch", "catch", "return", "sizeof", "else", "do", "using", "lock", "foreach",
+         "new", "delete", "throw", "case", "typeof", "nameof", "await", "yield", "when", "elif"}
+_PATTERNS = {
+    "C#": [(r"^\s*(?:\[[^\]]*\]\s*)*(?:(?:public|private|protected|internal|static|sealed|abstract|partial|readonly)\s+)*"
+            r"(class|struct|interface|enum|record)\s+(\w+)", "type"),
+           (r"^\s*(?:(?:public|private|protected|internal|static|virtual|override|abstract|async|sealed|extern|unsafe|new)\s+)+"
+            r"[\w<>\[\],\.\?\s]+?\s+(\w+)\s*(?:<[^>]*>)?\s*\(", "func")],
+    "Java": [(r"^\s*(?:(?:public|private|protected|static|final|abstract)\s+)*(class|interface|enum|record)\s+(\w+)", "type"),
+             (r"^\s*(?:(?:public|private|protected|static|final|synchronized|abstract)\s+)+[\w<>\[\],\.\s]+?\s+(\w+)\s*\(", "func")],
+    "Kotlin": [(r"^\s*(?:\w+\s+)*(class|interface|object|enum class|data class)\s+(\w+)", "type"),
+               (r"^\s*(?:\w+\s+)*fun\s+(?:<[^>]*>\s*)?(?:\w+\.)?(\w+)\s*\(", "func")],
+    "C": [(r"^\s*(?:typedef\s+)?(?:(?:public|private|protected)\s*:\s*)?(class|struct|enum|union)\s+(\w+)", "type"),
+          (r"^\s{0,8}(?:(?:static|inline|virtual|explicit|friend|constexpr|const|unsigned|signed|public|private|protected|override|final|API|__attribute__\(\([^)]*\)\))\s+)*"
+           r"[\w:][\w\s\*:<>,~&]*?\b(~?\w+(?:::~?\w+)*)\s*\([^;{]*\)\s*(?:const)?\s*(?:noexcept\s*)?(?:override\s*)?(?:\{|$)", "func")],
+    "JavaScript": [(r"^\s*(?:export\s+)?(?:default\s+)?(class)\s+(\w+)", "type"),
+                   (r"^\s*(?:export\s+)?(?:async\s+)?function\s*\*?\s*(\w+)\s*\(", "func"),
+                   (r"^\s*(?:export\s+)?(?:const|let|var)\s+(\w+)\s*=\s*(?:async\s*)?(?:\([^)]*\)|\w+)\s*=>", "func"),
+                   (r"^\s+(?:static\s+)?(?:async\s+)?(\w+)\s*\([^)]*\)\s*\{", "func")],
+    "Go": [(r"^type\s+(\w+)\s+(struct|interface)", "type2"), (r"^func\s+(?:\([^)]*\)\s*)?(\w+)\s*\(", "func")],
+    "Rust": [(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(struct|enum|trait|impl)\s+(?:<[^>]*>\s*)?(\w+)", "type"),
+             (r"^\s*(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:unsafe\s+)?fn\s+(\w+)", "func")],
+    "Lua": [(r"^\s*(?:local\s+)?function\s+([\w\.:]+)\s*\(", "func"),
+            (r"^\s*(?:local\s+)?([\w\.]+)\s*=\s*function\s*\(", "func")],
+    "GDScript": [(r"^\s*(class_name|class)\s+(\w+)", "type"), (r"^\s*(?:static\s+)?func\s+(\w+)\s*\(", "func")],
+    "Swift": [(r"^\s*(?:\w+\s+)*(class|struct|enum|protocol|extension)\s+(\w+)", "type"),
+              (r"^\s*(?:\w+\s+)*func\s+(\w+)", "func")],
+    "PHP": [(r"^\s*(?:abstract\s+|final\s+)?(class|interface|trait)\s+(\w+)", "type"),
+            (r"^\s*(?:(?:public|private|protected|static)\s+)*function\s+(\w+)\s*\(", "func")],
+    "Ruby": [(r"^\s*(class|module)\s+([\w:]+)", "type"), (r"^\s*def\s+(?:self\.)?(\w+[?!]?)", "func")],
+}
+_ALIAS = {"C/C++": "C", "C++": "C", "Objective-C": "C", "Objective-C++": "C", "TypeScript": "JavaScript"}
+
+
+def _outline_text(text: str, lang: str):
+    """Список (номер строки, вид, имя, отступ) — классы/функции/методы."""
+    if lang == "Python":
+        import ast as _ast
+        try:
+            tree = _ast.parse(text)
+        except SyntaxError as e:
+            return [(e.lineno or 0, "error", f"синтаксическая ошибка: {e.msg}", 0)]
+        out = []
+
+        def walk(node, depth):
+            for ch in _ast.iter_child_nodes(node):
+                if isinstance(ch, _ast.ClassDef):
+                    out.append((ch.lineno, "class", ch.name, depth)); walk(ch, depth + 1)
+                elif isinstance(ch, (_ast.FunctionDef, _ast.AsyncFunctionDef)):
+                    args = ", ".join(a.arg for a in ch.args.args)
+                    out.append((ch.lineno, "def", f"{ch.name}({args})", depth)); walk(ch, depth + 1)
+        walk(tree, 0)
+        return out
+    pats = _PATTERNS.get(_ALIAS.get(lang, lang))
+    if not pats:
+        return []
+    out = []
+    comp = [(re.compile(p), kind) for p, kind in pats]
+    in_block_comment = False
+    for i, line in enumerate(text.splitlines(), 1):
+        st = line.strip()
+        if in_block_comment:
+            if "*/" in st:
+                in_block_comment = False
+            continue
+        if st.startswith("/*") and "*/" not in st:
+            in_block_comment = True
+            continue
+        if not st or st.startswith(("//", "#", "--", "*")) and lang not in ("Python",):
+            if not (lang == "C" and st.startswith("#define")):
+                continue
+        for rx, kind in comp:
+            m = rx.match(line)
+            if not m:
+                continue
+            if kind == "type":
+                out.append((i, m.group(1), m.group(2), len(line) - len(line.lstrip())))
+            elif kind == "type2":
+                out.append((i, m.group(2), m.group(1), 0))
+            else:
+                name = m.group(1)
+                if name.split("::")[-1] in _CTRL:
+                    continue
+                out.append((i, "func", name + "()", len(line) - len(line.lstrip())))
+            break
+    return out
+
+
+def code_outline(uid: int, name: str) -> str:
+    size = os.path.getsize(ws._path(uid, name))
+    if size > ws.BIG:
+        return "Файл больше 32 МБ — для структуры используй search_files по нужным именам."
+    text = ws.decode_text(ws.read_bytes(uid, name))
+    lang = LANGS.get(os.path.splitext(name)[1].lower(), "")
+    items = _outline_text(text, lang)
+    if not items:
+        return (f"{name} ({lang or 'неизвестный язык'}, {len(text.splitlines())} строк): структура не найдена"
+                + ("" if lang in _PATTERNS or lang in _ALIAS or lang == "Python" else
+                   " — для этого формата разбор структуры не поддерживается, читай read_file."))
+    lines = [f"{name} — {lang}, {len(text.splitlines())} строк, элементов: {len(items)}"]
+    for ln, kind, nm, ind in items[:400]:
+        pad = "  " * min(ind // 2 if ind > 3 else ind, 6)
+        lines.append(f"{ln:>6}  {pad}{kind} {nm}")
+    if len(items) > 400:
+        lines.append(f"… ещё {len(items) - 400}")
+    return "\n".join(lines)
+
+
+def find_definition(uid: int, symbol: str, glob: str = "*") -> str:
+    hits = []
+    for f in ws.list_files(uid):
+        lang = LANGS.get(os.path.splitext(f["name"])[1].lower(), "")
+        if not lang or f["size"] > ws.BIG or not _match_glob(f["name"], glob):
+            continue
+        if lang not in _PATTERNS and lang not in _ALIAS and lang != "Python":
+            continue
+        raw = ws.read_bytes(uid, f["name"])
+        if symbol.encode() not in raw:
+            continue
+        for ln, kind, nm, _ in _outline_text(ws.decode_text(raw), lang):
+            base = nm.split("(")[0].split("::")[-1].split(".")[-1].split(":")[-1]
+            if base == symbol or nm.split("(")[0] == symbol:
+                hits.append(f"{f['name']}:{ln}: {kind} {nm}")
+    return "\n".join(hits[:100]) or f"Определение «{symbol}» не найдено (попробуй search_files)."
+
+
+def project_overview(uid: int, root: str = "") -> str:
+    files = [f for f in ws.list_files(uid) if not root or f["name"].startswith(root.rstrip("/") + "/")]
+    if not files:
+        return "Файлов нет."
+    names = {f["name"] for f in files}
+    total = sum(f["size"] for f in files)
+    by_lang, lines_by_lang = {}, {}
+    for f in files:
+        lang = LANGS.get(os.path.splitext(f["name"])[1].lower(), "прочее")
+        by_lang[lang] = by_lang.get(lang, 0) + 1
+    engine = []
+    joined = "\n".join(names)
+    checks = [("Unity", r"(^|/)Assets/|ProjectSettings/|\.unity$|\.meta$"), ("Godot", r"project\.godot|\.gd$|\.tscn$"),
+              ("Unreal Engine", r"\.uproject$|/Source/.*\.Build\.cs$"), ("Android/Gradle", r"AndroidManifest\.xml|build\.gradle"),
+              ("Node.js", r"(^|/)package\.json$"), ("Python", r"requirements\.txt|pyproject\.toml|setup\.py"),
+              ("CMake", r"CMakeLists\.txt"), ("Cocos", r"cocos"), ("libGDX", r"gdx"), ("Rust/Cargo", r"Cargo\.toml"),
+              ("Go", r"(^|/)go\.mod$"), ("Love2D", r"(^|/)main\.lua$|conf\.lua")]
+    for label, rx in checks:
+        if re.search(rx, joined, re.I | re.M):
+            engine.append(label)
+    entry = [n for n in sorted(names) if re.search(
+        r"(^|/)(main\.(py|c|cpp|go|rs|lua|js|ts)|index\.(js|ts)|Program\.cs|GameManager\.cs|Main\.(java|kt|cs)|"
+        r"project\.godot|AndroidManifest\.xml|package\.json|CMakeLists\.txt|Cargo\.toml)$", n)][:15]
+    biggest = sorted(files, key=lambda f: -f["size"])[:8]
+    dirs = {}
+    for f in files:
+        top = "/".join(f["name"].split("/")[:2]) if "/" in f["name"] else "(корень)"
+        dirs[top] = dirs.get(top, 0) + 1
+    import bigfiles
+    out = [f"Проект{(' ' + root) if root else ''}: {len(files)} файлов, {bigfiles.human(total)}",
+           "Похоже на: " + (", ".join(engine) or "не определил"),
+           "Языки/типы: " + ", ".join(f"{k} {v}" for k, v in sorted(by_lang.items(), key=lambda x: -x[1])[:15]),
+           "Точки входа/ключевые файлы: " + (", ".join(entry) or "не нашёл"),
+           "Крупнейшие файлы: " + ", ".join(f"{f['name']} ({bigfiles.human(f['size'])})" for f in biggest),
+           "Папки (файлов): " + ", ".join(f"{d} {n}" for d, n in sorted(dirs.items(), key=lambda x: -x[1])[:25]),
+           "Дальше: code_outline для ключевых файлов, find_definition/search_files для нужных имён."]
+    return "\n".join(out)
 
 
 # ---------- GitHub ----------
@@ -517,6 +706,22 @@ TOOLS_ALL = [
                 "content": {"type": "string"}, "status": {"type": "string"}}}}},
             "required": ["todos"]}}},
     {"type": "function", "function": {
+        "name": "project_overview",
+        "description": "Обзор проекта за один вызов: движок (Unity/Godot/Unreal/Android…), языки, точки входа, "
+                       "крупнейшие файлы, папки. Начинай с него работу с незнакомым проектом.",
+        "parameters": {"type": "object", "properties": {
+            "root": {"type": "string", "description": "Папка проекта в рабочей папке (по умолчанию всё)"}}}}},
+    {"type": "function", "function": {
+        "name": "code_outline",
+        "description": "Структура файла кода: классы, функции, методы с номерами строк (Python, C/C++, C#, Java, "
+                       "Kotlin, JS/TS, Go, Rust, Lua, GDScript, Swift, PHP, Ruby). Быстрее, чем читать файл целиком.",
+        "parameters": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "find_definition",
+        "description": "Где в проекте определён класс/функция/метод с таким именем (файл:строка).",
+        "parameters": {"type": "object", "properties": {
+            "symbol": {"type": "string"}, "glob": {"type": "string"}}, "required": ["symbol"]}}},
+    {"type": "function", "function": {
         "name": "glob_files",
         "description": "Найти файлы по маске имени: *.py, src/**/*.js, **/test_*.py (несколько масок через запятую).",
         "parameters": {"type": "object", "properties": {"pattern": {"type": "string"}}, "required": ["pattern"]}}},
@@ -633,6 +838,13 @@ async def run_tool(uid: int, name: str, args: dict, out, status):
         await status.update(force=True)
         done = sum(t.get("status") == "completed" for t in todos)
         return f"План обновлён: {done}/{len(todos)} выполнено."
+    if name == "project_overview":
+        return await asyncio.to_thread(project_overview, uid, args.get("root") or "")
+    if name == "code_outline":
+        status.actions.append(f"🗂 Структура {args.get('name', '')}")
+        return await asyncio.to_thread(code_outline, uid, args["name"])
+    if name == "find_definition":
+        return await asyncio.to_thread(find_definition, uid, args["symbol"], args.get("glob") or "*")
     if name == "glob_files":
         return await asyncio.to_thread(glob_files, uid, args.get("pattern") or "*")
     if name == "search_files":
@@ -664,6 +876,9 @@ async def run_tool(uid: int, name: str, args: dict, out, status):
         return await asyncio.to_thread(diff_files, uid, args["a"], args["b"])
     if name == "zip_files":
         archive, n = await asyncio.to_thread(make_zip, uid, args.get("names") or [], args.get("archive") or "project.zip")
+        if os.path.getsize(ws._path(uid, archive)) > ws.TG_SEND_LIMIT:
+            return (f"Архив {archive} ({n} файлов) создан, но он больше 50 МБ — Telegram не даёт боту отправить "
+                    f"такой файл. Собери архив только из изменённых файлов (names=[…]).")
         await out.reply_document(document=ws.read_bytes(uid, archive), filename=os.path.basename(archive),
                                  caption=f"📦 {n} файл(ов)")
         status.actions.append(f"📦 Отправил архив {archive}")

@@ -22,11 +22,12 @@ import binary
 
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
 
-MAX_FILE_BYTES = 2 * 1024 * 1024          # один текстовый файл
-MAX_BINARY_BYTES = 20 * 1024 * 1024       # один двоичный файл (.so и т.п.) — предел Telegram для ботов
-MAX_WORKSPACE_BYTES = 60 * 1024 * 1024    # все файлы пользователя
-MAX_FILES = 200
-MAX_ZIP_MEMBERS = 200
+MAX_FILE_BYTES = 2 * 1024 * 1024 * 1024    # один файл — до 2 ГБ (большие приходят ссылкой, см. bigfiles)
+MAX_BINARY_BYTES = MAX_FILE_BYTES
+MAX_WORKSPACE_BYTES = int(float(os.environ.get("WORKSPACE_MAX_GB", "4")) * 1024 ** 3)   # все файлы пользователя
+MAX_FILES = 20000
+MAX_ZIP_MEMBERS = 5000
+BIG = 32 * 1024 * 1024                      # больше этого — читаем/ищем потоково, не целиком
 MAX_HISTORY_MESSAGES = 60                 # сколько сообщений диалога помним
 MAX_HISTORY_CHARS = 200_000
 READ_CHUNK = 60_000                       # сколько символов отдаёт read_file за раз
@@ -122,9 +123,8 @@ def decode_text(data: bytes) -> str:
 
 
 def save_file(uid: int, name: str, data: bytes) -> str:
-    limit = MAX_FILE_BYTES if is_text(data) else MAX_BINARY_BYTES
-    if len(data) > limit:
-        raise ValueError(f"файл больше {limit // 1024 // 1024} МБ")
+    if len(data) > MAX_FILE_BYTES:
+        raise ValueError("файл больше 2 ГБ")
     name = safe_name(name)
     p = _path(uid, name)
     existing = os.path.getsize(p) if os.path.exists(p) else 0
@@ -132,7 +132,7 @@ def save_file(uid: int, name: str, data: bytes) -> str:
     if not os.path.exists(p) and len(files) >= MAX_FILES:
         raise ValueError(f"в рабочей папке уже {MAX_FILES} файлов — удали лишние (/files)")
     if sum(f["size"] for f in files) - existing + len(data) > MAX_WORKSPACE_BYTES:
-        raise ValueError(f"рабочая папка переполнена ({MAX_WORKSPACE_BYTES // 1024 // 1024} МБ) — "
+        raise ValueError(f"рабочая папка переполнена ({MAX_WORKSPACE_BYTES / 1024 ** 3:.0f} ГБ) — "
                          f"удали лишние файлы (/files)")
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "wb") as f:
@@ -161,7 +161,7 @@ def extract_zip(uid: int, data: bytes):
         members = [m for m in z.infolist() if not m.is_dir()]
         for m in members[:MAX_ZIP_MEMBERS]:
             if m.file_size > MAX_BINARY_BYTES:
-                skipped.append(f"{m.filename} (больше 20 МБ)")
+                skipped.append(f"{m.filename} (больше 2 ГБ)")
                 continue
             if any(seg in m.filename for seg in ("__MACOSX/", ".git/", "node_modules/", "__pycache__/")):
                 continue
@@ -663,9 +663,14 @@ def workspace_note(uid: int) -> str:
     return "\n".join(lines)
 
 
+TG_SEND_LIMIT = 50 * 1024 * 1024     # бот может отправить файл не больше 50 МБ
+
+
 async def _maybe_send(uid, name, args, out, status) -> str:
     if not args.get("send") or out is None:
         return ""
+    if os.path.getsize(_path(uid, name)) > TG_SEND_LIMIT:
+        return " (Файл больше 50 МБ — Telegram не даёт боту его отправить.)"
     await out.reply_document(document=read_bytes(uid, name), filename=os.path.basename(safe_name(name)),
                              caption=(args.get("caption") or "")[:1000] or None)
     status.actions.append(f"📤 Отправил {name}")
@@ -680,10 +685,22 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
             files = list_files(uid)
             return "\n".join(f"{f['name']}\t{f['size']} байт" for f in files) or "Рабочая папка пуста."
         if name == "read_file":
+            path = _path(uid, args["name"])
+            size = os.path.getsize(path)
+            with open(path, "rb") as fh:
+                headb = fh.read(8192)
+            if not is_text(headb):
+                return (f"{args['name']} — двоичный файл ({binary.kind(headb)}, {size} байт). "
+                        f"Используй analyze_binary или read_range.")
+            if size > BIG:
+                import bigfiles
+                start = max(1, int(args.get("start_line") or 1))
+                limit = max(1, min(int(args.get("limit") or 1500), 3000))
+                part, last, eof = await asyncio.to_thread(bigfiles.read_lines_stream, uid, args["name"], start, limit)
+                tail = "" if eof else f"\n[… файл {bigfiles.human(size)}; продолжение: start_line={start + len(part)}]"
+                return f"Файл {args['name']} ({bigfiles.human(size)}), строки {start}–{start + len(part) - 1}:\n" \
+                    + "\n".join(part) + tail
             raw = read_bytes(uid, args["name"])
-            if not is_text(raw):
-                return (f"{args['name']} — двоичный файл ({binary.kind(raw)}, {len(raw)} байт). "
-                        f"Используй analyze_binary.")
             lines = decode_text(raw).splitlines()
             start = max(1, int(args.get("start_line") or 1))
             limit = max(1, min(int(args.get("limit") or 1500), 3000))
@@ -705,6 +722,8 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
             sent = await _maybe_send(uid, saved, args, out, status)
             return f"Файл {saved} сохранён ({len(args.get('content') or '')} символов).{sent}"
         if name == "edit_file":
+            if os.path.getsize(_path(uid, args["name"])) > BIG:
+                return "Файл слишком большой для правки целиком (больше 32 МБ). Правь исходники поменьше."
             text = decode_text(read_bytes(uid, args["name"]))
             edits = args.get("edits") or [{"old": args.get("old", ""), "new": args.get("new", ""),
                                            "replace_all": args.get("replace_all")}]
@@ -733,6 +752,9 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
             status.actions.append(f"🗑 Удалил {args['name']}")
             return f"Файл {args['name']} удалён."
         if name == "send_file":
+            if os.path.getsize(_path(uid, args["name"])) > TG_SEND_LIMIT:
+                return ("Файл больше 50 МБ — Telegram не позволяет боту его отправить. "
+                        "Отправь только изменённые файлы или собери их в zip_files.")
             data = read_bytes(uid, args["name"])
             await out.reply_document(document=data, filename=os.path.basename(safe_name(args["name"])),
                                      caption=(args.get("caption") or "")[:1000] or None)
@@ -741,7 +763,7 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
         if name == "analyze_binary":
             status.actions.append(f"🔬 {args.get('what', 'summary')} {args.get('name', '')}")
             await status.update(force=True)
-            data = read_bytes(uid, args["name"])
+            data = await asyncio.to_thread(binary.open_blob, _path(uid, args["name"]))
             return await asyncio.to_thread(
                 binary.analyze, data, args["name"], args.get("what") or "summary", args.get("query") or "",
                 int(args.get("offset") or 0), args.get("target") or "", int(args.get("count") or 120),

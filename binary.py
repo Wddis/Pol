@@ -4,6 +4,7 @@
 и не требует много памяти — подходит для бесплатного сервера на 256 МБ.
 """
 import hashlib
+import os
 import io
 import re
 
@@ -30,9 +31,108 @@ def kind(data: bytes) -> str:
     return "неизвестный двоичный формат"
 
 
-def _elf(data: bytes):
+class _MMReader:
+    """Файловый интерфейс поверх mmap/bytes без копирования (для файлов до 2 ГБ)."""
+    def __init__(self, buf):
+        self.buf, self.pos = buf, 0
+
+    def read(self, n=-1):
+        end = len(self.buf) if n is None or n < 0 else min(len(self.buf), self.pos + n)
+        out = bytes(self.buf[self.pos:end]); self.pos = end
+        return out
+
+    def seek(self, off, whence=0):
+        self.pos = off if whence == 0 else (self.pos + off if whence == 1 else len(self.buf) + off)
+        return self.pos
+
+    def tell(self):
+        return self.pos
+
+
+CHUNK = 8 * 1024 * 1024
+OVERLAP = 1024
+
+
+class FileBlob:
+    """Файл на диске, который ведёт себя как bytes (срезы, find, len), но читается кусками.
+    Память не зависит от размера файла — подходит для файлов до 2 ГБ на сервере с 256 МБ."""
+    def __init__(self, path):
+        self.path = path
+        self.f = open(path, "rb")
+        self.size = os.fstat(self.f.fileno()).st_size
+
+    def __len__(self):
+        return self.size
+
+    def __getitem__(self, k):
+        if isinstance(k, slice):
+            start, stop, _ = k.indices(self.size)
+            if stop <= start:
+                return b""
+            self.f.seek(start)
+            return self.f.read(stop - start)
+        self.f.seek(k if k >= 0 else self.size + k)
+        return self.f.read(1)[0]
+
+    def find(self, sub, start=0, end=None):
+        end = self.size if end is None else end
+        pos = start
+        while pos < end:
+            chunk = self[pos:min(end, pos + CHUNK + len(sub))]
+            i = chunk.find(sub)
+            if i != -1:
+                return pos + i
+            pos += CHUNK
+        return -1
+
+    def close(self):
+        self.f.close()
+
+
+def open_blob(path: str):
+    """Маленькие файлы читаем целиком (быстрее), большие — потоково."""
+    if os.path.getsize(path) <= 64 * 1024 * 1024:
+        with open(path, "rb") as f:
+            return f.read()
+    return FileBlob(path)
+
+
+def _chunks(data, limit=None):
+    """(смещение, кусок) с перекрытием — для поиска по большим файлам."""
+    size = len(data) if limit is None else min(len(data), limit)
+    if isinstance(data, (bytes, bytearray)) and size == len(data):
+        yield 0, data
+        return
+    pos = 0
+    while pos < size:
+        yield pos, data[pos:min(size, pos + CHUNK + OVERLAP)]
+        pos += CHUNK
+
+
+def _sha256(data):
+    h = hashlib.sha256()
+    for off, ch in _chunks(data):
+        h.update(ch[:CHUNK] if off + CHUNK < len(data) else ch)
+    return h.hexdigest()
+
+
+def _elf(data):
     from elftools.elf.elffile import ELFFile
-    return ELFFile(io.BytesIO(data))
+    return ELFFile(_MMReader(data))
+
+
+def _scan_labels(data, table, limit=None):
+    """Какие метки из table встречаются в файле (без учёта регистра). Быстрый поиск подстрок по кускам."""
+    pats = [p.lower() for p, _ in table]
+    found = set()
+    for _, ch in _chunks(data, limit):
+        low = ch.lower()
+        for i, p in enumerate(pats):
+            if i not in found and p in low:
+                found.add(i)
+        if len(found) == len(table):
+            break
+    return [table[i][1] for i in sorted(found)]
 
 
 def _demangle(name: str) -> str:
@@ -45,7 +145,7 @@ def _demangle(name: str) -> str:
 
 def summary(data: bytes, name: str = "") -> str:
     k = kind(data)
-    lines = [f"Файл {name}: {len(data)} байт, формат {k}, sha256 {hashlib.sha256(data).hexdigest()[:16]}…"]
+    lines = [f"Файл {name}: {len(data)} байт, формат {k}, sha256 {_sha256(data)[:16]}…"]
     if k != "ELF":
         lines.append("Подробный разбор доступен для ELF (.so, исполняемые Linux/Android). "
                      "Для других форматов доступны strings.")
@@ -100,29 +200,26 @@ def summary(data: bytes, name: str = "") -> str:
             nx = not (seg["p_flags"] & 1)
         if seg["p_type"] == "PT_GNU_RELRO":
             relro = True
-    canary = any(n in data for n in (b"__stack_chk_fail",))
+    canary = data.find(b"__stack_chk_fail") != -1
     lines.append(f"Защиты: NX {'да' if nx else 'нет'}, RELRO {'да' if relro else 'нет'}, "
                  f"stack canary {'да' if canary else 'не видно'}")
     # заметные движки/библиотеки по строкам
-    low = data.lower()
-    hints = [lbl for pat, lbl in [(b"unityplayer", "Unity"), (b"il2cpp", "IL2CPP (Unity)"),
+    hints = _scan_labels(data, [(b"unityplayer", "Unity"), (b"il2cpp", "IL2CPP (Unity)"),
                                   (b"mono_", "Mono"), (b"unreal", "Unreal Engine"),
                                   (b"cocos2d", "Cocos2d"), (b"godot", "Godot"), (b"sdl_", "SDL"),
                                   (b"lua_", "Lua"), (b"gles", "OpenGL ES"), (b"vkcreate", "Vulkan"),
                                   (b"fmod", "FMOD"), (b"box2d", "Box2D"), (b"physx", "PhysX"),
-                                  (b"libgdx", "libGDX"), (b"flutter", "Flutter")]
-             if pat in low]
+                                  (b"libgdx", "libGDX"), (b"flutter", "Flutter")])
     if hints:
         lines.append("Похоже, используется: " + ", ".join(dict.fromkeys(hints)))
     # защита/обфускация/подпись — часто ради этого и смотрят .so
-    prot = [lbl for pat, lbl in [(b"global-metadata", "IL2CPP global-metadata.dat"),
+    prot = _scan_labels(data, [(b"global-metadata", "IL2CPP global-metadata.dat"),
                                  (b" libtprt", "Tencent защита"), (b"jiagu", "360 Jiagu обфускация"),
                                  (b"bangcle", "Bangcle защита"), (b"ijiami", "Ijiami защита"),
                                  (b"obfuscat", "обфускация"), (b"anti-debug", "анти-отладка"),
                                  (b"ptrace", "проверка ptrace (анти-отладка)"),
                                  (b"frida", "детект Frida"), (b"signature", "проверка подписи"),
-                                 (b"licens", "лицензирование")]
-            if pat in low]
+                                 (b"licens", "лицензирование")])
     if prot:
         lines.append("Защита/подпись (по строкам): " + ", ".join(dict.fromkeys(prot)))
     # сразу показываем экспортируемые функции и секции — чтобы не делать лишних шагов
@@ -198,27 +295,58 @@ def sections(data: bytes) -> str:
     return "\n".join(lines)
 
 
-def strings(data: bytes, query: str = "", min_len: int = 5, offset: int = 0) -> str:
-    found = []
-    q = query.lower()
-    for m in re.finditer(rb"[\x20-\x7e\t]{%d,}" % max(3, min_len), data):
-        s = m.group().decode("ascii", "replace")
-        if not q or q in s.lower():
-            found.append((m.start(), s[:200]))
-    for m in re.finditer(rb"(?:[\xd0-\xd1][\x80-\xbf]|[\x20-\x7e]){%d,}" % max(3, min_len), data):
-        try:
-            s = m.group().decode("utf-8")
-        except UnicodeDecodeError:
-            continue
-        if any("Ѐ" <= ch <= "ӿ" for ch in s) and (not q or q in s.lower()):
-            found.append((m.start(), s[:200]))
-    found.sort()
-    part = found[offset:offset + MAX_LIST]
-    lines = [f"Строк найдено: {len(found)}" + (f" по запросу «{query}»" if query else "")]
-    lines += [f"0x{o:x}\t{s}" for o, s in part]
-    if len(found) > offset + MAX_LIST:
-        lines.append(f"… ещё {len(found) - offset - MAX_LIST}, используй offset={offset + MAX_LIST} "
-                     f"или уточни query")
+_PRINT = set(range(0x20, 0x7f)) | {9} | set(range(0x80, 0xc0)) | {0xd0, 0xd1}
+
+
+def _expand(ch: bytes, i: int, j: int):
+    """Расширить найденный фрагмент до границ печатной строки."""
+    a, b = i, j
+    while a > 0 and ch[a - 1] in _PRINT and i - a < 300:
+        a -= 1
+    while b < len(ch) and ch[b] in _PRINT and b - j < 300:
+        b += 1
+    return a, ch[a:b]
+
+
+def strings(data, query: str = "", min_len: int = 5, offset: int = 0) -> str:
+    """Строки внутри файла. С query — быстрый поиск подстроки (гигабайты за секунды);
+    без query — первые строки файла (для больших файлов лучше задавать query)."""
+    total, part = 0, []
+    big = len(data) > 64 * 1024 * 1024
+    if query:
+        q = query.lower().encode("utf-8", "ignore")
+        for base, ch in _chunks(data):
+            low = ch.lower()
+            pos = low.find(q)
+            while pos != -1:
+                if pos < CHUNK:                       # начало в зоне перекрытия — его найдёт следующий кусок
+                    a, frag = _expand(ch, pos, pos + len(q))
+                    if offset <= total < offset + MAX_LIST:
+                        part.append((base + a, frag.decode("utf-8", "replace")[:200]))
+                    total += 1
+                pos = low.find(q, pos + 1)
+    else:
+        rx = re.compile(rb"(?:[\xd0-\xd1][\x80-\xbf]|[\x20-\x7e\t]){%d,}" % max(3, min_len))
+        stop = False
+        for base, ch in _chunks(data):
+            for m in rx.finditer(ch):
+                if m.start() >= CHUNK:
+                    continue
+                if offset <= total < offset + MAX_LIST:
+                    part.append((base + m.start(), m.group()[:400].decode("utf-8", "replace")[:200]))
+                total += 1
+                if big and total >= offset + MAX_LIST:
+                    stop = True
+                    break
+            if stop:
+                break
+        if stop:
+            return "\n".join([f"Первые {len(part)} строк (файл большой — для поиска задай query, это быстро):"]
+                             + [f"0x{o:x}\t{t}" for o, t in part])
+    lines = [f"Строк найдено: {total}" + (f" по запросу «{query}»" if query else "")]
+    lines += [f"0x{o:x}\t{t}" for o, t in part]
+    if total > offset + MAX_LIST:
+        lines.append(f"… ещё {total - offset - MAX_LIST}, используй offset={offset + MAX_LIST} или уточни query")
     return "\n".join(lines)
 
 

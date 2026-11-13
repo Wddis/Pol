@@ -11,6 +11,7 @@ import httpx
 from bs4 import BeautifulSoup
 import workspace as ws
 import devtools
+import bigfiles
 from ddgs import DDGS
 from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup,
                       ReplyKeyboardMarkup, BotCommand)
@@ -399,6 +400,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
             web_note=WEB_NOTE_ON if use_web else WEB_NOTE_OFF)
         prompt += "\n" + ws.workspace_note(user_id)
         prompt += "\n" + (devtools.NOTE_OWNER if devtools.is_owner(user_id) else devtools.NOTE_GUEST)
+        prompt += "\n" + bigfiles.NOTE
         user_instr = instructions.get(str(user_id), [])
         if user_instr:
             names = ", ".join(f"«{it['name']}»" for it in user_instr)
@@ -441,7 +443,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
     async with httpx.AsyncClient(timeout=timeout) as client:
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             tools = (TOOLS if use_web else []) + ws.FILE_TOOLS + ws.API_TOOLS + devtools.TOOLS_ALL \
-                + (devtools.TOOLS_OWNER if devtools.is_owner(user_id) else []) \
+                + bigfiles.TOOLS + (devtools.TOOLS_OWNER if devtools.is_owner(user_id) else []) \
                 if round_no < MAX_TOOL_ROUNDS else None
             # Только выбранная модель — никаких подмен. При лимите ждём с обратным отсчётом.
             routes = [r for r in MODELS[chosen]["routes"] if PROVIDERS[r[0]]["key"]]
@@ -541,7 +543,14 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                         status.actions.append(f"📄 Читаю {args.get('name', '')}")
                     status.stage = "🛠 Работаю с файлами и API…"
                     await status.update(force=True)
-                    if c["name"] in devtools.TOOL_NAMES:
+                    if c["name"] in bigfiles.TOOL_NAMES:
+                        try:
+                            result = await bigfiles.run_tool(user_id, c["name"], args, out, status)
+                        except FileNotFoundError:
+                            result = f"Файла {args.get('name')} нет. Посмотри list_files."
+                        except (ValueError, KeyError) as e:
+                            result = f"Ошибка: {e}"
+                    elif c["name"] in devtools.TOOL_NAMES:
                         try:
                             result = await devtools.run_tool(user_id, c["name"], args, out, status)
                         except FileNotFoundError:
