@@ -394,16 +394,20 @@ FILE_TOOLS = [
     {"type": "function", "function": {
         "name": "write_file",
         "description": "Создать или полностью перезаписать файл в рабочей папке. Пиши ВЕСЬ файл целиком. "
-                       "Чтобы пользователь получил файл — потом вызови send_file.",
+                       "send=true — сразу отправить файл пользователю (без отдельного send_file).",
         "parameters": {"type": "object", "properties": {
-            "name": {"type": "string"}, "content": {"type": "string", "description": "Полное содержимое"}},
+            "name": {"type": "string"}, "content": {"type": "string", "description": "Полное содержимое"},
+            "send": {"type": "boolean", "description": "Сразу прислать файл пользователю"},
+            "caption": {"type": "string"}},
             "required": ["name", "content"]}}},
     {"type": "function", "function": {
         "name": "edit_file",
         "description": "Точечная правка: заменить фрагмент old на new в файле (old должен встречаться ровно один раз). "
                        "Удобно для небольших изменений больших файлов.",
         "parameters": {"type": "object", "properties": {
-            "name": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}},
+            "name": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"},
+            "send": {"type": "boolean", "description": "Сразу прислать изменённый файл пользователю"},
+            "caption": {"type": "string"}},
             "required": ["name", "old", "new"]}}},
     {"type": "function", "function": {
         "name": "delete_file",
@@ -451,7 +455,11 @@ def workspace_note(uid: int) -> str:
              "У тебя есть рабочая папка пользователя: читай (read_file), меняй (write_file/edit_file), "
              "создавай файлы и присылай их пользователю (send_file). Когда пользователь просит изменить "
              "скрипт — внеси правку в файл и пришли его через send_file. "
-             "Можешь вызывать API (call_api) и присылать скриншоты их работы (api_screenshot)."]
+             "Можешь вызывать API (call_api) и присылать скриншоты их работы (api_screenshot).",
+             "ЭКОНОМЬ ШАГИ (у модели лимит запросов в минуту): делай нужные вызовы инструментов сразу "
+             "за один шаг; для изменения файла с отправкой используй write_file/edit_file с send=true; "
+             "не перечитывай файл, если его содержимое уже есть в этом сообщении или ты только что его записал; "
+             "не трогай файлы, о которых не просили."]
     if files:
         shown = files[:60]
         lines.append(f"Файлы ({len(files)}): " + ", ".join(f"{f['name']} ({f['size']} Б)" for f in shown)
@@ -464,6 +472,15 @@ def workspace_note(uid: int) -> str:
         lines.append("API-коннекторов нет (пользователь добавляет их командой /api). "
                      "Публичные https-API можно вызывать без коннектора.")
     return "\n".join(lines)
+
+
+async def _maybe_send(uid, name, args, out, status) -> str:
+    if not args.get("send") or out is None:
+        return ""
+    await out.reply_document(document=read_bytes(uid, name), filename=os.path.basename(safe_name(name)),
+                             caption=(args.get("caption") or "")[:1000] or None)
+    status.actions.append(f"📤 Отправил {name}")
+    return " Файл отправлен пользователю."
 
 
 async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> str:
@@ -483,7 +500,8 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
         if name == "write_file":
             saved = save_file(uid, args["name"], (args.get("content") or "").encode("utf-8"))
             status.actions.append(f"✏️ Записал {saved}")
-            return f"Файл {saved} сохранён ({len(args.get('content') or '')} символов)."
+            sent = await _maybe_send(uid, saved, args, out, status)
+            return f"Файл {saved} сохранён ({len(args.get('content') or '')} символов).{sent}"
         if name == "edit_file":
             text = decode_text(read_bytes(uid, args["name"]))
             n = text.count(args["old"])
@@ -491,7 +509,8 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
                 return f"Фрагмент old встречается {n} раз — нужно ровно 1. Уточни фрагмент или используй write_file."
             save_file(uid, args["name"], text.replace(args["old"], args["new"]).encode("utf-8"))
             status.actions.append(f"✏️ Изменил {args['name']}")
-            return f"Файл {args['name']} изменён."
+            sent = await _maybe_send(uid, args["name"], args, out, status)
+            return f"Файл {args['name']} изменён.{sent}"
         if name == "delete_file":
             delete_file(uid, args["name"])
             status.actions.append(f"🗑 Удалил {args['name']}")
