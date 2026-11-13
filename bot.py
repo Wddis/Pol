@@ -13,10 +13,28 @@ from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup,
 from telegram.ext import (ApplicationBuilder, MessageHandler, CommandHandler,
                           CallbackQueryHandler, filters, ContextTypes)
 
-NVIDIA_API_KEY = os.environ["NVIDIA_API_KEY"]
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
-MODEL = os.environ.get("MODEL", "deepseek-ai/deepseek-v4.1-flash")
-API_URL = "https://integrate.api.nvidia.com/v1/chat/completions"
+
+# Провайдеры по порядку: сначала быстрый OrcaRouter, при ошибке/лимите — NVIDIA.
+PROVIDERS = []
+if os.environ.get("ORCAROUTER_API_KEY"):
+    PROVIDERS.append({
+        "name": "OrcaRouter",
+        "url": "https://api.orcarouter.ai/v1/chat/completions",
+        "key": os.environ["ORCAROUTER_API_KEY"],
+        "model": os.environ.get("ORCA_MODEL", "deepseek/deepseek-v4.1-flash-free"),
+        "extra": {},
+    })
+if os.environ.get("NVIDIA_API_KEY"):
+    PROVIDERS.append({
+        "name": "NVIDIA",
+        "url": "https://integrate.api.nvidia.com/v1/chat/completions",
+        "key": os.environ["NVIDIA_API_KEY"],
+        "model": os.environ.get("NVIDIA_MODEL", "deepseek-ai/deepseek-v4.1-flash"),
+        "extra": {"chat_template_kwargs": {"thinking": True}},
+    })
+if not PROVIDERS:
+    raise SystemExit("Нужен ORCAROUTER_API_KEY и/или NVIDIA_API_KEY")
 
 MAX_TOOL_ROUNDS = 5      # сколько раз подряд модель может искать/открывать страницы
 EDIT_INTERVAL = 2.5      # как часто обновлять сообщение «Думаю…» (сек)
@@ -163,29 +181,35 @@ class LiveStatus:
 
 # ---------- Модель ----------
 
-async def stream_completion(client, messages, status: LiveStatus, use_tools: bool):
+class RetryableError(Exception):
+    pass
+
+
+async def stream_completion(client, provider, messages, status: LiveStatus, use_tools: bool):
     """Один запрос к модели со стримингом. Возвращает (content, reasoning, tool_calls)."""
     payload = {
-        "model": MODEL,
+        "model": provider["model"],
         "messages": messages,
         "max_tokens": 16384,
         "temperature": 1.0,
         "top_p": 1.0,
         "stream": True,
-        "chat_template_kwargs": {"thinking": True},
+        **provider["extra"],
     }
     if use_tools:
         payload["tools"] = TOOLS
 
     content, reasoning = "", ""
     tool_calls = {}
-    async with client.stream("POST", API_URL, json=payload, headers={
-        "Authorization": f"Bearer {NVIDIA_API_KEY}",
+    async with client.stream("POST", provider["url"], json=payload, headers={
+        "Authorization": f"Bearer {provider['key']}",
         "Accept": "text/event-stream",
     }) as resp:
+        if resp.status_code in (429, 500, 502, 503, 504):
+            raise RetryableError(resp.status_code)
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", "replace")
-            raise RuntimeError(f"Ошибка API ({resp.status_code}): {body[:300]}")
+            raise RetryableError(f"{provider['name']} {resp.status_code}: {body[:200]}")
         async for line in resp.aiter_lines():
             if not line.startswith("data: ") or line == "data: [DONE]":
                 continue
@@ -230,8 +254,21 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             allow_tools = use_web and round_no < MAX_TOOL_ROUNDS
             messages = [{"role": "system", "content": system}, *history, *turn]
-            content, reasoning, calls = await stream_completion(
-                client, messages, status, allow_tools)
+            errors = []
+            for provider in PROVIDERS:
+                try:
+                    content, reasoning, calls = await stream_completion(
+                        client, provider, messages, status, allow_tools)
+                    break
+                except (httpx.TransportError, RetryableError) as e:
+                    # Провайдер перегружен / лимит / обрыв — переключаемся на следующий
+                    errors.append(f"{provider['name']}: {type(e).__name__} {e}"[:200])
+                    status.stage = f"🔁 {provider['name']} не ответил, пробую другой сервер…"
+                    status.reasoning = ""
+                    await status.update(force=True)
+            else:
+                raise RuntimeError("Серверы не ответили, попробуй ещё раз чуть позже.\n"
+                                   + "\n".join(errors))
             if reasoning.strip():
                 all_reasoning.append(reasoning.strip())
 
@@ -266,7 +303,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
                 await status.update(force=True)
                 result = await run_tool(c["name"], args)
                 turn.append({"role": "tool", "tool_call_id": c["id"], "content": result})
-            status.stage = "🧠 Размышляю…"
+            status.stage = "⏳ Нашёл, жду очереди на сервере…"
             status.reasoning = ""
     raise RuntimeError("Слишком много обращений к интернету, попробуй переформулировать вопрос.")
 
