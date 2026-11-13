@@ -5,3 +5,5 @@ ddgs
 pillow
 pyelftools
 capstone
+pyflakes
+pyyaml

@@ -10,6 +10,7 @@ from datetime import datetime
 import httpx
 from bs4 import BeautifulSoup
 import workspace as ws
+import devtools
 from ddgs import DDGS
 from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup,
                       ReplyKeyboardMarkup, BotCommand)
@@ -365,6 +366,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
             today=datetime.now().strftime("%d.%m.%Y"),
             web_note=WEB_NOTE_ON if use_web else WEB_NOTE_OFF)
         prompt += "\n" + ws.workspace_note(user_id)
+        prompt += "\n" + (devtools.NOTE_OWNER if devtools.is_owner(user_id) else devtools.NOTE_GUEST)
         user_instr = instructions.get(str(user_id), [])
         if user_instr:
             names = ", ".join(f"«{it['name']}»" for it in user_instr)
@@ -406,7 +408,8 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
     timeout = httpx.Timeout(connect=30, read=600, write=30, pool=30)
     async with httpx.AsyncClient(timeout=timeout) as client:
         for round_no in range(MAX_TOOL_ROUNDS + 1):
-            tools = (TOOLS if use_web else []) + ws.FILE_TOOLS + ws.API_TOOLS \
+            tools = (TOOLS if use_web else []) + ws.FILE_TOOLS + ws.API_TOOLS + devtools.TOOLS_ALL \
+                + (devtools.TOOLS_OWNER if devtools.is_owner(user_id) else []) \
                 if round_no < MAX_TOOL_ROUNDS else None
             # Только выбранная модель — никаких подмен. При лимите ждём с обратным отсчётом.
             routes = [r for r in MODELS[chosen]["routes"] if PROVIDERS[r[0]]["key"]]
@@ -498,7 +501,15 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                         status.actions.append(f"📄 Читаю {args.get('name', '')}")
                     status.stage = "🛠 Работаю с файлами и API…"
                     await status.update(force=True)
-                    result = await ws.run_file_or_api_tool(user_id, c["name"], args, out, status)
+                    if c["name"] in devtools.TOOL_NAMES:
+                        try:
+                            result = await devtools.run_tool(user_id, c["name"], args, out, status)
+                        except FileNotFoundError:
+                            result = f"Файла {args.get('name') or args.get('a')} нет. Посмотри list_files."
+                        except (ValueError, KeyError) as e:
+                            result = f"Ошибка: {e}"
+                    else:
+                        result = await ws.run_file_or_api_tool(user_id, c["name"], args, out, status)
                 turn.append({"role": "tool", "tool_call_id": c["id"], "content": result})
             if status.attach_images:
                 # показываем модели сделанные снимки, чтобы она проверила их перед отправкой
@@ -852,6 +863,16 @@ def files_menu(user_id: int, page: int = 0):
     return text, (InlineKeyboardMarkup(rows) if rows else None)
 
 
+async def claim_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    ok, owner = devtools.claim_owner(update.effective_user.id)
+    if ok:
+        await update.message.reply_text(
+            "👑 Ты владелец бота. Тебе доступен запуск кода на сервере (python/bash): "
+            "просто попроси, например «запусти main.py» или «проверь функцию тестом».")
+    else:
+        await update.message.reply_text("У бота уже есть владелец. Запуск кода доступен только ему.")
+
+
 async def show_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text, kb = files_menu(update.effective_user.id)
     await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
@@ -1128,6 +1149,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 /model — сменить ИИ\n"
         "📁 Пришли файлы скриптов (можно несколько сразу или .zip) — изучу, изменю и пришлю обратно\n"
         "🔌 /api — подключить своё API; могу вызывать его и присылать скриншоты ответов\n"
+        "🧪 Проверяю код на ошибки, ищу по проекту, собираю архивы; владелец (/claim) — ещё и запускаю код\n"
         "📌 Пришли файл .md — добавлю его в свои инструкции или разберу\n"
         "📌 /instructions — список инструкций, удаление",
         reply_markup=main_keyboard()
@@ -1161,6 +1183,7 @@ app.add_handler(CommandHandler(["instructions", "instr"], show_instructions))
 app.add_handler(CallbackQueryHandler(md_choice_callback, pattern="^md(add|ana):"))
 app.add_handler(CallbackQueryHandler(instructions_callback, pattern="^ins(v:|d:|dall$)"))
 app.add_handler(CommandHandler("files", show_files))
+app.add_handler(CommandHandler("claim", claim_command))
 app.add_handler(CallbackQueryHandler(files_callback, pattern="^fl(s:|d:|p:|dall$)"))
 app.add_handler(CommandHandler("api", api_command))
 app.add_handler(CallbackQueryHandler(api_callback, pattern="^ap(v|d):"))
