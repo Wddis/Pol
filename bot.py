@@ -65,7 +65,8 @@ chat_histories = {}      # user_id -> список сообщений (толь�
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
 INSTRUCTIONS_FILE = os.path.join(DATA_DIR, "instructions.json")
 MAX_INSTRUCTIONS = 10
-MAX_INSTRUCTION_CHARS = 20000
+MAX_INSTRUCTION_CHARS = 300000   # одна инструкция (проверено: 116 тыс. символов DeepSeek читает целиком)
+MAX_INSTRUCTIONS_TOTAL = 400000  # все инструкции вместе — они уходят с каждым сообщением
 pending_files = {}       # token -> присланный .md, ждущий выбора
 
 
@@ -518,7 +519,7 @@ async def run_turn(message, user_id: int, user_text: str):
 # ---------- Файлы .txt ----------
 
 MAX_FILE_BYTES = 2 * 1024 * 1024     # Telegram-бот может скачать до 20 МБ, нам хватит 2 МБ
-MAX_FILE_CHARS = 60000               # сколько символов файла отдаём модели
+MAX_FILE_CHARS = 300000              # сколько символов файла отдаём модели
 
 
 def decode_text(data: bytes) -> str:
@@ -595,6 +596,12 @@ async def md_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 f"⚠️ Инструкция слишком длинная: {len(f['text'])} символов, максимум {MAX_INSTRUCTION_CHARS}.")
             return
         items = instructions.setdefault(str(f["user"]), [])
+        total = sum(len(x["text"]) for x in items) + len(f["text"])
+        if total > MAX_INSTRUCTIONS_TOTAL:
+            await query.edit_message_text(
+                f"⚠️ Вместе с этим файлом инструкций будет {total} символов, максимум {MAX_INSTRUCTIONS_TOTAL}. "
+                f"Удали что-нибудь в меню 📌 Инструкции.")
+            return
         if len(items) >= MAX_INSTRUCTIONS:
             await query.edit_message_text(
                 f"⚠️ Уже {MAX_INSTRUCTIONS} инструкций — удали лишние в меню 📌 Инструкции.")
@@ -622,7 +629,8 @@ def instructions_menu(user_id: int):
         rows.append([InlineKeyboardButton("🗑 Удалить все", callback_data="insdall")])
     text = ("📌 *Твои инструкции*\nОни добавляются к каждому моему ответу.\n"
             "Нажми на файл — покажу его, 🗑 — удалю.\n\n"
-            f"Всего: {len(items)} из {MAX_INSTRUCTIONS}" if items else
+            f"Всего: {len(items)} из {MAX_INSTRUCTIONS} · "
+            f"{sum(len(x['text']) for x in items) // 1000} из {MAX_INSTRUCTIONS_TOTAL // 1000} тыс. символов" if items else
             "📌 *Инструкций пока нет.*\nПришли мне файл .md и выбери «📌 Добавить в инструкции».")
     return text, (InlineKeyboardMarkup(rows) if rows else None)
 
