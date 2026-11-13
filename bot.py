@@ -3,9 +3,6 @@ import json
 import time
 import asyncio
 import html
-import threading
-import urllib.request
-from http.server import BaseHTTPRequestHandler, HTTPServer
 from datetime import datetime
 
 import httpx
@@ -488,38 +485,6 @@ async def post_init(application):
     ])
 
 
-# ---------- Для бесплатного хостинга (Render) ----------
-# Хостинг ждёт веб-сервер на порту $PORT и усыпляет сервис без входящих запросов,
-# поэтому поднимаем мини-сервер и раз в 10 минут «стучимся» к себе по внешнему адресу.
-
-class _Health(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"ok")
-
-    do_HEAD = do_GET
-
-    def log_message(self, *args):
-        pass
-
-
-def _keep_alive():
-    url = os.environ.get("RENDER_EXTERNAL_URL") or os.environ.get("KEEPALIVE_URL")
-    while url:
-        time.sleep(600)
-        try:
-            urllib.request.urlopen(url, timeout=30).read()
-        except Exception:
-            pass
-
-
-if os.environ.get("PORT"):
-    server = HTTPServer(("0.0.0.0", int(os.environ["PORT"])), _Health)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    threading.Thread(target=_keep_alive, daemon=True).start()
-
-
 app = (ApplicationBuilder().token(TELEGRAM_TOKEN)
        .concurrent_updates(True).post_init(post_init).build())
 app.add_handler(CommandHandler("start", start))
@@ -530,4 +495,19 @@ app.add_handler(CommandHandler(["model", "ai"], choose_model))
 app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
 app.add_handler(CallbackQueryHandler(clear_callback, pattern="^clear$"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-app.run_polling()
+
+WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # напр. https://noizoz-bot.thevibehosting.com
+if WEBHOOK_URL:
+    # Режим webhook: Telegram сам присылает сообщения на сервер (и будит его, если он уснул)
+    import hashlib
+    secret = hashlib.sha256(TELEGRAM_TOKEN.encode()).hexdigest()
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=int(os.environ.get("PORT", "80")),
+        url_path=secret[:32],
+        webhook_url=f"{WEBHOOK_URL.rstrip('/')}/{secret[:32]}",
+        secret_token=secret[32:64],
+        allowed_updates=Update.ALL_TYPES,
+    )
+else:
+    app.run_polling()
