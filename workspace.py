@@ -411,35 +411,102 @@ def render_api_screenshot(res: dict, title: str = "") -> bytes:
 
 from urllib.parse import quote as _q
 
-SHOT_SERVICES = [
-    ("mShots", lambda u, w: f"https://s.wordpress.com/mshots/v1/{_q(u, safe='')}?w={w}&h={int(w * 0.66)}"),
-    ("thum.io", lambda u, w: f"https://image.thum.io/get/width/{w}/crop/{int(w * 0.66)}/noanimate/{u}"),
-    ("Microlink", lambda u, w: f"https://api.microlink.io/?url={_q(u, safe='')}&screenshot=true&meta=false"
-                               f"&embed=screenshot.url&viewport.width={w}&viewport.height={int(w * 0.66)}"),
-]
+def _shot_url(service: str, url: str, full_page: bool, mobile: bool, wait: int) -> str:
+    w, h = (390, 844) if mobile else (1280, 845)
+    e = _q(url, safe="")
+    if service == "microlink":
+        dev = "&device=iPhone%2015" if mobile else f"&viewport.width={w}&viewport.height={h}"
+        return (f"https://api.microlink.io/?url={e}&screenshot=true&meta=false&embed=screenshot.url"
+                f"{dev}&waitForTimeout={max(1, wait) * 1000}" + ("&fullPage=true" if full_page else ""))
+    if service == "thum":
+        size = f"width/{w}" + ("/fullpage" if full_page else f"/crop/{h}")
+        return f"https://image.thum.io/get/{size}/wait/{min(max(wait, 1), 10)}/noanimate/{url}"
+    return f"https://s.wordpress.com/mshots/v1/{e}?w={w}&h={h}"      # mshots: только первый экран
 
 
-async def web_screenshot(url: str, width: int = 1280) -> tuple:
-    """Возвращает (png/jpeg bytes, имя сервиса). Браузер на нашем сервере не нужен."""
+def check_shot(img_bytes: bytes, expected_width: int):
+    """Быстрая проверка без модели: заглушки, пустые и слишком маленькие картинки.
+    Возвращает (ok, причина, ширина, высота)."""
+    from PIL import Image, ImageStat
+    try:
+        im = Image.open(io.BytesIO(img_bytes))
+        w, h = im.size
+    except Exception:
+        return False, "это не картинка", 0, 0
+    if w < expected_width * 0.8:
+        return False, f"картинка {w}×{h} — похоже на заглушку «генерируется»", w, h
+    g = im.convert("L").resize((64, 64))
+    if ImageStat.Stat(g).stddev[0] < 4:
+        return False, "почти однотонный экран — страница не прогрузилась", w, h
+    return True, "", w, h
+
+
+async def web_screenshot(url: str, full_page=False, mobile=False, wait=3, service="auto"):
+    """Возвращает (bytes, сервис, ширина, высота). Пробует сервисы по очереди, отсеивая заглушки."""
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
     host = urlsplit(url).hostname or ""
     if not host or not await asyncio.to_thread(_is_public_host, host):
         raise ValueError("этот адрес недоступен (только публичные сайты)")
+    if service in ("mshots", "thum", "microlink"):
+        order = [service]
+    elif full_page or mobile:
+        order = ["microlink", "thum"]           # mShots не умеет всю страницу и мобильный вид
+    else:
+        order = ["mshots", "thum", "microlink"]
+    expected = 390 if mobile else 1280
     errors = []
-    async with httpx.AsyncClient(timeout=60, follow_redirects=True,
+    async with httpx.AsyncClient(timeout=90, follow_redirects=True,
                                  headers={"User-Agent": "Mozilla/5.0"}) as client:
-        for name, make in SHOT_SERVICES:
-            try:
-                r = await client.get(make(url, width))
-                ok = r.status_code == 200 and r.headers.get("content-type", "").startswith("image/") \
-                    and len(r.content) > 8000      # заглушки «генерируется…» маленькие
+        for svc in order:
+            tries = 4 if svc == "mshots" else 1     # mShots сначала отдаёт заглушку, потом готовый снимок
+            for attempt in range(tries):
+                try:
+                    r = await client.get(_shot_url(svc, url, full_page, mobile, wait))
+                except httpx.HTTPError as e:
+                    errors.append(f"{svc}: {type(e).__name__}")
+                    break
+                if r.status_code != 200 or not r.headers.get("content-type", "").startswith("image/"):
+                    errors.append(f"{svc}: HTTP {r.status_code}")
+                    break
+                ok, why, w, h = await asyncio.to_thread(check_shot, r.content, expected)
                 if ok:
-                    return r.content, name
-                errors.append(f"{name}: {r.status_code}, {len(r.content)} байт")
-            except httpx.HTTPError as e:
-                errors.append(f"{name}: {type(e).__name__}")
-    raise ValueError("не удалось сделать снимок: " + "; ".join(errors))
+                    return r.content, svc, w, h
+                errors.append(f"{svc}: {why}")
+                if attempt + 1 < tries:
+                    await asyncio.sleep(5)
+    raise ValueError("не удалось сделать нормальный снимок: " + "; ".join(errors[-4:]))
+
+
+def shot_preview_jpeg(img_bytes: bytes, max_side=1400) -> bytes:
+    """Уменьшенная копия снимка, чтобы модель могла его «посмотреть»."""
+    from PIL import Image
+    im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+    if im.height > im.width * 3:                      # очень длинная страница — показываем верх
+        im = im.crop((0, 0, im.width, im.width * 3))
+    im.thumbnail((max_side, max_side))
+    out = io.BytesIO()
+    im.save(out, "JPEG", quality=80)
+    return out.getvalue()
+
+
+pending_shots = {}     # uid -> {shot_id: {"img", "url", "w", "h"}} — снимки, ждущие проверки моделью
+
+
+async def send_shot(out, shot: dict, caption: str):
+    """Отправляет снимок. Слишком длинные страницы — файлом (Telegram режет фото) + превью верха."""
+    w, h = shot["w"], shot["h"]
+    if w + h > 9500 or h > w * 15:
+        from PIL import Image
+        im = Image.open(io.BytesIO(shot["img"])).convert("RGB")
+        top = im.crop((0, 0, w, min(h, int(w * 1.6))))
+        b = io.BytesIO(); top.save(b, "JPEG", quality=85)
+        await out.reply_photo(photo=b.getvalue(), filename="top.jpg", caption=(caption + " · верх страницы")[:1000])
+        ext = "png" if shot["img"][:4] == b"\x89PNG" else "jpg"
+        await out.reply_document(document=shot["img"], filename=f"page_full.{ext}",
+                                 caption="Вся страница целиком (файлом — так не теряется качество)")
+    else:
+        await out.reply_photo(photo=shot["img"], filename="page.png", caption=caption[:1000])
 
 
 # ---------- Инструменты для модели ----------
@@ -491,12 +558,23 @@ FILE_TOOLS = [
 API_TOOLS = [
     {"type": "function", "function": {
         "name": "web_screenshot",
-        "description": "Сделать НАСТОЯЩИЙ снимок веб-страницы (как в браузере) и прислать пользователю картинку. "
+        "description": "Сделать НАСТОЯЩИЙ снимок веб-страницы (как в браузере). Снимок НЕ отправляется сразу: "
+                       "он будет показан тебе для проверки, потом ты отправишь его через send_screenshot. "
                        "Используй, когда просят фото/скриншот/как выглядит сайт или страница.",
         "parameters": {"type": "object", "properties": {
             "url": {"type": "string", "description": "Адрес страницы"},
-            "caption": {"type": "string", "description": "Короткая подпись"}},
+            "full_page": {"type": "boolean", "description": "Вся страница целиком (просят «весь», «полностью», «до конца»)"},
+            "mobile": {"type": "boolean", "description": "Как на телефоне"},
+            "wait": {"type": "integer", "description": "Сколько секунд ждать загрузки страницы (1-10, обычно 3)"},
+            "service": {"type": "string", "description": "auto | mshots | thum | microlink — другой сервис при переделке"}},
             "required": ["url"]}}},
+    {"type": "function", "function": {
+        "name": "send_screenshot",
+        "description": "Отправить пользователю проверенный снимок (id из web_screenshot). "
+                       "Вызывай ТОЛЬКО если на картинке нормально загруженная страница.",
+        "parameters": {"type": "object", "properties": {
+            "id": {"type": "string"}, "caption": {"type": "string"}},
+            "required": ["id"]}}},
     {"type": "function", "function": {
         "name": "call_api",
         "description": "HTTP-запрос к API. С коннектором пользователя (ключи подставятся сами, ты их не видишь) "
@@ -532,7 +610,12 @@ def workspace_note(uid: int) -> str:
              "создавай файлы и присылай их пользователю (send_file). Когда пользователь просит изменить "
              "скрипт — внеси правку в файл и пришли его через send_file. "
              "Можешь вызывать API (call_api) и присылать скриншоты их работы (api_screenshot), "
-             "а также делать настоящие снимки сайтов (web_screenshot) — если просят фото/скрин сайта, используй его.",
+             "а также делать настоящие снимки сайтов (web_screenshot) — если просят фото/скрин сайта, используй его. "
+             "ПРОВЕРЯЙ СНИМОК: после web_screenshot картинка будет показана тебе. Если на ней нормально "
+             "загруженная нужная страница — вызови send_screenshot. Если это заглушка, «загрузка», пустой экран, "
+             "капча, ошибка или не та страница — переделай web_screenshot (другой service и/или wait побольше). "
+             "Не больше 3 попыток; если не вышло — честно скажи пользователю, что видно на снимке. "
+             "Страницы, требующие входа в аккаунт, снять нельзя — снимается то, что видит гость.",
              "В теле call_api строка «{{base64:имя}}» заменяется на base64 файла из рабочей папки, "
              "«{{file:имя}}» — на его текст; save_to сохраняет ответ в файл.",
              "GitHub (если есть коннектор на api.github.com): список репозиториев — GET /user/repos; "
@@ -610,11 +693,26 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
         if name == "web_screenshot":
             status.actions.append(f"📷 Снимок {args.get('url', '')[:60]}")
             await status.update(force=True)
-            img, service = await web_screenshot(args.get("url", ""))
-            await out.reply_photo(photo=img, filename="page.png",
-                                  caption=(args.get("caption") or args.get("url", ""))[:1000])
+            img, service, w, h = await web_screenshot(
+                args.get("url", ""), bool(args.get("full_page")), bool(args.get("mobile")),
+                int(args.get("wait") or 3), args.get("service") or "auto")
+            shot_id = f"s{len(pending_shots.get(uid, {})) + 1}"
+            pending_shots.setdefault(uid, {})[shot_id] = {"img": img, "url": args.get("url"), "w": w, "h": h}
+            if getattr(status, "vision", True):
+                status.attach_images = getattr(status, "attach_images", []) + [(shot_id, shot_preview_jpeg(img))]
+                return (f"Снимок {shot_id} сделан ({service}, {w}×{h}). Он показан тебе ниже — проверь его. "
+                        f"Если всё нормально — send_screenshot(id=\"{shot_id}\"), иначе переделай.")
+            # модель без зрения — отправляем сразу (быстрая проверка заглушек уже пройдена)
+            await send_shot(out, pending_shots[uid].pop(shot_id), args.get("url", ""))
             status.actions.append("📸 Отправил снимок сайта")
-            return f"Снимок страницы {args.get('url')} отправлен пользователю (сервис {service})."
+            return f"Снимок {args.get('url')} отправлен пользователю ({service}, {w}×{h})."
+        if name == "send_screenshot":
+            shot = pending_shots.get(uid, {}).pop(args.get("id", ""), None)
+            if not shot:
+                return "Такого снимка нет — сделай web_screenshot заново."
+            await send_shot(out, shot, args.get("caption") or shot["url"])
+            status.actions.append("📸 Отправил снимок сайта")
+            return "Снимок отправлен пользователю."
         if name in ("call_api", "api_screenshot"):
             status.actions.append(f"🔌 {(args.get('method') or 'GET').upper()} "
                                   f"{(args.get('connector') or '')} {args.get('path', '')}"[:90])

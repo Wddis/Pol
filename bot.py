@@ -4,6 +4,7 @@ import time
 import asyncio
 import html
 import secrets
+import base64
 from datetime import datetime
 
 import httpx
@@ -32,6 +33,7 @@ MODELS = {
     # У DeepSeek две бесплатные версии с раздельными лимитами — используем обе по очереди
     "deepseek-v4.1-flash": {
         "label": "🐋 DeepSeek V4.1 Flash", "identity": ("DeepSeek V4.1 Flash", "DeepSeek"),
+        "vision": True,          # видит картинки — проверяет свои скриншоты сайтов
         "routes": [("uno", "deepseek-v4.1-flash:free"),
                    ("uno", "deepseek-v4.1-flash-1017:free")]},
     "qwen3.5-397b": {
@@ -397,6 +399,8 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
         chosen = DEFAULT_MODEL
     turn = [{"role": "user", "content": user_message}]
     all_reasoning = []
+    status.vision = bool(MODELS[chosen].get("vision"))
+    status.attach_images = []
     timeout = httpx.Timeout(connect=30, read=600, write=30, pool=30)
     async with httpx.AsyncClient(timeout=timeout) as client:
         for round_no in range(MAX_TOOL_ROUNDS + 1):
@@ -478,6 +482,17 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                     await status.update(force=True)
                     result = await ws.run_file_or_api_tool(user_id, c["name"], args, out, status)
                 turn.append({"role": "tool", "tool_call_id": c["id"], "content": result})
+            if status.attach_images:
+                # показываем модели сделанные снимки, чтобы она проверила их перед отправкой
+                parts = [{"type": "text", "text": "[Сделанные снимки для проверки: "
+                          + ", ".join(i for i, _ in status.attach_images) + "]"}]
+                for shot_id, jpeg in status.attach_images:
+                    parts.append({"type": "text", "text": f"Снимок {shot_id}:"})
+                    parts.append({"type": "image_url", "image_url": {
+                        "url": "data:image/jpeg;base64," + base64.b64encode(jpeg).decode()}})
+                turn.append({"role": "user", "content": parts})
+                status.attach_images = []
+                status.actions.append("👀 Проверяю снимок")
             status.stage = "🧠 Думаю дальше…"
             status.reasoning = ""
     raise RuntimeError("Слишком много шагов для одного ответа — попробуй разбить задачу на части.")
@@ -649,6 +664,7 @@ async def run_turn(message, user_id: int, user_text: str, history_text=None):
     finally:
         active_turns.get(user_id, set()).discard(task)
         turns.pop(turn_id, None)
+        ws.pending_shots.pop(user_id, None)
 
 
 # ---------- Файлы .txt ----------
