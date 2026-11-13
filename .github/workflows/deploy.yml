@@ -85,7 +85,7 @@ jobs:
           # будим сервер, если он спит
           curl -s -o /dev/null -m 60 "https://$SLUG.thevibehosting.com/" || true
           $SSH "hostname" | grep -qx "$SLUG" || { echo "WRONG HOST"; exit 1; }
-          tar czf - bot.py requirements.txt | $SSH "mkdir -p /root/bot && tar xzf - -C /root/bot"
+          tar czf - *.py requirements.txt | $SSH "mkdir -p /root/bot && tar xzf - -C /root/bot"
           # .env передаём через stdin, в логи он не попадает
           jq -r --arg slug "$SLUG" '"TELEGRAM_TOKEN=\(.TELEGRAM_TOKEN)\nORCAROUTER_API_KEY=\(.ORCAROUTER_API_KEY)\nUNOROUTER_API_KEY=\(.UNOROUTER_API_KEY // "")\nWEBHOOK_URL=https://\($slug).thevibehosting.com\nPORT=80"' "$K/secrets.json" \
             | $SSH "umask 077; cat > /root/bot/.env"
@@ -96,6 +96,10 @@ jobs:
           if ! command -v python3 >/dev/null || ! python3 -c "import venv, ensurepip" 2>/dev/null; then
             export DEBIAN_FRONTEND=noninteractive
             apt-get update -q >/dev/null && apt-get install -y -q python3 python3-venv python3-pip >/dev/null
+          fi
+          if [ ! -f /usr/share/fonts/truetype/dejavu/DejaVuSansMono.ttf ]; then
+            export DEBIAN_FRONTEND=noninteractive
+            (apt-get update -q >/dev/null; apt-get install -y -q fonts-dejavu-core >/dev/null) || true
           fi
           cd /root/bot
           [ -d venv ] || python3 -m venv venv

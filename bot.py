@@ -8,6 +8,7 @@ from datetime import datetime
 
 import httpx
 from bs4 import BeautifulSoup
+import workspace as ws
 from ddgs import DDGS
 from telegram import (Update, InlineKeyboardButton, InlineKeyboardMarkup,
                       ReplyKeyboardMarkup, BotCommand)
@@ -55,11 +56,22 @@ MAX_COOLDOWN = 6 * 3600
 
 user_models = {}         # user_id -> выбранная модель
 
-MAX_TOOL_ROUNDS = 5      # сколько раз подряд модель может искать/открывать страницы
+MAX_TOOL_ROUNDS = 12     # сколько шагов с инструментами (поиск, файлы, API) за один ответ
 EDIT_INTERVAL = 2.5      # как часто обновлять сообщение «Думаю…» (сек)
 TG_LIMIT = 4000          # лимит длины сообщения Telegram (с запасом)
 
-chat_histories = {}      # user_id -> список сообщений (только в памяти)
+chat_histories = {}      # user_id -> история диалога (кэш; на диске — data/users/<id>/history.json)
+
+
+def get_history(user_id: int) -> list:
+    if user_id not in chat_histories:
+        chat_histories[user_id] = ws.load_history(user_id)
+    return chat_histories[user_id]
+
+
+def forget_history(user_id: int):
+    chat_histories.pop(user_id, None)
+    ws.clear_history(user_id)
 
 # Инструкции хранятся на диске, чтобы пережить перезапуск/сон сервера
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
@@ -131,6 +143,8 @@ TOOLS = [
 CLEAR_TEXT = "🗑 Новый диалог"
 MODEL_TEXT = "🤖 Сменить ИИ"
 INSTR_TEXT = "📌 Инструкции"
+FILES_TEXT = "📁 Файлы"
+API_TEXT = "🔌 API"
 
 
 # ---------- Интернет ----------
@@ -186,7 +200,7 @@ def clear_button():
 
 
 def main_keyboard():
-    return ReplyKeyboardMarkup([[CLEAR_TEXT, MODEL_TEXT], [INSTR_TEXT]], resize_keyboard=True, is_persistent=True)
+    return ReplyKeyboardMarkup([[CLEAR_TEXT, MODEL_TEXT], [INSTR_TEXT, FILES_TEXT, API_TEXT]], resize_keyboard=True, is_persistent=True)
 
 
 # ---------- Живой статус ----------
@@ -265,7 +279,7 @@ class RetryableError(Exception):
     pass
 
 
-async def stream_completion(client, route, messages, status: LiveStatus, use_tools: bool):
+async def stream_completion(client, route, messages, status: LiveStatus, tools):
     """Один запрос к модели со стримингом. Возвращает (content, reasoning, tool_calls)."""
     pid, model = route
     prov = PROVIDERS[pid]
@@ -278,8 +292,8 @@ async def stream_completion(client, route, messages, status: LiveStatus, use_too
         "stream": True,
         **prov.get("extra", {}),
     }
-    if use_tools:
-        payload["tools"] = TOOLS
+    if tools:
+        payload["tools"] = tools
 
     content, reasoning = "", ""
     tool_calls = {}
@@ -331,8 +345,10 @@ async def stream_completion(client, route, messages, status: LiveStatus, use_too
     return content, reasoning, [tool_calls[k] for k in sorted(tool_calls)]
 
 
-async def ask_model(user_id: int, user_message: str, status: LiveStatus):
-    history = chat_histories.setdefault(user_id, [])
+async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=None, history_text=None):
+    """out — сообщение Telegram, куда инструменты шлют файлы/скриншоты;
+    history_text — короткая версия запроса для истории (без содержимого файлов)."""
+    history = get_history(user_id)
     use_web = web_enabled.get(user_id, True)
     def system_for(route):
         logical = chosen if route in MODELS[chosen]["routes"] else \
@@ -342,6 +358,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
             model_name=name, vendor=vendor,
             today=datetime.now().strftime("%d.%m.%Y"),
             web_note=WEB_NOTE_ON if use_web else WEB_NOTE_OFF)
+        prompt += "\n" + ws.workspace_note(user_id)
         user_instr = instructions.get(str(user_id), [])
         if user_instr:
             names = ", ".join(f"«{it['name']}»" for it in user_instr)
@@ -379,7 +396,8 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
     timeout = httpx.Timeout(connect=30, read=600, write=30, pool=30)
     async with httpx.AsyncClient(timeout=timeout) as client:
         for round_no in range(MAX_TOOL_ROUNDS + 1):
-            allow_tools = use_web and round_no < MAX_TOOL_ROUNDS
+            tools = (TOOLS if use_web else []) + ws.FILE_TOOLS + ws.API_TOOLS \
+                if round_no < MAX_TOOL_ROUNDS else None
             # Только выбранная модель — никаких подмен. При лимите ждём с обратным отсчётом.
             routes = [r for r in MODELS[chosen]["routes"] if PROVIDERS[r[0]]["key"]]
             used_route = None
@@ -399,7 +417,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
                     messages = [{"role": "system", "content": system_for(route)}, *history, *with_reminder(turn)]
                     try:
                         content, reasoning, calls = await stream_completion(
-                            client, route, messages, status, allow_tools)
+                            client, route, messages, status, tools)
                         used_route = route
                         break
                     except httpx.TransportError as e:
@@ -417,8 +435,12 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
             if not calls:
                 if not content.strip():
                     raise RuntimeError("Модель вернула пустой ответ, попробуй ещё раз.")
-                history.extend(turn)
-                history.append({"role": "assistant", "content": content})
+                # в историю — коротко: запрос (без содержимого файлов) и итоговый ответ
+                history.append({"role": "user", "content": history_text or user_message})
+                done = [a for a in status.actions if a.startswith(("✏️", "📤", "🗑", "📸", "🔌"))]
+                history.append({"role": "assistant", "content": content + (
+                    "\n\n[Выполнено: " + "; ".join(done) + "]" if done else "")})
+                ws.save_history(user_id, history)
                 return content, "\n\n".join(all_reasoning), used_route
 
             # Модель хочет воспользоваться интернетом
@@ -437,17 +459,24 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
                     args = json.loads(c["arguments"] or "{}")
                 except Exception:
                     args = {}
-                if c["name"] == "web_search":
-                    status.actions.append(f"🔎 Ищу: {args.get('query', '')}")
-                elif c["name"] == "open_url":
-                    status.actions.append(f"🌐 Открываю: {args.get('url', '')[:80]}")
-                status.stage = "🌐 Работаю с интернетом…"
-                await status.update(force=True)
-                result = await run_tool(c["name"], args)
+                if c["name"] in ("web_search", "open_url"):
+                    if c["name"] == "web_search":
+                        status.actions.append(f"🔎 Ищу: {args.get('query', '')}")
+                    else:
+                        status.actions.append(f"🌐 Открываю: {args.get('url', '')[:80]}")
+                    status.stage = "🌐 Работаю с интернетом…"
+                    await status.update(force=True)
+                    result = await run_tool(c["name"], args)
+                else:
+                    if c["name"] == "read_file":
+                        status.actions.append(f"📄 Читаю {args.get('name', '')}")
+                    status.stage = "🛠 Работаю с файлами и API…"
+                    await status.update(force=True)
+                    result = await ws.run_file_or_api_tool(user_id, c["name"], args, out, status)
                 turn.append({"role": "tool", "tool_call_id": c["id"], "content": result})
-            status.stage = "🧠 Изучаю найденное…"
+            status.stage = "🧠 Думаю дальше…"
             status.reasoning = ""
-    raise RuntimeError("Слишком много обращений к интернету, попробуй переформулировать вопрос.")
+    raise RuntimeError("Слишком много шагов для одного ответа — попробуй разбить задачу на части.")
 
 
 # ---------- Отправка ----------
@@ -504,6 +533,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_text == INSTR_TEXT:
         await show_instructions(update, context)
         return
+    if user_text == FILES_TEXT:
+        await show_files(update, context)
+        return
+    if user_text == API_TEXT:
+        await api_command(update, context)
+        return
 
     await run_turn(update.message, user_id, user_text)
 
@@ -522,7 +557,7 @@ def stop_user_turns(user_id: int) -> int:
     return len(tasks)
 
 
-async def run_turn(message, user_id: int, user_text: str):
+async def run_turn(message, user_id: int, user_text: str, history_text=None):
     epoch = user_epoch.get(user_id, 0)
     task = asyncio.current_task()
     active_turns.setdefault(user_id, set()).add(task)
@@ -539,7 +574,7 @@ async def run_turn(message, user_id: int, user_text: str):
             status = LiveStatus(status_msg, show)
             ticker = asyncio.create_task(status.ticker())
             try:
-                answer, reasoning, used_route = await ask_model(user_id, user_text, status)
+                answer, reasoning, used_route = await ask_model(user_id, user_text, status, out=message, history_text=history_text)
             except asyncio.CancelledError:
                 raise
             except Exception as e:
@@ -607,22 +642,21 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     name = doc.file_name or "file.txt"
     low = name.lower()
     is_md = low.endswith((".md", ".markdown")) or doc.mime_type == "text/markdown"
-    if not (is_md or low.endswith(".txt") or doc.mime_type == "text/plain"):
-        await update.message.reply_text("📄 Я понимаю текстовые файлы .txt и .md")
-        return
-    if doc.file_size and doc.file_size > MAX_FILE_BYTES:
-        await update.message.reply_text("📄 Файл слишком большой — максимум 2 МБ.")
+    is_zip = low.endswith(".zip")
+    limit = 10 * 1024 * 1024 if is_zip else MAX_FILE_BYTES
+    if doc.file_size and doc.file_size > limit:
+        await update.message.reply_text(f"📄 Файл слишком большой — максимум {limit // 1024 // 1024} МБ.")
         return
     tg_file = await doc.get_file()
     data = bytes(await tg_file.download_as_bytearray())
-    text = decode_text(data).replace("\r\n", "\n").strip()
-    if not text:
-        await update.message.reply_text("📄 Файл пустой.")
-        return
     user_id = update.message.from_user.id
     caption = (update.message.caption or "").strip()
     if not is_md:
-        await run_turn(update.message, user_id, file_prompt(name, len(data), text, caption))
+        await add_to_batch(update.message, user_id, name, data, caption, is_zip)
+        return
+    text = decode_text(data).replace("\r\n", "\n").strip()
+    if not text:
+        await update.message.reply_text("📄 Файл пустой.")
         return
     # .md — спрашиваем, что сделать
     token = secrets.token_hex(4)
@@ -636,6 +670,209 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     ])
     await update.message.reply_text(
         f"📄 *{md_escape(name)}* — что с ним сделать?", parse_mode="Markdown", reply_markup=kb)
+
+
+# ---------- Пакеты файлов (скрипты, архивы) ----------
+
+BATCH_DELAY = 2.5            # ждём, пока придут все файлы, отправленные разом
+pending_batches = {}         # user_id -> {"message", "files": [...], "notes": [...], "caption", "task"}
+
+
+async def add_to_batch(message, user_id, name, data, caption, is_zip):
+    b = pending_batches.setdefault(user_id, {"message": message, "files": [], "notes": [], "caption": ""})
+    b["message"] = message
+    if caption:
+        b["caption"] = (b["caption"] + "\n" + caption).strip()
+    try:
+        if is_zip:
+            saved, skipped = ws.extract_zip(user_id, data)
+            b["files"] += saved
+            b["notes"].append(f"Архив {name}: распаковано {len(saved)} файлов"
+                              + (f"; пропущено: {', '.join(skipped[:10])}" if skipped else ""))
+        elif ws.is_text(data):
+            b["files"].append(ws.save_file(user_id, name, data))
+        else:
+            b["notes"].append(f"{name}: не текстовый файл — пропущен (понимаю код, текст и .zip)")
+    except (ValueError, Exception) as e:
+        b["notes"].append(f"{name}: {e}")
+    if b.get("task"):
+        b["task"].cancel()
+    b["task"] = asyncio.create_task(_flush_batch_later(user_id))
+
+
+async def _flush_batch_later(user_id):
+    try:
+        await asyncio.sleep(BATCH_DELAY)
+    except asyncio.CancelledError:
+        return
+    b = pending_batches.pop(user_id, None)
+    if not b:
+        return
+    files, notes, message = b["files"], b["notes"], b["message"]
+    if not files:
+        await message.reply_text("📄 " + ("\n".join(notes) or "Не получилось сохранить файлы."))
+        return
+    question = b["caption"] or ("Изучи присланные файлы: кратко опиши, что это и как устроено, "
+                                "и выдели главное." if len(files) > 1 else
+                                "Кратко перескажи, что в этом файле, и выдели главное.")
+    total = 0
+    parts = []
+    for f in files:
+        text = ws.decode_text(ws.read_bytes(user_id, f))
+        if total + len(text) <= MAX_FILE_CHARS:
+            parts.append(f"<<<ФАЙЛ {f}\n{text}\nФАЙЛ {f}>>>")
+            total += len(text)
+        else:
+            parts.append(f"[{f} — {len(text)} символов, не влез в сообщение: прочитай через read_file]")
+    prompt = (f"Пользователь прислал {len(files)} файл(ов), они сохранены в рабочей папке:\n"
+              + "\n\n".join(parts) + ("\n\nЗаметки: " + "; ".join(notes) if notes else "")
+              + f"\n\nЗапрос пользователя: {question}")
+    history_text = (f"[Прислал файлы в рабочую папку: {', '.join(files[:30])}"
+                    + (f" и ещё {len(files) - 30}" if len(files) > 30 else "") + "]\n" + question)
+    await message.reply_text(f"📥 Сохранил в 📁 Файлы: {len(files)} шт." + (f"\n" + "\n".join(notes) if notes else ""))
+    await run_turn(message, user_id, prompt, history_text=history_text)
+
+
+# ---------- Меню «Файлы» ----------
+
+def files_menu(user_id: int, page: int = 0):
+    files = ws.list_files(user_id)
+    per = 15
+    pages = max(1, (len(files) + per - 1) // per)
+    page = max(0, min(page, pages - 1))
+    rows = []
+    for i, f in enumerate(files[page * per:(page + 1) * per], start=page * per):
+        rows.append([InlineKeyboardButton(f"📤 {f['name'][-38:]}", callback_data=f"fls:{i}"),
+                     InlineKeyboardButton("🗑", callback_data=f"fld:{i}")])
+    nav = []
+    if page > 0:
+        nav.append(InlineKeyboardButton("◀️", callback_data=f"flp:{page - 1}"))
+    if page < pages - 1:
+        nav.append(InlineKeyboardButton("▶️", callback_data=f"flp:{page + 1}"))
+    if nav:
+        rows.append(nav)
+    if files:
+        rows.append([InlineKeyboardButton("🗑 Удалить все файлы", callback_data="fldall")])
+        size = sum(f["size"] for f in files)
+        text = (f"📁 *Рабочая папка* — {len(files)} файлов, {size // 1024} КБ из "
+                f"{ws.MAX_WORKSPACE_BYTES // 1024 // 1024} МБ\n"
+                "📤 — прислать файл, 🗑 — удалить.\n"
+                "Я могу читать и менять эти файлы — просто попроси в чате.")
+    else:
+        text = ("📁 *Рабочая папка пуста.*\nПришли файлы скриптов (можно несколько сразу или .zip) — "
+                "я сохраню их, изучу и смогу менять и присылать обратно.")
+    return text, (InlineKeyboardMarkup(rows) if rows else None)
+
+
+async def show_files(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text, kb = files_menu(update.effective_user.id)
+    await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def files_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    uid = query.from_user.id
+    files = ws.list_files(uid)
+    page = 0
+    if query.data == "fldall":
+        ws.delete_all_files(uid)
+        await query.answer("Все файлы удалены")
+    elif query.data.startswith("flp:"):
+        page = int(query.data[4:])
+        await query.answer()
+    else:
+        action, idx = query.data.split(":", 1)
+        idx = int(idx)
+        if idx >= len(files):
+            await query.answer("Список изменился — открой /files заново")
+            return
+        f = files[idx]
+        page = idx // 15
+        if action == "fls":
+            await query.answer()
+            await query.message.reply_document(document=ws.read_bytes(uid, f["name"]),
+                                               filename=os.path.basename(f["name"]))
+            return
+        ws.delete_file(uid, f["name"])
+        await query.answer(f"Удалён: {f['name']}")
+    text, kb = files_menu(uid, page)
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        pass
+
+
+# ---------- Меню «API» ----------
+
+API_HELP = ("Добавить коннектор:\n"
+            "`/api add имя https://адрес [header:Имя=значение] [query:имя=значение]`\n\n"
+            "Примеры:\n"
+            "`/api add github https://api.github.com header:Authorization=Bearer ghp_XXX`\n"
+            "`/api add weather https://api.openweathermap.org/data/2.5 query:appid=КЛЮЧ`\n\n"
+            "Ключи хранятся на сервере и *не показываются модели* — она только вызывает API по имени. "
+            "Сообщение с ключом я сразу удалю из чата.\n"
+            "Потом просто попроси: «вызови github /user и пришли скриншот».")
+
+
+def api_menu(user_id: int):
+    conns = ws.load_connectors(user_id)
+    rows = [[InlineKeyboardButton(f"🔌 {n} → {c['base'][8:40]}", callback_data=f"apv:{n}"),
+             InlineKeyboardButton("🗑", callback_data=f"apd:{n}")] for n, c in conns.items()]
+    text = ("🔌 *API-коннекторы*\n" + ("\n".join(f"• *{md_escape(n)}* — {md_escape(c['base'])}"
+                                                for n, c in conns.items()) or "Пока нет.")
+            + "\n\n" + API_HELP)
+    return text, (InlineKeyboardMarkup(rows) if rows else None)
+
+
+async def api_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    uid = update.effective_user.id
+    args = context.args or []
+    if args and args[0].lower() == "add":
+        try:
+            await update.message.delete()          # убираем сообщение с ключом из чата
+        except Exception:
+            pass
+        try:
+            name, conn = ws.parse_api_add(args[1:])
+        except ValueError as e:
+            await update.effective_chat.send_message(f"⚠️ {e}\n\n{API_HELP}", parse_mode="Markdown")
+            return
+        conns = ws.load_connectors(uid)
+        conns[name] = conn
+        ws.save_connectors(uid, conns)
+        secrets_n = len(conn["headers"]) + len(conn["query"])
+        await update.effective_chat.send_message(
+            f"🔌 Коннектор *{md_escape(name)}* → {md_escape(conn['base'])} сохранён"
+            f" (секретов: {secrets_n}, сообщение с ними удалено).\n"
+            f"Попроси: «вызови {name} … и пришли скриншот».", parse_mode="Markdown")
+        return
+    text, kb = api_menu(uid)
+    await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def api_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    uid = query.from_user.id
+    action, name = query.data.split(":", 1)
+    conns = ws.load_connectors(uid)
+    if name not in conns:
+        await query.answer("Уже удалён")
+    elif action == "apd":
+        conns.pop(name)
+        ws.save_connectors(uid, conns)
+        await query.answer(f"Удалён: {name}")
+    else:
+        c = conns[name]
+        await query.answer()
+        await query.message.reply_text(
+            f"🔌 {name}\nАдрес: {c['base']}\nЗаголовки: {', '.join(c['headers']) or '—'}\n"
+            f"Параметры: {', '.join(c['query']) or '—'}\n(значения скрыты) · добавлен {c.get('added', '')}")
+        return
+    text, kb = api_menu(uid)
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        pass
 
 
 async def md_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -730,7 +967,7 @@ async def instructions_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 async def reset_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
     stop_user_turns(update.effective_user.id)
-    chat_histories.pop(update.effective_user.id, None)
+    forget_history(update.effective_user.id)
     await update.effective_message.reply_text(
         "🗑 *Диалог очищен.* Начнём с чистого листа!",
         parse_mode="Markdown",
@@ -755,7 +992,7 @@ async def toggle_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     stop_user_turns(query.from_user.id)
-    chat_histories.pop(query.from_user.id, None)
+    forget_history(query.from_user.id)
     await query.answer("Диалог очищен!")
     await query.edit_message_reply_markup(reply_markup=None)
     await context.bot.send_message(
@@ -801,7 +1038,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💭 /thoughts — показывать/скрывать размышления\n"
         "🌐 /web — включить/выключить интернет\n"
         "🤖 /model — сменить ИИ\n"
-        "📄 Пришли файл .txt (можно с вопросом в подписи) — разберу его\n"
+        "📁 Пришли файлы скриптов (можно несколько сразу или .zip) — изучу, изменю и пришлю обратно\n"
+        "🔌 /api — подключить своё API; могу вызывать его и присылать скриншоты ответов\n"
         "📌 Пришли файл .md — добавлю его в свои инструкции или разберу\n"
         "📌 /instructions — список инструкций, удаление",
         reply_markup=main_keyboard()
@@ -812,6 +1050,8 @@ async def post_init(application):
     await application.bot.set_my_commands([
         BotCommand("model", "🤖 Сменить ИИ"),
         BotCommand("instructions", "📌 Мои инструкции"),
+        BotCommand("files", "📁 Рабочая папка с файлами"),
+        BotCommand("api", "🔌 API-коннекторы"),
         BotCommand("clear", "🗑 Очистить контекст диалога"),
         BotCommand("thoughts", "💭 Показывать/скрывать размышления"),
         BotCommand("web", "🌐 Включить/выключить интернет"),
@@ -831,6 +1071,10 @@ app.add_handler(CallbackQueryHandler(clear_callback, pattern="^clear$"))
 app.add_handler(CommandHandler(["instructions", "instr"], show_instructions))
 app.add_handler(CallbackQueryHandler(md_choice_callback, pattern="^md(add|ana):"))
 app.add_handler(CallbackQueryHandler(instructions_callback, pattern="^ins(v:|d:|dall$)"))
+app.add_handler(CommandHandler("files", show_files))
+app.add_handler(CallbackQueryHandler(files_callback, pattern="^fl(s:|d:|p:|dall$)"))
+app.add_handler(CommandHandler("api", api_command))
+app.add_handler(CallbackQueryHandler(api_callback, pattern="^ap(v|d):"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 

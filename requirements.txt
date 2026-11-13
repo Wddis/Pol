@@ -2,3 +2,4 @@ python-telegram-bot[webhooks]
 httpx
 beautifulsoup4
 ddgs
+pillow
