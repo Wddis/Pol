@@ -23,33 +23,37 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 # ---------- Провайдеры ----------
 # Подключаются те, для которых задан ключ в переменных окружения.
 PROVIDERS = {
-    "uno": {"name": "UnoRouter", "url": "https://api.unorouter.com/v1", "env": "UNOROUTER_API_KEY"},
+    "coa": {"name": "CoArena", "url": "https://coarena.ai/api/v1", "env": "COARENA_API_KEY"},
 }
 for _p in PROVIDERS.values():
     _p["key"] = os.environ.get(_p["env"], "")
 if not any(p["key"] for p in PROVIDERS.values()):
-    raise SystemExit("Не задан ни один ключ провайдера (UNOROUTER_API_KEY)")
+    raise SystemExit("Не задан ключ провайдера (COARENA_API_KEY)")
 
-# Модели и цепочки провайдеров: бот идёт по списку, пока кто-то не ответит.
+# Модели и цепочки провайдеров: бот идёт по списку маршрутов, пока кто-то не ответит.
+# vision=True — модель видит картинки (нужно для самопроверки скриншотов сайтов).
 MODELS = {
-    # У DeepSeek две бесплатные версии с раздельными лимитами — используем обе по очереди
     "deepseek-v4.1-flash": {
         "label": "🐋 DeepSeek V4.1 Flash", "identity": ("DeepSeek V4.1 Flash", "DeepSeek"),
-        "vision": True,          # видит картинки — проверяет свои скриншоты сайтов
-        "routes": [("uno", "deepseek-v4.1-flash:free"),
-                   ("uno", "deepseek-v4.1-flash-1017:free")]},
-    "qwen3.5-397b": {
-        "label": "🐉 Qwen 3.5 397B", "identity": ("Qwen 3.5 397B", "Alibaba"),
-        "routes": [("uno", "qwen3.5-397b-a17b:free")]},
-    "mistral-large-3": {
-        "label": "🌬 Mistral Large 3", "identity": ("Mistral Large 3", "Mistral AI"),
-        "routes": [("uno", "mistral-large-3-675b-instruct-2512:free")]},
-    "gemini-3.6-flash": {
-        "label": "✨ Gemini 3.6 Flash", "identity": ("Gemini 3.6 Flash", "Google"),
-        "routes": [("uno", "gemini-3.6-flash:free")]},
+        "vision": True, "routes": [("coa", "deepseek-v4-1-flash-1017")]},
+    "gemini-flash": {
+        "label": "✨ Gemini 3.8 Flash", "identity": ("Gemini 3.8 Flash", "Google"),
+        "vision": True, "routes": [("coa", "gemini-3-8-flash")]},
+    "qwen3.8": {
+        "label": "🐉 Qwen 3.8", "identity": ("Qwen 3.8", "Alibaba"),
+        "vision": True, "routes": [("coa", "qwen3-8-2-4t-a95b")]},
     "glm-5.3-flash": {
         "label": "🧩 GLM 5.3 Flash", "identity": ("GLM 5.3 Flash", "Z.ai"),
-        "routes": [("uno", "glm-5.3-flash:free")]},
+        "vision": True, "routes": [("coa", "glm-5-3-flash")]},
+    "kimi-k3": {
+        "label": "🌙 Kimi K3", "identity": ("Kimi K3", "Moonshot AI"),
+        "routes": [("coa", "kimi-k3")]},
+    "gpt-6-luna": {
+        "label": "🟢 GPT-6 Luna", "identity": ("GPT-6 Luna", "OpenAI"),
+        "routes": [("coa", "gpt-6-luna")]},
+    "grok-4.7": {
+        "label": "⚡ Grok 4.7", "identity": ("Grok 4.7", "xAI"),
+        "routes": [("coa", "grok-4-7")]},
 }
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "deepseek-v4.1-flash")
 # Если у выбранной модели все каналы исчерпаны — используем цепочку DeepSeek V4.1
@@ -308,6 +312,10 @@ class RetryableError(Exception):
     pass
 
 
+class FatalError(Exception):
+    """Ошибка, которую повтором не исправить: неверный ключ, кончился баланс/квота."""
+
+
 async def stream_completion(client, route, messages, status: LiveStatus, tools):
     """Один запрос к модели со стримингом. Возвращает (content, reasoning, tool_calls)."""
     pid, model = route
@@ -333,6 +341,10 @@ async def stream_completion(client, route, messages, status: LiveStatus, tools):
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", "replace")
             low = body.lower()
+            if resp.status_code == 401 or any(w in low for w in
+                    ("insufficient", "balance", "no credit", "out of credit", "quota exceeded",
+                     "недостаточно", "баланс", "payment required", "top up", "пополните")):
+                raise FatalError(f"{resp.status_code}: {body[:200]}")
             if resp.status_code in (502, 503) and ("busy" in low or "get_channel_failed" in low
                                                     or "rate limit" in low or "overload" in low):
                 # поставщики бесплатной модели перегружены — ждём с растущей паузой
@@ -472,6 +484,10 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                             client, route, messages, status, tools)
                         used_route = route
                         break
+                    except FatalError as e:
+                        raise RuntimeError(
+                            "⚠️ Провайдер CoArena отклонил запрос: " + str(e)[:200]
+                            + "\nПохоже, кончился баланс или неверный ключ. Проверь аккаунт coarena.ai.")
                     except httpx.TransportError as e:
                         errors.append(f"{type(e).__name__}")
                         cooldown_until[route] = time.time() + 5     # сетевой сбой — короткая пауза
