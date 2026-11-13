@@ -15,26 +15,21 @@ from telegram.ext import (ApplicationBuilder, MessageHandler, CommandHandler,
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 
-# Провайдеры по порядку: сначала быстрый OrcaRouter, при ошибке/лимите — NVIDIA.
-PROVIDERS = []
-if os.environ.get("ORCAROUTER_API_KEY"):
-    PROVIDERS.append({
-        "name": "OrcaRouter",
-        "url": "https://api.orcarouter.ai/v1/chat/completions",
-        "key": os.environ["ORCAROUTER_API_KEY"],
-        "model": os.environ.get("ORCA_MODEL", "deepseek/deepseek-v4.1-flash-free"),
-        "extra": {},
-    })
-if os.environ.get("NVIDIA_API_KEY"):
-    PROVIDERS.append({
-        "name": "NVIDIA",
-        "url": "https://integrate.api.nvidia.com/v1/chat/completions",
-        "key": os.environ["NVIDIA_API_KEY"],
-        "model": os.environ.get("NVIDIA_MODEL", "deepseek-ai/deepseek-v4.1-flash"),
-        "extra": {"chat_template_kwargs": {"thinking": True}},
-    })
-if not PROVIDERS:
-    raise SystemExit("Нужен ORCAROUTER_API_KEY и/или NVIDIA_API_KEY")
+ORCA_URL = "https://api.orcarouter.ai/v1/chat/completions"
+ORCA_KEY = os.environ["ORCAROUTER_API_KEY"]
+
+# Бесплатные модели OrcaRouter, между которыми можно переключаться (/model)
+MODELS = {
+    "deepseek/deepseek-v4.1-flash-free": "🐋 DeepSeek V4.1 Flash",
+    "deepseek/deepseek-v4-flash-free": "🐳 DeepSeek V4 Flash",
+    "z-ai/glm-5.3-flash-free": "🧩 GLM 5.3 Flash",
+    "tencent/hy4-preview-free": "🐧 Tencent Hy4 (preview)",
+}
+DEFAULT_MODEL = os.environ.get("ORCA_MODEL", "deepseek/deepseek-v4.1-flash-free")
+# Если выбранная модель не отвечает — пробуем запасную
+FALLBACKS = {"deepseek/deepseek-v4-flash-free": "deepseek/deepseek-v4.1-flash-free"}
+DEFAULT_FALLBACK = "deepseek/deepseek-v4-flash-free"
+user_models = {}         # user_id -> выбранная модель
 
 MAX_TOOL_ROUNDS = 5      # сколько раз подряд модель может искать/открывать страницы
 EDIT_INTERVAL = 2.5      # как часто обновлять сообщение «Думаю…» (сек)
@@ -75,6 +70,7 @@ TOOLS = [
 ]
 
 CLEAR_TEXT = "🗑 Новый диалог"
+MODEL_TEXT = "🤖 Сменить ИИ"
 
 
 # ---------- Интернет ----------
@@ -130,7 +126,7 @@ def clear_button():
 
 
 def main_keyboard():
-    return ReplyKeyboardMarkup([[CLEAR_TEXT]], resize_keyboard=True, is_persistent=True)
+    return ReplyKeyboardMarkup([[CLEAR_TEXT, MODEL_TEXT]], resize_keyboard=True, is_persistent=True)
 
 
 # ---------- Живой статус ----------
@@ -142,7 +138,7 @@ class LiveStatus:
         self.msg = message
         self.show = show_thoughts
         self.started = time.time()
-        self.stage = "⏳ Жду очереди на сервере…"
+        self.stage = "⏳ Думаю…"
         self.reasoning = ""
         self.actions = []
         self.last_text = ""
@@ -185,31 +181,30 @@ class RetryableError(Exception):
     pass
 
 
-async def stream_completion(client, provider, messages, status: LiveStatus, use_tools: bool):
+async def stream_completion(client, model, messages, status: LiveStatus, use_tools: bool):
     """Один запрос к модели со стримингом. Возвращает (content, reasoning, tool_calls)."""
     payload = {
-        "model": provider["model"],
+        "model": model,
         "messages": messages,
         "max_tokens": 16384,
         "temperature": 1.0,
         "top_p": 1.0,
         "stream": True,
-        **provider["extra"],
     }
     if use_tools:
         payload["tools"] = TOOLS
 
     content, reasoning = "", ""
     tool_calls = {}
-    async with client.stream("POST", provider["url"], json=payload, headers={
-        "Authorization": f"Bearer {provider['key']}",
+    async with client.stream("POST", ORCA_URL, json=payload, headers={
+        "Authorization": f"Bearer {ORCA_KEY}",
         "Accept": "text/event-stream",
     }) as resp:
         if resp.status_code in (429, 500, 502, 503, 504):
             raise RetryableError(resp.status_code)
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", "replace")
-            raise RetryableError(f"{provider['name']} {resp.status_code}: {body[:200]}")
+            raise RetryableError(f"{resp.status_code}: {body[:200]}")
         async for line in resp.aiter_lines():
             if not line.startswith("data: ") or line == "data: [DONE]":
                 continue
@@ -247,6 +242,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
         today=datetime.now().strftime("%d.%m.%Y"),
         web_note=WEB_NOTE_ON if use_web else WEB_NOTE_OFF)
 
+    chosen = user_models.get(user_id, DEFAULT_MODEL)
     turn = [{"role": "user", "content": user_message}]
     all_reasoning = []
     timeout = httpx.Timeout(connect=30, read=600, write=30, pool=30)
@@ -255,19 +251,23 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
             allow_tools = use_web and round_no < MAX_TOOL_ROUNDS
             messages = [{"role": "system", "content": system}, *history, *turn]
             errors = []
-            for provider in PROVIDERS:
+            attempts = [chosen, chosen, FALLBACKS.get(chosen, DEFAULT_FALLBACK)]
+            for n, model in enumerate(attempts):
                 try:
                     content, reasoning, calls = await stream_completion(
-                        client, provider, messages, status, allow_tools)
+                        client, model, messages, status, allow_tools)
                     break
                 except (httpx.TransportError, RetryableError) as e:
-                    # Провайдер перегружен / лимит / обрыв — переключаемся на следующий
-                    errors.append(f"{provider['name']}: {type(e).__name__} {e}"[:200])
-                    status.stage = f"🔁 {provider['name']} не ответил, пробую другой сервер…"
-                    status.reasoning = ""
-                    await status.update(force=True)
+                    errors.append(f"{MODELS.get(model, model)}: {type(e).__name__} {e}"[:200])
+                    if n + 1 < len(attempts):
+                        nxt = attempts[n + 1]
+                        status.stage = ("🔁 Сервер не ответил, повторяю…" if nxt == model
+                                        else f"🔁 Модель занята, переключаюсь на {MODELS[nxt]}…")
+                        status.reasoning = ""
+                        await status.update(force=True)
+                        await asyncio.sleep(1)
             else:
-                raise RuntimeError("Серверы не ответили, попробуй ещё раз чуть позже.\n"
+                raise RuntimeError("Сервер не ответил, попробуй ещё раз чуть позже.\n"
                                    + "\n".join(errors))
             if reasoning.strip():
                 all_reasoning.append(reasoning.strip())
@@ -303,7 +303,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
                 await status.update(force=True)
                 result = await run_tool(c["name"], args)
                 turn.append({"role": "tool", "tool_call_id": c["id"], "content": result})
-            status.stage = "⏳ Нашёл, жду очереди на сервере…"
+            status.stage = "🧠 Изучаю найденное…"
             status.reasoning = ""
     raise RuntimeError("Слишком много обращений к интернету, попробуй переформулировать вопрос.")
 
@@ -354,13 +354,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_text == CLEAR_TEXT:
         await reset_dialog(update, context)
         return
+    if user_text == MODEL_TEXT:
+        await choose_model(update, context)
+        return
 
     lock = user_locks.setdefault(user_id, asyncio.Lock())
     if lock.locked():
         await update.message.reply_text("⏳ Ещё отвечаю на прошлое сообщение — это встанет следом.")
     async with lock:
         show = show_thoughts.get(user_id, True)
-        status_msg = await update.message.reply_text("⏳ Жду очереди на сервере…")
+        status_msg = await update.message.reply_text("⏳ Думаю…")
         status = LiveStatus(status_msg, show)
         ticker = asyncio.create_task(status.ticker())
         try:
@@ -419,19 +422,48 @@ async def clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def models_keyboard(current: str):
+    rows = [[InlineKeyboardButton(("✅ " if mid == current else "") + name,
+                                  callback_data=f"model:{mid}")]
+            for mid, name in MODELS.items()]
+    return InlineKeyboardMarkup(rows)
+
+
+async def choose_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    current = user_models.get(update.effective_user.id, DEFAULT_MODEL)
+    await update.effective_message.reply_text(
+        f"🤖 Сейчас: *{MODELS.get(current, current)}*\nВыбери модель:",
+        parse_mode="Markdown", reply_markup=models_keyboard(current))
+
+
+async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    mid = query.data.split(":", 1)[1]
+    if mid not in MODELS:
+        await query.answer("Неизвестная модель")
+        return
+    user_models[query.from_user.id] = mid
+    await query.answer(f"Выбрано: {MODELS[mid]}")
+    await query.edit_message_text(
+        f"🤖 Теперь отвечает *{MODELS[mid]}*.\nКонтекст диалога сохранён.",
+        parse_mode="Markdown")
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Привет! Я DeepSeek V4.1 Flash с доступом к интернету.\n"
+        "👋 Привет! Я ИИ-ассистент с доступом к интернету (по умолчанию DeepSeek V4.1 Flash).\n"
         "Просто напиши мне что-нибудь!\n\n"
         "🗑 «Новый диалог» внизу или /clear — начать заново\n"
         "💭 /thoughts — показывать/скрывать размышления\n"
-        "🌐 /web — включить/выключить интернет",
+        "🌐 /web — включить/выключить интернет\n"
+        "🤖 /model — сменить ИИ",
         reply_markup=main_keyboard()
     )
 
 
 async def post_init(application):
     await application.bot.set_my_commands([
+        BotCommand("model", "🤖 Сменить ИИ"),
         BotCommand("clear", "🗑 Очистить контекст диалога"),
         BotCommand("thoughts", "💭 Показывать/скрывать размышления"),
         BotCommand("web", "🌐 Включить/выключить интернет"),
@@ -445,6 +477,8 @@ app.add_handler(CommandHandler("start", start))
 app.add_handler(CommandHandler(["clear", "new", "reset"], reset_dialog))
 app.add_handler(CommandHandler(["thoughts", "think"], toggle_thoughts))
 app.add_handler(CommandHandler("web", toggle_web))
-app.add_handler(CallbackQueryHandler(clear_callback, pattern="clear"))
+app.add_handler(CommandHandler(["model", "ai"], choose_model))
+app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
+app.add_handler(CallbackQueryHandler(clear_callback, pattern="^clear$"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 app.run_polling()
