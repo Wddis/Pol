@@ -399,6 +399,8 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
         chosen = DEFAULT_MODEL
     turn = [{"role": "user", "content": user_message}]
     all_reasoning = []
+    empty_retries = 0
+    did_tools = False
     status.vision = bool(MODELS[chosen].get("vision"))
     status.attach_images = []
     timeout = httpx.Timeout(connect=30, read=600, write=30, pool=30)
@@ -442,7 +444,22 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
 
             if not calls:
                 if not content.strip():
-                    raise RuntimeError("Модель вернула пустой ответ, попробуй ещё раз.")
+                    # Пустой ответ (часто после долгого анализа) — не теряем работу,
+                    # а просим модель сформулировать итог. До 2 попыток.
+                    if empty_retries < 2:
+                        empty_retries += 1
+                        status.stage = "🧠 Формулирую ответ…"
+                        await status.update(force=True)
+                        turn.append({"role": "user", "content":
+                            "Данных достаточно. Дай пользователю понятный итоговый ответ на его запрос "
+                            "на основе уже собранного (не вызывай больше инструменты, если не обязательно)."})
+                        continue
+                    if did_tools:
+                        content = ("Я изучил файл, но не смог коротко сформулировать вывод. "
+                                   "Задай уточняющий вопрос — например, про конкретные функции, "
+                                   "строки или участок кода, и я отвечу по нему.")
+                    else:
+                        raise RuntimeError("Модель вернула пустой ответ, попробуй ещё раз.")
                 # в историю — коротко: запрос (без содержимого файлов) и итоговый ответ
                 history.append({"role": "user", "content": history_text or user_message})
                 done = [a for a in status.actions if a.startswith(("✏️", "📤", "🗑", "📸", "🔌"))]
@@ -451,7 +468,8 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                 ws.save_history(user_id, history)
                 return content, "\n\n".join(all_reasoning), used_route
 
-            # Модель хочет воспользоваться интернетом
+            # Модель хочет воспользоваться инструментами
+            did_tools = True
             for i, c in enumerate(calls):
                 c["id"] = c["id"] or f"call_{round_no}_{i}"
             turn.append({
@@ -495,7 +513,13 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                 status.actions.append("👀 Проверяю снимок")
             status.stage = "🧠 Думаю дальше…"
             status.reasoning = ""
-    raise RuntimeError("Слишком много шагов для одного ответа — попробуй разбить задачу на части.")
+    # исчерпали лимит шагов — не падаем, а отдаём что есть
+    history.append({"role": "user", "content": history_text or user_message})
+    tail = content.strip() if content.strip() else \
+        "Задача оказалась слишком большой за один раз — задай её по частям, и я продолжу."
+    history.append({"role": "assistant", "content": tail})
+    ws.save_history(user_id, history)
+    return tail, "\n\n".join(all_reasoning), used_route
 
 
 # ---------- Отправка ----------

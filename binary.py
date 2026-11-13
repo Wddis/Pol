@@ -104,14 +104,38 @@ def summary(data: bytes, name: str = "") -> str:
     lines.append(f"Защиты: NX {'да' if nx else 'нет'}, RELRO {'да' if relro else 'нет'}, "
                  f"stack canary {'да' if canary else 'не видно'}")
     # заметные движки/библиотеки по строкам
-    hints = [lbl for pat, lbl in [(b"UnityPlayer", "Unity"), (b"il2cpp", "IL2CPP (Unity)"),
-                                  (b"mono_", "Mono"), (b"Unreal", "Unreal Engine"),
-                                  (b"cocos2d", "Cocos2d"), (b"godot", "Godot"), (b"SDL_", "SDL"),
-                                  (b"lua_", "Lua"), (b"GLES", "OpenGL ES"), (b"vkCreate", "Vulkan"),
-                                  (b"fmod", "FMOD"), (b"Box2D", "Box2D"), (b"PhysX", "PhysX")]
-             if pat.lower() in data.lower()]
+    low = data.lower()
+    hints = [lbl for pat, lbl in [(b"unityplayer", "Unity"), (b"il2cpp", "IL2CPP (Unity)"),
+                                  (b"mono_", "Mono"), (b"unreal", "Unreal Engine"),
+                                  (b"cocos2d", "Cocos2d"), (b"godot", "Godot"), (b"sdl_", "SDL"),
+                                  (b"lua_", "Lua"), (b"gles", "OpenGL ES"), (b"vkcreate", "Vulkan"),
+                                  (b"fmod", "FMOD"), (b"box2d", "Box2D"), (b"physx", "PhysX"),
+                                  (b"libgdx", "libGDX"), (b"flutter", "Flutter")]
+             if pat in low]
     if hints:
         lines.append("Похоже, используется: " + ", ".join(dict.fromkeys(hints)))
+    # защита/обфускация/подпись — часто ради этого и смотрят .so
+    prot = [lbl for pat, lbl in [(b"global-metadata", "IL2CPP global-metadata.dat"),
+                                 (b" libtprt", "Tencent защита"), (b"jiagu", "360 Jiagu обфускация"),
+                                 (b"bangcle", "Bangcle защита"), (b"ijiami", "Ijiami защита"),
+                                 (b"obfuscat", "обфускация"), (b"anti-debug", "анти-отладка"),
+                                 (b"ptrace", "проверка ptrace (анти-отладка)"),
+                                 (b"frida", "детект Frida"), (b"signature", "проверка подписи"),
+                                 (b"licens", "лицензирование")]
+            if pat in low]
+    if prot:
+        lines.append("Защита/подпись (по строкам): " + ", ".join(dict.fromkeys(prot)))
+    # сразу показываем экспортируемые функции и секции — чтобы не делать лишних шагов
+    exp_funcs = [f for f in _symbols(data, "exports", "") if f[4] == "STT_FUNC"]
+    if exp_funcs:
+        top = ", ".join((f[1] if f[1] == f[0] else f[1]) for f in exp_funcs[:25])
+        lines.append(f"Экспортируемые функции ({len(exp_funcs)}): {top}"
+                     + (" … (полный список — exports)" if len(exp_funcs) > 25 else ""))
+    secs = [s.name for s in _elf(data).iter_sections() if s.name]
+    if secs:
+        lines.append("Секции: " + ", ".join(secs))
+    lines.append("Дальше по необходимости: functions/exports/imports (query для поиска), "
+                 "strings (query), disasm (target=имя функции).")
     return "\n".join(lines)
 
 
