@@ -19,34 +19,25 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 # Подключаются те, для которых задан ключ в переменных окружения.
 PROVIDERS = {
     "orca": {"name": "OrcaRouter", "url": "https://api.orcarouter.ai/v1", "env": "ORCAROUTER_API_KEY"},
-    "routeway": {"name": "Routeway", "url": "https://api.routeway.ai/v1", "env": "ROUTEWAY_API_KEY"},
     "unorouter": {"name": "UnoRouter", "url": "https://api.unorouter.com/v1", "env": "UNOROUTER_API_KEY"},
-    "modelscope": {"name": "ModelScope",
-                   "url": os.environ.get("MODELSCOPE_URL", "https://api-inference.modelscope.cn/v1"),
-                   "env": "MODELSCOPE_API_KEY"},
-    "nvidia": {"name": "NVIDIA", "url": "https://integrate.api.nvidia.com/v1", "env": "NVIDIA_API_KEY",
-               "extra": {"chat_template_kwargs": {"thinking": True}}, "slow": True},
 }
 for _p in PROVIDERS.values():
     _p["key"] = os.environ.get(_p["env"], "")
 if not any(p["key"] for p in PROVIDERS.values()):
-    raise SystemExit("Не задан ни один ключ провайдера (ORCAROUTER_API_KEY, ROUTEWAY_API_KEY, ...)")
+    raise SystemExit("Не задан ни один ключ провайдера (ORCAROUTER_API_KEY, UNOROUTER_API_KEY)")
 
 # Модели и цепочки провайдеров: бот идёт по списку, пока кто-то не ответит.
 MODELS = {
     "deepseek-v4.1-flash": {
         "label": "🐋 DeepSeek V4.1 Flash", "identity": ("DeepSeek V4.1 Flash", "DeepSeek"),
         "routes": [("orca", "deepseek/deepseek-v4.1-flash-free"),
-                   ("routeway", "deepseek-v4.1-flash:free"),
                    ("unorouter", "deepseek-v4.1-flash:free"),
-                   ("modelscope", "deepseek-ai/DeepSeek-V4.1-Flash"),
-                   ("orca", "deepseek/deepseek-v4-flash-free"),
-                   ("nvidia", "deepseek-ai/deepseek-v4.1-flash")]},
+                   ("orca", "deepseek/deepseek-v4-flash-free")]},
     "deepseek-v4-flash": {
         "label": "🐳 DeepSeek V4 Flash", "identity": ("DeepSeek V4 Flash", "DeepSeek"),
         "routes": [("orca", "deepseek/deepseek-v4-flash-free"),
                    ("orca", "deepseek/deepseek-v4.1-flash-free"),
-                   ("routeway", "deepseek-v4.1-flash:free")]},
+                   ("unorouter", "deepseek-v4.1-flash:free")]},
     "glm-5.3-flash": {
         "label": "🧩 GLM 5.3 Flash", "identity": ("GLM 5.3 Flash", "Z.ai"),
         "routes": [("orca", "z-ai/glm-5.3-flash-free")]},
@@ -247,6 +238,8 @@ async def stream_completion(client, route, messages, status: LiveStatus, use_too
     }) as resp:
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", "replace")
+            if resp.status_code == 403 and "limit" in body.lower():
+                cooldown_until[pid] = time.time() + 60
             if resp.status_code in (402, 429):
                 # лимит: запоминаем, сколько ждать (Retry-After), но не дольше MAX_COOLDOWN
                 try:
@@ -316,9 +309,8 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
             ready = [r for r in routes if cooldown_until.get(r[0], 0) <= now]
             for n, route in enumerate(ready):
                 messages = [{"role": "system", "content": system_for(route)}, *history, *turn]
-                if PROVIDERS[route[0]].get("slow"):
-                    status.stage = "🐢 Быстрые каналы на лимите — медленный режим (до пары минут)…"
-                    await status.update(force=True)
+                if cooldown_until.get(route[0], 0) > time.time():
+                    continue      # этот провайдер только что упёрся в лимит
                 try:
                     content, reasoning, calls = await stream_completion(
                         client, route, messages, status, allow_tools)

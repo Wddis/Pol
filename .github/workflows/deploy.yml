@@ -68,8 +68,8 @@ jobs:
           openssl pkeyutl -decrypt -inkey priv.pem -pkeyopt rsa_padding_mode:oaep -pkeyopt rsa_oaep_md:sha256 -in key.rsa -out aes.key
           openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass file:aes.key -in data.aes -out secrets.json
           rm -f priv.pem aes.key key.rsa data.aes bundle.enc
-          for k in TELEGRAM_TOKEN ORCAROUTER_API_KEY; do
-            echo "::add-mask::$(jq -r .$k secrets.json)"
+          for k in TELEGRAM_TOKEN ORCAROUTER_API_KEY UNOROUTER_API_KEY; do
+            v=$(jq -r ".$k // empty" secrets.json); [ -n "$v" ] && echo "::add-mask::$v"
           done
           jq -r .SSH_KEY_B64 secrets.json | base64 -d > ssh_key
           chmod 600 ssh_key
@@ -87,7 +87,7 @@ jobs:
           $SSH "hostname" | grep -qx "$SLUG" || { echo "WRONG HOST"; exit 1; }
           tar czf - bot.py requirements.txt | $SSH "mkdir -p /root/bot && tar xzf - -C /root/bot"
           # .env передаём через stdin, в логи он не попадает
-          jq -r --arg slug "$SLUG" '"TELEGRAM_TOKEN=\(.TELEGRAM_TOKEN)\nORCAROUTER_API_KEY=\(.ORCAROUTER_API_KEY)\nWEBHOOK_URL=https://\($slug).thevibehosting.com\nPORT=80"' "$K/secrets.json" \
+          jq -r --arg slug "$SLUG" '"TELEGRAM_TOKEN=\(.TELEGRAM_TOKEN)\nORCAROUTER_API_KEY=\(.ORCAROUTER_API_KEY)\nUNOROUTER_API_KEY=\(.UNOROUTER_API_KEY // "")\nWEBHOOK_URL=https://\($slug).thevibehosting.com\nPORT=80"' "$K/secrets.json" \
             | $SSH "umask 077; cat > /root/bot/.env"
           rm -f "$K/secrets.json"
           $SSH bash -s <<'EOF'
