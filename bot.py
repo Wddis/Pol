@@ -3,6 +3,7 @@ import json
 import time
 import asyncio
 import html
+import secrets
 from datetime import datetime
 
 import httpx
@@ -59,6 +60,39 @@ EDIT_INTERVAL = 2.5      # как часто обновлять сообщени
 TG_LIMIT = 4000          # лимит длины сообщения Telegram (с запасом)
 
 chat_histories = {}      # user_id -> список сообщений (только в памяти)
+
+# Инструкции хранятся на диске, чтобы пережить перезапуск/сон сервера
+DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
+INSTRUCTIONS_FILE = os.path.join(DATA_DIR, "instructions.json")
+MAX_INSTRUCTIONS = 10
+MAX_INSTRUCTION_CHARS = 20000
+pending_files = {}       # token -> присланный .md, ждущий выбора
+
+
+def load_instructions():
+    try:
+        with open(INSTRUCTIONS_FILE, encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+
+def save_instructions():
+    os.makedirs(DATA_DIR, exist_ok=True)
+    tmp = INSTRUCTIONS_FILE + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(instructions, f, ensure_ascii=False)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, INSTRUCTIONS_FILE)
+
+
+instructions = load_instructions()   # str(user_id) -> [{id, name, text, added}]
+
+
+def md_escape(t: str) -> str:
+    for ch in ("_", "*", "`", "["):
+        t = t.replace(ch, "\\" + ch)
+    return t
 show_thoughts = {}       # user_id -> показывать ли размышления (по умолчанию да)
 web_enabled = {}         # user_id -> разрешён ли интернет (по умолчанию да)
 user_locks = {}          # user_id -> asyncio.Lock, чтобы ответы шли по очереди
@@ -95,6 +129,7 @@ TOOLS = [
 
 CLEAR_TEXT = "🗑 Новый диалог"
 MODEL_TEXT = "🤖 Сменить ИИ"
+INSTR_TEXT = "📌 Инструкции"
 
 
 # ---------- Интернет ----------
@@ -150,7 +185,7 @@ def clear_button():
 
 
 def main_keyboard():
-    return ReplyKeyboardMarkup([[CLEAR_TEXT, MODEL_TEXT]], resize_keyboard=True, is_persistent=True)
+    return ReplyKeyboardMarkup([[CLEAR_TEXT, MODEL_TEXT], [INSTR_TEXT]], resize_keyboard=True, is_persistent=True)
 
 
 # ---------- Живой статус ----------
@@ -302,10 +337,17 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
         logical = chosen if route in MODELS[chosen]["routes"] else \
             next((k for k, v in MODELS.items() if route in v["routes"]), chosen)
         name, vendor = MODELS[logical]["identity"]
-        return SYSTEM_PROMPT.format(
+        prompt = SYSTEM_PROMPT.format(
             model_name=name, vendor=vendor,
             today=datetime.now().strftime("%d.%m.%Y"),
             web_note=WEB_NOTE_ON if use_web else WEB_NOTE_OFF)
+        user_instr = instructions.get(str(user_id), [])
+        if user_instr:
+            prompt += ("\n\nИнструкции пользователя (его собственные файлы — следуй им, "
+                       "если они не противоречат безопасности):")
+            for it in user_instr:
+                prompt += f"\n\n### {it['name']}\n{it['text']}"
+        return prompt
 
     chosen = user_models.get(user_id, DEFAULT_MODEL)
     if chosen not in MODELS:
@@ -437,17 +479,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if user_text == MODEL_TEXT:
         await choose_model(update, context)
         return
+    if user_text == INSTR_TEXT:
+        await show_instructions(update, context)
+        return
 
-    await run_turn(update, user_id, user_text)
+    await run_turn(update.message, user_id, user_text)
 
 
-async def run_turn(update: Update, user_id: int, user_text: str):
+async def run_turn(message, user_id: int, user_text: str):
     lock = user_locks.setdefault(user_id, asyncio.Lock())
     if lock.locked():
-        await update.message.reply_text("⏳ Ещё отвечаю на прошлое сообщение — это встанет следом.")
+        await message.reply_text("⏳ Ещё отвечаю на прошлое сообщение — это встанет следом.")
     async with lock:
         show = show_thoughts.get(user_id, True)
-        status_msg = await update.message.reply_text("⏳ Думаю…")
+        status_msg = await message.reply_text("⏳ Думаю…")
         status = LiveStatus(status_msg, show)
         ticker = asyncio.create_task(status.ticker())
         try:
@@ -466,8 +511,8 @@ async def run_turn(update: Update, user_id: int, user_text: str):
         except Exception:
             pass
         if show and reasoning:
-            await send_thoughts(update.message, reasoning, seconds)
-        await send_answer(update.message, answer + f"\n\n_— {route_label(used_route)}_")
+            await send_thoughts(message, reasoning, seconds)
+        await send_answer(message, answer + f"\n\n_— {route_label(used_route)}_")
 
 
 # ---------- Файлы .txt ----------
@@ -488,11 +533,24 @@ def decode_text(data: bytes) -> str:
         return data.decode("latin-1", errors="replace")
 
 
+def file_prompt(name: str, size: int, text: str, question: str) -> str:
+    note = ""
+    if len(text) > MAX_FILE_CHARS:
+        note = (f"\n[Файл обрезан: показаны первые {MAX_FILE_CHARS} из {len(text)} символов. "
+                f"Если нужно — скажи пользователю, что видишь только начало.]")
+        text = text[:MAX_FILE_CHARS]
+    question = question or "Кратко перескажи, что в этом файле, и выдели главное."
+    return (f"Пользователь прислал файл «{name}» ({size} байт). Его содержимое:\n"
+            f"<<<ФАЙЛ\n{text}\nФАЙЛ>>>{note}\n\nЗапрос пользователя: {question}")
+
+
 async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     doc = update.message.document
     name = doc.file_name or "file.txt"
-    if not (name.lower().endswith(".txt") or doc.mime_type == "text/plain"):
-        await update.message.reply_text("📄 Пока я понимаю только текстовые файлы .txt")
+    low = name.lower()
+    is_md = low.endswith((".md", ".markdown")) or doc.mime_type == "text/markdown"
+    if not (is_md or low.endswith(".txt") or doc.mime_type == "text/plain"):
+        await update.message.reply_text("📄 Я понимаю текстовые файлы .txt и .md")
         return
     if doc.file_size and doc.file_size > MAX_FILE_BYTES:
         await update.message.reply_text("📄 Файл слишком большой — максимум 2 МБ.")
@@ -503,16 +561,106 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text:
         await update.message.reply_text("📄 Файл пустой.")
         return
-    note = ""
-    if len(text) > MAX_FILE_CHARS:
-        note = (f"\n[Файл обрезан: показаны первые {MAX_FILE_CHARS} из {len(text)} символов. "
-                f"Если нужно — скажи пользователю, что видишь только начало.]")
-        text = text[:MAX_FILE_CHARS]
-    question = (update.message.caption or "").strip() or \
-        "Кратко перескажи, что в этом файле, и выдели главное."
-    prompt = (f"Пользователь прислал файл «{name}» ({len(data)} байт). Его содержимое:\n"
-              f"<<<ФАЙЛ\n{text}\nФАЙЛ>>>{note}\n\nЗапрос пользователя: {question}")
-    await run_turn(update, update.message.from_user.id, prompt)
+    user_id = update.message.from_user.id
+    caption = (update.message.caption or "").strip()
+    if not is_md:
+        await run_turn(update.message, user_id, file_prompt(name, len(data), text, caption))
+        return
+    # .md — спрашиваем, что сделать
+    token = secrets.token_hex(4)
+    pending_files[token] = {"user": user_id, "name": name, "text": text,
+                            "size": len(data), "caption": caption, "ts": time.time()}
+    for t in [t for t, f in pending_files.items() if time.time() - f["ts"] > 3600]:
+        pending_files.pop(t, None)          # старые незавершённые выборы
+    kb = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📌 Добавить в инструкции", callback_data=f"mdadd:{token}")],
+        [InlineKeyboardButton("🔍 Проанализировать файл", callback_data=f"mdana:{token}")],
+    ])
+    await update.message.reply_text(
+        f"📄 *{md_escape(name)}* — что с ним сделать?", parse_mode="Markdown", reply_markup=kb)
+
+
+async def md_choice_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    action, token = query.data.split(":", 1)
+    f = pending_files.get(token)
+    if not f or f["user"] != query.from_user.id:
+        await query.answer("Файл устарел — пришли его ещё раз")
+        return
+    pending_files.pop(token, None)
+    await query.answer()
+    if action == "mdadd":
+        if len(f["text"]) > MAX_INSTRUCTION_CHARS:
+            await query.edit_message_text(
+                f"⚠️ Инструкция слишком длинная: {len(f['text'])} символов, максимум {MAX_INSTRUCTION_CHARS}.")
+            return
+        items = instructions.setdefault(str(f["user"]), [])
+        if len(items) >= MAX_INSTRUCTIONS:
+            await query.edit_message_text(
+                f"⚠️ Уже {MAX_INSTRUCTIONS} инструкций — удали лишние в меню 📌 Инструкции.")
+            return
+        items.append({"id": secrets.token_hex(3), "name": f["name"], "text": f["text"],
+                      "added": datetime.now().strftime("%d.%m.%Y")})
+        save_instructions()
+        await query.edit_message_text(
+            f"📌 *{md_escape(f['name'])}* добавлен в инструкции.\n"
+            f"Теперь я учитываю его в каждом ответе. Управлять: /instructions",
+            parse_mode="Markdown")
+    else:
+        await query.edit_message_text(f"🔍 Анализирую {f['name']}…")
+        await run_turn(query.message, f["user"],
+                       file_prompt(f["name"], f["size"], f["text"], f["caption"]))
+
+
+# ---------- Инструкции (свои .md файлы) ----------
+
+def instructions_menu(user_id: int):
+    items = instructions.get(str(user_id), [])
+    rows = [[InlineKeyboardButton(f"📄 {it['name'][:40]}", callback_data=f"insv:{it['id']}"),
+             InlineKeyboardButton("🗑", callback_data=f"insd:{it['id']}")] for it in items]
+    if items:
+        rows.append([InlineKeyboardButton("🗑 Удалить все", callback_data="insdall")])
+    text = ("📌 *Твои инструкции*\nОни добавляются к каждому моему ответу.\n"
+            "Нажми на файл — покажу его, 🗑 — удалю.\n\n"
+            f"Всего: {len(items)} из {MAX_INSTRUCTIONS}" if items else
+            "📌 *Инструкций пока нет.*\nПришли мне файл .md и выбери «📌 Добавить в инструкции».")
+    return text, (InlineKeyboardMarkup(rows) if rows else None)
+
+
+async def show_instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text, kb = instructions_menu(update.effective_user.id)
+    await update.effective_message.reply_text(text, parse_mode="Markdown", reply_markup=kb)
+
+
+async def instructions_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    uid = query.from_user.id
+    items = instructions.get(str(uid), [])
+    if query.data == "insdall":
+        instructions.pop(str(uid), None)
+        save_instructions()
+        await query.answer("Все инструкции удалены")
+    else:
+        action, iid = query.data.split(":", 1)
+        it = next((x for x in items if x["id"] == iid), None)
+        if not it:
+            await query.answer("Уже удалено")
+        elif action == "insd":
+            items.remove(it)
+            save_instructions()
+            await query.answer(f"Удалено: {it['name']}")
+        else:
+            await query.answer()
+            preview = it["text"] if len(it["text"]) <= 3500 else it["text"][:3500] + "\n…"
+            await query.message.reply_text(
+                f"📄 <b>{html.escape(it['name'])}</b> · добавлен {it['added']} · {len(it['text'])} симв.\n"
+                f"<blockquote expandable>{html.escape(preview)}</blockquote>", parse_mode="HTML")
+            return
+    text, kb = instructions_menu(uid)
+    try:
+        await query.edit_message_text(text, parse_mode="Markdown", reply_markup=kb)
+    except Exception:
+        pass
 
 
 async def reset_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -586,7 +734,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "💭 /thoughts — показывать/скрывать размышления\n"
         "🌐 /web — включить/выключить интернет\n"
         "🤖 /model — сменить ИИ\n"
-        "📄 Пришли файл .txt (можно с вопросом в подписи) — разберу его",
+        "📄 Пришли файл .txt (можно с вопросом в подписи) — разберу его\n"
+        "📌 Пришли файл .md — добавлю его в свои инструкции или разберу\n"
+        "📌 /instructions — список инструкций, удаление",
         reply_markup=main_keyboard()
     )
 
@@ -594,6 +744,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def post_init(application):
     await application.bot.set_my_commands([
         BotCommand("model", "🤖 Сменить ИИ"),
+        BotCommand("instructions", "📌 Мои инструкции"),
         BotCommand("clear", "🗑 Очистить контекст диалога"),
         BotCommand("thoughts", "💭 Показывать/скрывать размышления"),
         BotCommand("web", "🌐 Включить/выключить интернет"),
@@ -610,6 +761,9 @@ app.add_handler(CommandHandler("web", toggle_web))
 app.add_handler(CommandHandler(["model", "ai"], choose_model))
 app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
 app.add_handler(CallbackQueryHandler(clear_callback, pattern="^clear$"))
+app.add_handler(CommandHandler(["instructions", "instr"], show_instructions))
+app.add_handler(CallbackQueryHandler(md_choice_callback, pattern="^md(add|ana):"))
+app.add_handler(CallbackQueryHandler(instructions_callback, pattern="^ins(v:|d:|dall$)"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
