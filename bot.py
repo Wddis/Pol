@@ -15,27 +15,53 @@ from telegram.ext import (ApplicationBuilder, MessageHandler, CommandHandler,
 
 TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 
-ORCA_URL = "https://api.orcarouter.ai/v1/chat/completions"
-ORCA_KEY = os.environ["ORCAROUTER_API_KEY"]
+# ---------- Провайдеры ----------
+# Подключаются те, для которых задан ключ в переменных окружения.
+PROVIDERS = {
+    "orca": {"name": "OrcaRouter", "url": "https://api.orcarouter.ai/v1", "env": "ORCAROUTER_API_KEY"},
+    "routeway": {"name": "Routeway", "url": "https://api.routeway.ai/v1", "env": "ROUTEWAY_API_KEY"},
+    "unorouter": {"name": "UnoRouter", "url": "https://api.unorouter.com/v1", "env": "UNOROUTER_API_KEY"},
+    "modelscope": {"name": "ModelScope",
+                   "url": os.environ.get("MODELSCOPE_URL", "https://api-inference.modelscope.cn/v1"),
+                   "env": "MODELSCOPE_API_KEY"},
+    "nvidia": {"name": "NVIDIA", "url": "https://integrate.api.nvidia.com/v1", "env": "NVIDIA_API_KEY",
+               "extra": {"chat_template_kwargs": {"thinking": True}}, "slow": True},
+}
+for _p in PROVIDERS.values():
+    _p["key"] = os.environ.get(_p["env"], "")
+if not any(p["key"] for p in PROVIDERS.values()):
+    raise SystemExit("Не задан ни один ключ провайдера (ORCAROUTER_API_KEY, ROUTEWAY_API_KEY, ...)")
 
-# Бесплатные модели OrcaRouter, между которыми можно переключаться (/model)
+# Модели и цепочки провайдеров: бот идёт по списку, пока кто-то не ответит.
 MODELS = {
-    "deepseek/deepseek-v4.1-flash-free": "🐋 DeepSeek V4.1 Flash",
-    "deepseek/deepseek-v4-flash-free": "🐳 DeepSeek V4 Flash",
-    "z-ai/glm-5.3-flash-free": "🧩 GLM 5.3 Flash",
-    "tencent/hy4-preview-free": "🐧 Tencent Hy4 (preview)",
+    "deepseek-v4.1-flash": {
+        "label": "🐋 DeepSeek V4.1 Flash", "identity": ("DeepSeek V4.1 Flash", "DeepSeek"),
+        "routes": [("orca", "deepseek/deepseek-v4.1-flash-free"),
+                   ("routeway", "deepseek-v4.1-flash:free"),
+                   ("unorouter", "deepseek-v4.1-flash:free"),
+                   ("modelscope", "deepseek-ai/DeepSeek-V4.1-Flash"),
+                   ("orca", "deepseek/deepseek-v4-flash-free"),
+                   ("nvidia", "deepseek-ai/deepseek-v4.1-flash")]},
+    "deepseek-v4-flash": {
+        "label": "🐳 DeepSeek V4 Flash", "identity": ("DeepSeek V4 Flash", "DeepSeek"),
+        "routes": [("orca", "deepseek/deepseek-v4-flash-free"),
+                   ("orca", "deepseek/deepseek-v4.1-flash-free"),
+                   ("routeway", "deepseek-v4.1-flash:free")]},
+    "glm-5.3-flash": {
+        "label": "🧩 GLM 5.3 Flash", "identity": ("GLM 5.3 Flash", "Z.ai"),
+        "routes": [("orca", "z-ai/glm-5.3-flash-free")]},
+    "hy4-preview": {
+        "label": "🐧 Tencent Hy4 (preview)", "identity": ("Hunyuan Hy4 (preview)", "Tencent"),
+        "routes": [("orca", "tencent/hy4-preview-free")]},
 }
-# Настоящие названия и разработчики — модель получает их в системном промпте
-MODEL_IDENTITY = {
-    "deepseek/deepseek-v4.1-flash-free": ("DeepSeek V4.1 Flash", "DeepSeek"),
-    "deepseek/deepseek-v4-flash-free": ("DeepSeek V4 Flash", "DeepSeek"),
-    "z-ai/glm-5.3-flash-free": ("GLM 5.3 Flash", "Z.ai"),
-    "tencent/hy4-preview-free": ("Hunyuan Hy4 (preview)", "Tencent"),
-}
-DEFAULT_MODEL = os.environ.get("ORCA_MODEL", "deepseek/deepseek-v4.1-flash-free")
-# Если выбранная модель не отвечает — пробуем запасную
-FALLBACKS = {"deepseek/deepseek-v4-flash-free": "deepseek/deepseek-v4.1-flash-free"}
-DEFAULT_FALLBACK = "deepseek/deepseek-v4-flash-free"
+DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "deepseek-v4.1-flash")
+# Если у выбранной модели все каналы исчерпаны — используем цепочку DeepSeek V4.1
+FALLBACK_MODEL = "deepseek-v4.1-flash"
+
+# Провайдер упёрся в лимит → не трогаем его до этого времени (не тратим время на отказы)
+cooldown_until = {}      # provider_id -> unix time
+MAX_COOLDOWN = 6 * 3600
+
 user_models = {}         # user_id -> выбранная модель
 
 MAX_TOOL_ROUNDS = 5      # сколько раз подряд модель может искать/открывать страницы
@@ -185,12 +211,22 @@ class LiveStatus:
 
 # ---------- Модель ----------
 
+def route_label(route):
+    pid, model = route
+    label = next((v["label"] for v in MODELS.values() if route in v["routes"]), model)
+    if "v4-flash" in model and "v4.1" not in model:
+        label = MODELS["deepseek-v4-flash"]["label"]
+    return f"{label} · {PROVIDERS[pid]['name']}"
+
+
 class RetryableError(Exception):
     pass
 
 
-async def stream_completion(client, model, messages, status: LiveStatus, use_tools: bool):
+async def stream_completion(client, route, messages, status: LiveStatus, use_tools: bool):
     """Один запрос к модели со стримингом. Возвращает (content, reasoning, tool_calls)."""
+    pid, model = route
+    prov = PROVIDERS[pid]
     payload = {
         "model": model,
         "messages": messages,
@@ -198,21 +234,27 @@ async def stream_completion(client, model, messages, status: LiveStatus, use_too
         "temperature": 1.0,
         "top_p": 1.0,
         "stream": True,
+        **prov.get("extra", {}),
     }
     if use_tools:
         payload["tools"] = TOOLS
 
     content, reasoning = "", ""
     tool_calls = {}
-    async with client.stream("POST", ORCA_URL, json=payload, headers={
-        "Authorization": f"Bearer {ORCA_KEY}",
+    async with client.stream("POST", prov["url"] + "/chat/completions", json=payload, headers={
+        "Authorization": f"Bearer {prov['key']}",
         "Accept": "text/event-stream",
     }) as resp:
-        if resp.status_code in (429, 500, 502, 503, 504):
-            raise RetryableError(resp.status_code)
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", "replace")
-            raise RetryableError(f"{resp.status_code}: {body[:200]}")
+            if resp.status_code in (402, 429):
+                # лимит: запоминаем, сколько ждать (Retry-After), но не дольше MAX_COOLDOWN
+                try:
+                    wait = int(float(resp.headers.get("retry-after", "60")))
+                except ValueError:
+                    wait = 60
+                cooldown_until[pid] = time.time() + min(max(wait, 30), MAX_COOLDOWN)
+            raise RetryableError(f"{resp.status_code}: {body[:150]}")
         async for line in resp.aiter_lines():
             if not line.startswith("data: ") or line == "data: [DONE]":
                 continue
@@ -246,14 +288,20 @@ async def stream_completion(client, model, messages, status: LiveStatus, use_too
 async def ask_model(user_id: int, user_message: str, status: LiveStatus):
     history = chat_histories.setdefault(user_id, [])
     use_web = web_enabled.get(user_id, True)
-    def system_for(model):
-        name, vendor = MODEL_IDENTITY.get(model, (MODELS.get(model, model), "—"))
+    def system_for(route):
+        logical = chosen if route in MODELS[chosen]["routes"] else \
+            next((k for k, v in MODELS.items() if route in v["routes"]), chosen)
+        if "v4-flash" in route[1].lower() and "v4.1" not in route[1]:
+            logical = "deepseek-v4-flash"
+        name, vendor = MODELS[logical]["identity"]
         return SYSTEM_PROMPT.format(
             model_name=name, vendor=vendor,
             today=datetime.now().strftime("%d.%m.%Y"),
             web_note=WEB_NOTE_ON if use_web else WEB_NOTE_OFF)
 
     chosen = user_models.get(user_id, DEFAULT_MODEL)
+    if chosen not in MODELS:
+        chosen = DEFAULT_MODEL
     turn = [{"role": "user", "content": user_message}]
     all_reasoning = []
     timeout = httpx.Timeout(connect=30, read=600, write=30, pool=30)
@@ -261,26 +309,33 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             allow_tools = use_web and round_no < MAX_TOOL_ROUNDS
             errors = []
-            attempts = [chosen, chosen, FALLBACKS.get(chosen, DEFAULT_FALLBACK)]
-            for n, model in enumerate(attempts):
-                messages = [{"role": "system", "content": system_for(model)}, *history, *turn]
+            routes = [r for r in MODELS[chosen]["routes"] + MODELS[FALLBACK_MODEL]["routes"]
+                      if PROVIDERS[r[0]]["key"]]
+            routes = list(dict.fromkeys(routes))          # без повторов, порядок сохраняем
+            now = time.time()
+            ready = [r for r in routes if cooldown_until.get(r[0], 0) <= now]
+            for n, route in enumerate(ready):
+                messages = [{"role": "system", "content": system_for(route)}, *history, *turn]
+                if PROVIDERS[route[0]].get("slow"):
+                    status.stage = "🐢 Быстрые каналы на лимите — медленный режим (до пары минут)…"
+                    await status.update(force=True)
                 try:
                     content, reasoning, calls = await stream_completion(
-                        client, model, messages, status, allow_tools)
-                    used_model = model
+                        client, route, messages, status, allow_tools)
+                    used_route = route
                     break
                 except (httpx.TransportError, RetryableError) as e:
-                    errors.append(f"{MODELS.get(model, model)}: {type(e).__name__} {e}"[:200])
-                    if n + 1 < len(attempts):
-                        nxt = attempts[n + 1]
-                        status.stage = ("🔁 Сервер не ответил, повторяю…" if nxt == model
-                                        else f"🔁 Модель занята, переключаюсь на {MODELS[nxt]}…")
+                    errors.append(f"{PROVIDERS[route[0]]['name']}: {type(e).__name__} {e}"[:200])
+                    if n + 1 < len(ready):
+                        status.stage = f"🔁 {PROVIDERS[route[0]]['name']} занят, пробую {PROVIDERS[ready[n + 1][0]]['name']}…"
                         status.reasoning = ""
                         await status.update(force=True)
-                        await asyncio.sleep(1)
             else:
-                raise RuntimeError("Сервер не ответил, попробуй ещё раз чуть позже.\n"
-                                   + "\n".join(errors))
+                waits = [cooldown_until[p] for p in {r[0] for r in routes} if p in cooldown_until]
+                when = ""
+                if waits and min(waits) > now:
+                    when = " Ближайший канал освободится в " + datetime.fromtimestamp(min(waits)).strftime("%H:%M") + " (UTC)."
+                raise RuntimeError("Все бесплатные каналы сейчас заняты." + when + "\n" + "\n".join(errors))
             if reasoning.strip():
                 all_reasoning.append(reasoning.strip())
 
@@ -289,7 +344,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
                     raise RuntimeError("Модель вернула пустой ответ, попробуй ещё раз.")
                 history.extend(turn)
                 history.append({"role": "assistant", "content": content})
-                return content, "\n\n".join(all_reasoning), used_model
+                return content, "\n\n".join(all_reasoning), used_route
 
             # Модель хочет воспользоваться интернетом
             for i, c in enumerate(calls):
@@ -381,7 +436,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = LiveStatus(status_msg, show)
         ticker = asyncio.create_task(status.ticker())
         try:
-            answer, reasoning, used_model = await ask_model(user_id, user_text, status)
+            answer, reasoning, used_route = await ask_model(user_id, user_text, status)
         except Exception as e:
             ticker.cancel()
             try:
@@ -397,7 +452,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         if show and reasoning:
             await send_thoughts(update.message, reasoning, seconds)
-        await send_answer(update.message, answer + f"\n\n_— {MODELS.get(used_model, used_model)}_")
+        await send_answer(update.message, answer + f"\n\n_— {route_label(used_route)}_")
 
 
 async def reset_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -439,14 +494,14 @@ async def clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def models_keyboard(current: str):
     rows = [[InlineKeyboardButton(("✅ " if mid == current else "") + name,
                                   callback_data=f"model:{mid}")]
-            for mid, name in MODELS.items()]
+            for mid, name in ((k, v["label"]) for k, v in MODELS.items())]
     return InlineKeyboardMarkup(rows)
 
 
 async def choose_model(update: Update, context: ContextTypes.DEFAULT_TYPE):
     current = user_models.get(update.effective_user.id, DEFAULT_MODEL)
     await update.effective_message.reply_text(
-        f"🤖 Сейчас: *{MODELS.get(current, current)}*\nВыбери модель:",
+        f"🤖 Сейчас: *{MODELS.get(current, MODELS[DEFAULT_MODEL])['label']}*\nВыбери модель:",
         parse_mode="Markdown", reply_markup=models_keyboard(current))
 
 
@@ -457,9 +512,9 @@ async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.answer("Неизвестная модель")
         return
     user_models[query.from_user.id] = mid
-    await query.answer(f"Выбрано: {MODELS[mid]}")
+    await query.answer(f"Выбрано: {MODELS[mid]['label']}")
     await query.edit_message_text(
-        f"🤖 Теперь отвечает *{MODELS[mid]}*.\nКонтекст диалога сохранён.",
+        f"🤖 Теперь отвечает *{MODELS[mid]['label']}*.\nКонтекст диалога сохранён.",
         parse_mode="Markdown")
 
 
