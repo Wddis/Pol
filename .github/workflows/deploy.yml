@@ -113,8 +113,15 @@ jobs:
           SH
           chmod +x /root/run.sh
           # перезапуск: supervisor поднимет run.sh заново за ~3 с
-          pkill -f '[b]ot/venv/bin/python bot.py' || true
-          echo "deployed"
+          # перезапуск: останавливаем любой процесс бота, supervisor поднимет run.sh заново
+          pkill -f '[b]ot\.py' || true
+          ok=""
+          for i in $(seq 1 20); do
+            sleep 2
+            if pgrep -f '[v]env/bin/python bot\.py' >/dev/null; then ok=1; break; fi
+          done
+          ps -eo pid,etimes,args | grep '[b]ot\.py' || true
+          [ -n "$ok" ] && echo "deployed, bot restarted" || echo "WARNING: bot process not found after restart"
           EOF
           rm -f "$K/ssh_key"
 

@@ -1163,7 +1163,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+def _build_id() -> str:
+    """Хэш исходников — по нему видно снаружи, какая версия бота реально запущена."""
+    import hashlib
+    h = hashlib.sha256()
+    base = os.path.dirname(os.path.abspath(__file__))
+    for f in sorted(x for x in os.listdir(base) if x.endswith(".py")):
+        with open(os.path.join(base, f), "rb") as fh:
+            h.update(f.encode() + fh.read())
+    return h.hexdigest()[:8]
+
+
+BUILD_ID = _build_id()
+
+
 async def post_init(application):
+    try:
+        await application.bot.set_my_short_description(f"DeepSeek-бот · сборка {BUILD_ID}")
+    except Exception:
+        pass
     await application.bot.set_my_commands([
         BotCommand("model", "🤖 Сменить ИИ"),
         BotCommand("instructions", "📌 Мои инструкции"),
@@ -1172,6 +1190,7 @@ async def post_init(application):
         BotCommand("clear", "🗑 Очистить контекст диалога"),
         BotCommand("thoughts", "💭 Показывать/скрывать размышления"),
         BotCommand("web", "🌐 Включить/выключить интернет"),
+        BotCommand("claim", "👑 Стать владельцем (запуск кода)"),
         BotCommand("start", "Начать"),
     ])
 
