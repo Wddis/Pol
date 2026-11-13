@@ -109,19 +109,22 @@ jobs:
           #!/usr/bin/env bash
           cd /root/bot
           set -a; . ./.env; set +a
-          exec /root/bot/venv/bin/python bot.py
+          exec /root/bot/venv/bin/python bot.py >> /root/bot/bot.log 2>&1
           SH
           chmod +x /root/run.sh
-          # перезапуск: supervisor поднимет run.sh заново за ~3 с
+          : > /root/bot/bot.log
+          echo "=== ключи в .env (только имена) ==="; grep -oE '^[A-Z_]+=' /root/bot/.env | tr -d '=' || true
           # перезапуск: останавливаем любой процесс бота, supervisor поднимет run.sh заново
           pkill -f '[b]ot\.py' || true
           ok=""
           for i in $(seq 1 20); do
             sleep 2
-            if pgrep -f '[v]env/bin/python bot\.py' >/dev/null; then ok=1; break; fi
+            if curl -s -o /dev/null -m 5 "http://127.0.0.1:80/" 2>/dev/null; then ok=1; break; fi
+            if pgrep -f '[v]env/bin/python bot\.py' >/dev/null; then ok=1; fi
           done
-          ps -eo pid,etimes,args | grep '[b]ot\.py' || true
-          [ -n "$ok" ] && echo "deployed, bot restarted" || echo "WARNING: bot process not found after restart"
+          sleep 4
+          echo "=== bot.log (последние строки) ==="; tail -30 /root/bot/bot.log 2>/dev/null || echo "(лог пуст)"
+          if curl -s -o /dev/null -m 5 "http://127.0.0.1:80/"; then echo "deployed, bot отвечает на :80"; else echo "WARNING: бот не отвечает на :80 — см. лог выше"; fi
           EOF
           rm -f "$K/ssh_key"
 
