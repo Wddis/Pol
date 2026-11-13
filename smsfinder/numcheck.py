@@ -6,8 +6,10 @@ carrier/region); типы линий — по документации python-ph
 Что проверяется без единого сетевого запроса:
   * номер существует по плану нумерации страны (is_valid_number);
   * тип линии: мобильный / стационарный / VoIP / бесплатный 800 / платный и т.п.;
-  * страна по номеру (region_code_for_number) и исходный оператор (carrier.name_for_number);
-  * задвоенный код страны на сайте («+49 491 5587761404» → +49 1558 7761404) исправляется.
+  * страна по номеру (region_code_for_number) и исходный оператор (carrier.name_for_number).
+
+Номер с сайта НЕ «исправляется»: попытка убрать «задвоенный» код (+49 491… → +49 155…) дала
+номер, который Telegram отверг как Invalid, а коды Telegram приходили на номер в виде с сайта.
 
 Проверка на живых сайтах показала, что база отстаёт от новых диапазонов: номера, на которые
 Telegram доставлял коды в последние сутки, она называла «несуществующими». Поэтому номер по ней
@@ -55,22 +57,6 @@ def info(number: str) -> dict:
     return {"checked": True, "valid": valid, "type": tname, "type_ru": TYPE_NAMES.get(tname, tname),
             "region": (phonenumbers.region_code_for_number(n) or "") if valid else "",
             "carrier": _carrier.name_for_number(n, "en") if valid else ""}
-
-
-def normalize(number: str) -> tuple[str, str]:
-    """Исправить задвоенный код страны: '+494915587761404' → '+4915587761404'.
-    Возвращает (номер, пояснение) — пояснение пустое, если ничего не меняли."""
-    i = info(number)
-    if phonenumbers is None or not number or (i["valid"] and i["type"] in SMS_OK):
-        return number, ""  # уже мобильный — не трогаем
-    d = number.lstrip("+")
-    for cc_len in (1, 2, 3):
-        cc = d[:cc_len]
-        if d[cc_len:].startswith(cc):
-            fixed = "+" + cc + d[2 * cc_len:]
-            if info(fixed)["type"] == "MOBILE":  # +49 491… «стационарный» → +49 15… мобильный
-                return fixed, f"на сайте код страны задвоен ({number}) — правильный номер {fixed}"
-    return number, ""
 
 
 def verdict(number: str, strict: bool) -> tuple[bool, str, dict]:

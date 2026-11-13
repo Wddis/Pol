@@ -180,7 +180,8 @@ class Verification:
     def _fail(self, detail):
         self.status, self.detail = "failed", detail
         self.cand.extra["verify_failed"] = True
-        quality.add(self.cand.number, self.service, False, "test")
+        if self.service == "other":  # для сервиса «нет SMS за 3 мин» — не неудача номера
+            quality.add(self.cand.number, self.service, False, "test")
         note = self.cand.note
         if note.startswith("⏳ ") and " · " in note:  # не копить префиксы от прошлых тестов
             note = note.split(" · ", 1)[1]
@@ -235,7 +236,8 @@ class Verification:
             if hit:
                 self.delivered_s = int(time.time() - t0)
                 self.status = "verified"
-                quality.add(c.number, self.service, True, "test")
+                if self.service == "other":
+                    quality.add(c.number, self.service, True, "test")
                 if self.method == "active":
                     rec = {"ok": True, "at": time.time(), "kind": "active", "delivered_s": self.delivered_s,
                            "via": self.via}
@@ -351,9 +353,8 @@ class Watcher:
         if now - w["win_start"] < quality.WINDOW:
             return
         if w["win_fetched"]:
-            known = set((_load().get(num) or {}).get("svc", {})) | quality.services_of(num)
-            for s in known | w["win_svcs"] | {"other"}:
-                quality.add(num, s, s in w["win_svcs"], "window")
+            # только живость номера: тишина Telegram за час — не неудача номера
+            quality.add(num, "other", "other" in w["win_svcs"], "window")
         w.update(win_start=now, win_svcs=set(), win_fetched=0)
 
     def _loop(self):

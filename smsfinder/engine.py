@@ -70,6 +70,7 @@ class Activation:
         self.events: list[str] = []
         self.history: list[str] = []
         self._stop = threading.Event()
+        self._rated = False
         self.on_sms: list[Callable[["Activation", Sms], None]] = []
         self._bind(cand)
 
@@ -82,6 +83,7 @@ class Activation:
         self._fails = 0
         self._last_watch = time.time()
         self._bound_at = time.time()
+        self._rated = False  # отзыв по этому номеру уже записан
 
     def log(self, msg: str):
         self.events.append(f"{time.strftime('%H:%M:%S')} {msg}")
@@ -170,6 +172,8 @@ class Activation:
         while not self._stop.is_set():
             if time.time() - self.started > self.timeout:
                 self.status = "done" if self.code else "timeout"
+                if not self.code and not self._rated:
+                    quality.add(self.number, self.service, False, "activation")
                 if not self.cand.public:  # платный номер без кода — отменяем, деньги вернутся
                     self.provider.release(self.state, success=bool(self.code))
                 return
@@ -228,6 +232,7 @@ class Activation:
     def feedback(self, ok: bool, reason: str = "", switch: bool = True) -> None:
         """Отзыв пользователя: код подошёл / не подошёл (с причиной)."""
         registry.feedback(self.number, self.service, ok, reason)
+        self._rated = True
         if ok:
             self._stop.set()
             self.status = "done"
@@ -364,15 +369,24 @@ class Engine:
         # Не отсеивает (база отстаёт от новых диапазонов), а понижает и предупреждает.
         strict = bool(profile(service).get("strict"))
         warned = fixed = 0
+        banned = registry.banned_ranges(service)
+        kept = []
         for c in cands:
             if not (c.public and c.number):
+                kept.append(c)
                 continue
-            num, why_fix = numcheck.normalize(c.number)
-            if why_fix:
-                c.log(why_fix)
-                c.extra["shown_number"], c.number = c.number, num
-                c.note += f" · ✎ {why_fix}"
+            # бан в Telegram идёт диапазонами: соседи заблокированного номера — под подозрением
+            nb = banned.get(registry.range_of(c.number), 0)
+            if nb >= 2 and strict:
+                why = f"в диапазоне {registry.range_of(c.number)}xxx уже {nb} номера заблокированы в {svc_t}"
+                c.log(f"отсеян: {why}")
+                yield {"type": "check", "provider": c.provider, "number": c.number, "ok": False, "reason": why}
                 fixed += 1
+                continue
+            if nb:
+                c.score = round(c.score - 30, 1)
+                c.note += f" · ⚠ соседний номер из этого диапазона заблокирован в {svc_t}"
+            kept.append(c)
             ok, why, li = numcheck.verdict(c.number, strict)
             c.extra["line"] = numcheck.label(li)
             if not ok:
@@ -384,6 +398,7 @@ class Engine:
             elif li["checked"] and li["type"] not in numcheck.SMS_OK:
                 c.score = round(c.score - 10, 1)
                 c.note += f" · {li['type_ru']} номер"
+        cands = kept
         # один и тот же номер выложен на нескольких сайтах — за код соревнуется больше людей
         groups: dict[str, list[Candidate]] = {}
         for c in cands:
@@ -400,11 +415,11 @@ class Engine:
                 c.score = round(c.score - 10 * (len(sites) - 1), 1)
                 c.note += f" · выложен на {len(sites)} сайтах ({', '.join(sites)}) — больше конкурентов за код"
         if warned or fixed or dup:
-            yield {"type": "stage", "text": "Проверка номеров по базе libphonenumber: "
+            yield {"type": "stage", "text": "Проверка номеров (libphonenumber, баны по диапазонам): "
                                             + ", ".join(x for x in (
                                                 f"понижено {warned} (по базе не существуют или тип линии "
                                                 f"не подходит {svc_t})" if warned else "",
-                                                f"исправлен задвоенный код страны: {fixed}" if fixed else "",
+                                                f"отсеяно из диапазонов с банами: {fixed}" if fixed else "",
                                                 f"на нескольких сайтах сразу: {dup} — понижены" if dup else "") if x)}
         all_found = list(cands)  # для теста доставки берём всех, включая «занятых» — там сервис пишет прямо сейчас
         # строгий режим: только нишевые и премиум

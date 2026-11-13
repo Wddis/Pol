@@ -82,6 +82,22 @@ def feedback(number: str, service: str, ok: bool, reason: str = "") -> None:
     quality.add(number, service, ok, "user")
 
 
+def range_of(number: str) -> str:
+    """Диапазон номера: всё, кроме трёх последних цифр (+447454712483 → +447454712)."""
+    return (number or "")[:-3]
+
+
+def banned_ranges(service: str = "telegram") -> dict:
+    """{диапазон: сколько номеров из него пользователи отметили «заблокирован»/«Invalid»}."""
+    out: dict[str, int] = {}
+    for num, r in _load().items():
+        if any(not f["ok"] and f.get("service") == service and
+               any(k in (f.get("reason") or "").lower() for k in ("заблокир", "banned", "invalid"))
+               for f in r.get("feedback", [])):
+            out[range_of(num)] = out.get(range_of(num), 0) + 1
+    return out
+
+
 def stats() -> dict:
     data = _load()
     fb = [f for r in data.values() for f in r.get("feedback", [])]
