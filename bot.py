@@ -56,6 +56,10 @@ DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "deepseek-v4.1-flash")
 # Провайдер упёрся в лимит → не трогаем его до этого времени (не тратим время на отказы)
 cooldown_until = {}      # (provider_id, model) -> unix time
 MAX_COOLDOWN = 6 * 3600
+busy_strikes = {}        # route -> сколько раз подряд поставщики были заняты
+cooldown_reason = {}     # route -> "limit" | "busy"
+MAX_BUSY_WAIT = 8 * 60   # дольше ждать перегруженных поставщиков не будем
+BUSY_BASE = 30           # первая пауза при перегрузке (30 → 60 → 120 → 180 с)
 
 user_models = {}         # user_id -> выбранная модель
 
@@ -269,7 +273,7 @@ def route_label(route):
 MAX_LIMIT_WAIT = 5 * 60   # дольше 5 минут не ждём — сообщаем, когда освободится
 
 
-async def countdown(status, model_key, wait):
+async def countdown(status, model_key, wait, reason="limit"):
     """Показывает в сообщении статуса обратный отсчёт до снятия лимита."""
     end = time.time() + wait
     label = MODELS[model_key]["label"]
@@ -280,8 +284,12 @@ async def countdown(status, model_key, wait):
         left = int(end - time.time() + 0.999)
         if left <= 0:
             break
-        status.stage = (f"⏳ Лимит {label}: 1 запрос в минуту. "
-                        f"Отвечу через {left // 60}:{left % 60:02d}")
+        if reason == "busy":
+            status.stage = (f"⏳ Бесплатный {label} сейчас перегружен у поставщика. "
+                            f"Повторю через {left // 60}:{left % 60:02d}")
+        else:
+            status.stage = (f"⏳ Лимит {label}: 1 запрос в минуту. "
+                            f"Отвечу через {left // 60}:{left % 60:02d}")
         await status.update(force=True)
         await asyncio.sleep(min(3, max(0.5, end - time.time())))
     status.stage = "⏳ Думаю…"
@@ -317,6 +325,14 @@ async def stream_completion(client, route, messages, status: LiveStatus, tools):
     }) as resp:
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", "replace")
+            low = body.lower()
+            if resp.status_code in (502, 503) and ("busy" in low or "get_channel_failed" in low
+                                                    or "rate limit" in low or "overload" in low):
+                # поставщики бесплатной модели перегружены — ждём с растущей паузой
+                n = busy_strikes[route] = busy_strikes.get(route, 0) + 1
+                cooldown_until[route] = time.time() + min(BUSY_BASE * 2 ** (n - 1), BUSY_BASE * 6)
+                cooldown_reason[route] = "busy"
+                raise RetryableError(f"busy {resp.status_code}")
             if resp.status_code == 403 and "consent" in body.lower():
                 cooldown_until[route] = time.time() + 600   # нужно согласие на сайте — проверим снова через 10 мин
             if resp.status_code == 403 and "limit" in body.lower():
@@ -328,7 +344,10 @@ async def stream_completion(client, route, messages, status: LiveStatus, tools):
                 except ValueError:
                     wait = 60
                 cooldown_until[route] = time.time() + min(max(wait, 30), MAX_COOLDOWN)
+                cooldown_reason[route] = "limit"
             raise RetryableError(f"{resp.status_code}: {body[:150]}")
+        busy_strikes.pop(route, None)
+        cooldown_reason.pop(route, None)
         async for line in resp.aiter_lines():
             if not line.startswith("data: ") or line == "data: [DONE]":
                 continue
@@ -431,7 +450,17 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                         free_at = datetime.fromtimestamp(now + wait).strftime("%H:%M")
                         raise RuntimeError(f"Лимит модели {MODELS[chosen]['label']} исчерпан надолго — "
                                            f"освободится примерно в {free_at} (UTC). Можно выбрать другую модель: /model")
-                    await countdown(status, chosen, wait)
+                    soon = min(routes, key=lambda r: cooldown_until.get(r, 0))
+                    reason = cooldown_reason.get(soon, "limit")
+                    if reason == "busy":
+                        busy_since = getattr(status, "busy_since", None) or now
+                        status.busy_since = busy_since
+                        if now - busy_since + wait > MAX_BUSY_WAIT:
+                            raise RuntimeError(
+                                f"Бесплатный {MODELS[chosen]['label']} сейчас перегружен у поставщика "
+                                f"(все серверы заняты уже несколько минут). Попробуй чуть позже "
+                                f"или выбери другую модель: /model")
+                    await countdown(status, chosen, wait, reason)
                     continue
                 for route in ready:
                     messages = [{"role": "system", "content": system_for(route)}, *history, *with_reminder(turn)]
@@ -444,6 +473,8 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                         errors.append(f"{type(e).__name__}")
                         cooldown_until[route] = time.time() + 5     # сетевой сбой — короткая пауза
                     except RetryableError as e:
+                        if str(e).startswith("busy"):
+                            continue          # перегрузка поставщика — ждём с отсчётом, это не «ошибка»
                         errors.append(str(e)[:150])
                         if route not in cooldown_until or cooldown_until[route] <= time.time():
                             cooldown_until[route] = time.time() + 15  # непонятная ошибка — пауза 15 с
