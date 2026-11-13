@@ -98,6 +98,24 @@ def banned_ranges(service: str = "telegram") -> dict:
     return out
 
 
+# Страны, где Telegram шлёт SMS только платно (auth.sentCodePaymentRequired, «купите Premium»).
+# TW — проверено на практике; остальные добавляются отзывами пользователей.
+PAY_SMS_REGIONS = {"telegram": {"TW"}}
+
+
+def pay_regions(service: str = "telegram") -> set[str]:
+    """Страны, где сервис просит оплату за SMS: известные + из отзывов «просит оплату»."""
+    from .numcheck import info
+    out = set(PAY_SMS_REGIONS.get(service, set()))
+    for num, r in _load().items():
+        if any(not f["ok"] and f.get("service") == service and "оплат" in (f.get("reason") or "").lower()
+               for f in r.get("feedback", [])):
+            reg = info(num)["region"]
+            if reg:
+                out.add(reg)
+    return out
+
+
 def stats() -> dict:
     data = _load()
     fb = [f for r in data.values() for f in r.get("feedback", [])]

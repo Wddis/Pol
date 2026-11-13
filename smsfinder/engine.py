@@ -370,12 +370,26 @@ class Engine:
         strict = bool(profile(service).get("strict"))
         warned = fixed = 0
         banned = registry.banned_ranges(service)
+        pay = registry.pay_regions(service) if strict else set()
+        busy_traffic = 0
         kept = []
         for c in cands:
             if not (c.public and c.number):
                 kept.append(c)
                 continue
             # бан в Telegram идёт диапазонами: соседи заблокированного номера — под подозрением
+            reg = numcheck.info(c.number)["region"]
+            if reg in pay:
+                why = f"в стране {reg} {svc_t} шлёт SMS только платно (просит Premium)"
+                c.log(f"отсеян: {why}")
+                yield {"type": "check", "provider": c.provider, "number": c.number, "ok": False, "reason": why}
+                fixed += 1
+                continue
+            # очень популярный номер: на него часто запрашивают коды → «превышен лимит» (PHONE_NUMBER_FLOOD)
+            if strict and c.extra.get("usage", 0) >= 25:
+                c.score = round(c.score - 20, 1)
+                c.note += " · ⚠ очень много SMS за сутки — риск «превышен лимит запросов»"
+                busy_traffic += 1
             nb = banned.get(registry.range_of(c.number), 0)
             if nb >= 2 and strict:
                 why = f"в диапазоне {registry.range_of(c.number)}xxx уже {nb} номера заблокированы в {svc_t}"
@@ -414,12 +428,13 @@ class Engine:
                 c.extra["sites"] = sites
                 c.score = round(c.score - 10 * (len(sites) - 1), 1)
                 c.note += f" · выложен на {len(sites)} сайтах ({', '.join(sites)}) — больше конкурентов за код"
-        if warned or fixed or dup:
+        if warned or fixed or dup or busy_traffic:
             yield {"type": "stage", "text": "Проверка номеров (libphonenumber, баны по диапазонам): "
                                             + ", ".join(x for x in (
                                                 f"понижено {warned} (по базе не существуют или тип линии "
                                                 f"не подходит {svc_t})" if warned else "",
-                                                f"отсеяно из диапазонов с банами: {fixed}" if fixed else "",
+                                                f"отсеяно (диапазоны с банами, платные SMS в стране): {fixed}" if fixed else "",
+                                                f"риск флуда (очень популярные): {busy_traffic}" if busy_traffic else "",
                                                 f"на нескольких сайтах сразу: {dup} — понижены" if dup else "") if x)}
         all_found = list(cands)  # для теста доставки берём всех, включая «занятых» — там сервис пишет прямо сейчас
         # строгий режим: только нишевые и премиум
