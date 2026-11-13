@@ -7,9 +7,14 @@ name: Deploy bot to The Vibe Hosting
 
 on:
   workflow_dispatch:
+    inputs:
+      secrets_branch:
+        description: "Ветка, куда будет положен зашифрованный пакет <run_id>.enc"
+        required: true
+        default: deploy-secrets
 
 permissions:
-  contents: read
+  contents: write   # чтобы выложить публичный ключ в ветку deploy-secrets
 
 concurrency:
   group: deploy
@@ -32,12 +37,21 @@ jobs:
           echo "PUBKEY_BEGIN"
           base64 -w0 "$RUNNER_TEMP/k/pub.pem"; echo
           echo "PUBKEY_END"
+          # Публикуем публичный ключ в ветку deploy-secrets (он не секретный)
+          W="$RUNNER_TEMP/pubbranch"
+          git init -q "$W" && cd "$W"
+          git config user.name "deploy-bot" && git config user.email "deploy-bot@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          if git fetch -q origin deploy-secrets 2>/dev/null; then git checkout -q -b deploy-secrets FETCH_HEAD; else git checkout -q --orphan deploy-secrets; fi
+          cp "$RUNNER_TEMP/k/pub.pem" "${GITHUB_RUN_ID}.pub"
+          git add "${GITHUB_RUN_ID}.pub" && git commit -q -m "pubkey for run ${GITHUB_RUN_ID}"
+          git push -q origin HEAD:deploy-secrets
 
       - name: Wait for encrypted secrets
         run: |
           for i in $(seq 1 90); do
-            if git fetch -q origin deploy-secrets 2>/dev/null && \
-               git show "FETCH_HEAD:${GITHUB_RUN_ID}.enc" > "$RUNNER_TEMP/k/bundle.enc" 2>/dev/null; then
+            if git fetch -q origin "${{ inputs.secrets_branch }}" 2>/dev/null && \
+               git show "FETCH_HEAD:deploy/${GITHUB_RUN_ID}.enc" > "$RUNNER_TEMP/k/bundle.enc" 2>/dev/null; then
               echo "Got secrets bundle"; exit 0
             fi
             sleep 10
