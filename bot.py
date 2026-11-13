@@ -58,7 +58,7 @@ cooldown_until = {}      # (provider_id, model) -> unix time
 MAX_COOLDOWN = 6 * 3600
 busy_strikes = {}        # route -> сколько раз подряд поставщики были заняты
 cooldown_reason = {}     # route -> "limit" | "busy"
-BUSY_BASE = 30           # первая пауза при перегрузке (30 → 60 → 120 → 180 с)
+BUSY_BASE = 30           # пауза между попытками при перегрузке/ошибке поставщика — всегда 30 с
 
 user_models = {}         # user_id -> выбранная модель
 
@@ -336,7 +336,7 @@ async def stream_completion(client, route, messages, status: LiveStatus, tools):
                                                     or "rate limit" in low or "overload" in low):
                 # поставщики бесплатной модели перегружены — ждём с растущей паузой
                 n = busy_strikes[route] = busy_strikes.get(route, 0) + 1
-                cooldown_until[route] = time.time() + min(BUSY_BASE * 2 ** (n - 1), BUSY_BASE * 6)
+                cooldown_until[route] = time.time() + BUSY_BASE      # постоянная пауза между попытками
                 cooldown_reason[route] = "busy"
                 raise RetryableError(f"busy {resp.status_code}")
             if resp.status_code == 403 and "consent" in body.lower():
@@ -479,8 +479,8 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                         errors.append(str(e)[:150])
                         if route not in cooldown_until or cooldown_until[route] <= time.time():
                             # непонятная ошибка — растущая пауза, но не сдаёмся
-                            n = busy_strikes[route] = busy_strikes.get(route, 0) + 1
-                            cooldown_until[route] = time.time() + min(15 * 2 ** (n - 1), 180)
+                            busy_strikes[route] = busy_strikes.get(route, 0) + 1
+                            cooldown_until[route] = time.time() + BUSY_BASE
                             cooldown_reason[route] = "error"
             if reasoning.strip():
                 all_reasoning.append(reasoning.strip())
