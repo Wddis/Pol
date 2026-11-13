@@ -413,6 +413,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await choose_model(update, context)
         return
 
+    await run_turn(update, user_id, user_text)
+
+
+async def run_turn(update: Update, user_id: int, user_text: str):
     lock = user_locks.setdefault(user_id, asyncio.Lock())
     if lock.locked():
         await update.message.reply_text("⏳ Ещё отвечаю на прошлое сообщение — это встанет следом.")
@@ -439,6 +443,51 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if show and reasoning:
             await send_thoughts(update.message, reasoning, seconds)
         await send_answer(update.message, answer + f"\n\n_— {route_label(used_route)}_")
+
+
+# ---------- Файлы .txt ----------
+
+MAX_FILE_BYTES = 2 * 1024 * 1024     # Telegram-бот может скачать до 20 МБ, нам хватит 2 МБ
+MAX_FILE_CHARS = 60000               # сколько символов файла отдаём модели
+
+
+def decode_text(data: bytes) -> str:
+    for enc in ("utf-8-sig", "utf-16") if data[:2] in (b"\xff\xfe", b"\xfe\xff") else ("utf-8-sig",):
+        try:
+            return data.decode(enc)
+        except UnicodeDecodeError:
+            pass
+    try:
+        return data.decode("cp1251")       # русские файлы из Windows
+    except UnicodeDecodeError:
+        return data.decode("latin-1", errors="replace")
+
+
+async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    doc = update.message.document
+    name = doc.file_name or "file.txt"
+    if not (name.lower().endswith(".txt") or doc.mime_type == "text/plain"):
+        await update.message.reply_text("📄 Пока я понимаю только текстовые файлы .txt")
+        return
+    if doc.file_size and doc.file_size > MAX_FILE_BYTES:
+        await update.message.reply_text("📄 Файл слишком большой — максимум 2 МБ.")
+        return
+    tg_file = await doc.get_file()
+    data = bytes(await tg_file.download_as_bytearray())
+    text = decode_text(data).replace("\r\n", "\n").strip()
+    if not text:
+        await update.message.reply_text("📄 Файл пустой.")
+        return
+    note = ""
+    if len(text) > MAX_FILE_CHARS:
+        note = (f"\n[Файл обрезан: показаны первые {MAX_FILE_CHARS} из {len(text)} символов. "
+                f"Если нужно — скажи пользователю, что видишь только начало.]")
+        text = text[:MAX_FILE_CHARS]
+    question = (update.message.caption or "").strip() or \
+        "Кратко перескажи, что в этом файле, и выдели главное."
+    prompt = (f"Пользователь прислал файл «{name}» ({len(data)} байт). Его содержимое:\n"
+              f"<<<ФАЙЛ\n{text}\nФАЙЛ>>>{note}\n\nЗапрос пользователя: {question}")
+    await run_turn(update, update.message.from_user.id, prompt)
 
 
 async def reset_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -511,7 +560,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🗑 «Новый диалог» внизу или /clear — начать заново\n"
         "💭 /thoughts — показывать/скрывать размышления\n"
         "🌐 /web — включить/выключить интернет\n"
-        "🤖 /model — сменить ИИ",
+        "🤖 /model — сменить ИИ\n"
+        "📄 Пришли файл .txt (можно с вопросом в подписи) — разберу его",
         reply_markup=main_keyboard()
     )
 
@@ -536,6 +586,7 @@ app.add_handler(CommandHandler(["model", "ai"], choose_model))
 app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
 app.add_handler(CallbackQueryHandler(clear_callback, pattern="^clear$"))
 app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+app.add_handler(MessageHandler(filters.Document.ALL, handle_document))
 
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL")  # напр. https://noizoz-bot.thevibehosting.com
 if WEBHOOK_URL:
