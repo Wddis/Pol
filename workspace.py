@@ -294,11 +294,22 @@ async def call_api(uid: int, args: dict):
     ms = int((time.time() - t0) * 1000)
     raw = r.content[:API_MAX_BODY]
     ctype = r.headers.get("content-type", "")
+    is_html = "html" in ctype.lower()
     try:
+        if is_html:
+            raise ValueError
         parsed = json.loads(raw)
         body_text = json.dumps(parsed, ensure_ascii=False, indent=2)
     except Exception:
-        body_text = decode_text(raw) if is_text(raw) else f"<двоичные данные, {len(r.content)} байт, {ctype}>"
+        if is_html:
+            page = decode_text(raw)
+            m = re.search(r"<title[^>]*>(.*?)</title>", page, re.S | re.I)
+            title = re.sub(r"\s+", " ", m.group(1)).strip() if m else "—"
+            body_text = (f"[Это HTML-страница, а не API: {len(r.content) // 1024} КБ разметки. "
+                         f"Заголовок: «{title}». Чтобы показать, как она выглядит, "
+                         f"используй web_screenshot.]")
+        else:
+            body_text = decode_text(raw) if is_text(raw) else f"<двоичные данные, {len(r.content)} байт, {ctype}>"
     shown_url = _redact(url + ("?" + urlencode(query) if query else ""), secrets_list)
     return {
         "method": method, "url": shown_url, "status": r.status_code, "reason": r.reason_phrase,
@@ -376,6 +387,41 @@ def render_api_screenshot(res: dict, title: str = "") -> bytes:
     return out.getvalue()
 
 
+# ---------- Снимок веб-страницы (как в браузере) ----------
+
+from urllib.parse import quote as _q
+
+SHOT_SERVICES = [
+    ("mShots", lambda u, w: f"https://s.wordpress.com/mshots/v1/{_q(u, safe='')}?w={w}&h={int(w * 0.66)}"),
+    ("thum.io", lambda u, w: f"https://image.thum.io/get/width/{w}/crop/{int(w * 0.66)}/noanimate/{u}"),
+    ("Microlink", lambda u, w: f"https://api.microlink.io/?url={_q(u, safe='')}&screenshot=true&meta=false"
+                               f"&embed=screenshot.url&viewport.width={w}&viewport.height={int(w * 0.66)}"),
+]
+
+
+async def web_screenshot(url: str, width: int = 1280) -> tuple:
+    """Возвращает (png/jpeg bytes, имя сервиса). Браузер на нашем сервере не нужен."""
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    host = urlsplit(url).hostname or ""
+    if not host or not await asyncio.to_thread(_is_public_host, host):
+        raise ValueError("этот адрес недоступен (только публичные сайты)")
+    errors = []
+    async with httpx.AsyncClient(timeout=60, follow_redirects=True,
+                                 headers={"User-Agent": "Mozilla/5.0"}) as client:
+        for name, make in SHOT_SERVICES:
+            try:
+                r = await client.get(make(url, width))
+                ok = r.status_code == 200 and r.headers.get("content-type", "").startswith("image/") \
+                    and len(r.content) > 8000      # заглушки «генерируется…» маленькие
+                if ok:
+                    return r.content, name
+                errors.append(f"{name}: {r.status_code}, {len(r.content)} байт")
+            except httpx.HTTPError as e:
+                errors.append(f"{name}: {type(e).__name__}")
+    raise ValueError("не удалось сделать снимок: " + "; ".join(errors))
+
+
 # ---------- Инструменты для модели ----------
 
 FILE_TOOLS = [
@@ -424,6 +470,14 @@ FILE_TOOLS = [
 
 API_TOOLS = [
     {"type": "function", "function": {
+        "name": "web_screenshot",
+        "description": "Сделать НАСТОЯЩИЙ снимок веб-страницы (как в браузере) и прислать пользователю картинку. "
+                       "Используй, когда просят фото/скриншот/как выглядит сайт или страница.",
+        "parameters": {"type": "object", "properties": {
+            "url": {"type": "string", "description": "Адрес страницы"},
+            "caption": {"type": "string", "description": "Короткая подпись"}},
+            "required": ["url"]}}},
+    {"type": "function", "function": {
         "name": "call_api",
         "description": "HTTP-запрос к API. С коннектором пользователя (ключи подставятся сами, ты их не видишь) "
                        "или к публичному https-адресу без коннектора. Возвращает статус, заголовки и тело ответа.",
@@ -437,8 +491,8 @@ API_TOOLS = [
             "required": ["path"]}}},
     {"type": "function", "function": {
         "name": "api_screenshot",
-        "description": "То же, что call_api, но дополнительно присылает пользователю картинку-скриншот запроса "
-                       "и ответа (статус, время, тело). Используй, когда просят показать/заскринить работу API.",
+        "description": "То же, что call_api, но присылает картинку с HTTP-запросом и ответом (статус, время, JSON). "
+                       "Только для API (JSON). Для сайтов и страниц НЕ используй — для них web_screenshot.",
         "parameters": {"type": "object", "properties": {
             "connector": {"type": "string"}, "method": {"type": "string"}, "path": {"type": "string"},
             "query": {"type": "object"}, "body": {"type": "object"}, "headers": {"type": "object"},
@@ -455,7 +509,8 @@ def workspace_note(uid: int) -> str:
              "У тебя есть рабочая папка пользователя: читай (read_file), меняй (write_file/edit_file), "
              "создавай файлы и присылай их пользователю (send_file). Когда пользователь просит изменить "
              "скрипт — внеси правку в файл и пришли его через send_file. "
-             "Можешь вызывать API (call_api) и присылать скриншоты их работы (api_screenshot).",
+             "Можешь вызывать API (call_api) и присылать скриншоты их работы (api_screenshot), "
+             "а также делать настоящие снимки сайтов (web_screenshot) — если просят фото/скрин сайта, используй его.",
              "ЭКОНОМЬ ШАГИ (у модели лимит запросов в минуту): делай нужные вызовы инструментов сразу "
              "за один шаг; для изменения файла с отправкой используй write_file/edit_file с send=true; "
              "не перечитывай файл, если его содержимое уже есть в этом сообщении или ты только что его записал; "
@@ -521,6 +576,14 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
                                      caption=(args.get("caption") or "")[:1000] or None)
             status.actions.append(f"📤 Отправил {args['name']}")
             return f"Файл {args['name']} отправлен пользователю."
+        if name == "web_screenshot":
+            status.actions.append(f"📷 Снимок {args.get('url', '')[:60]}")
+            await status.update(force=True)
+            img, service = await web_screenshot(args.get("url", ""))
+            await out.reply_photo(photo=img, filename="page.png",
+                                  caption=(args.get("caption") or args.get("url", ""))[:1000])
+            status.actions.append("📸 Отправил снимок сайта")
+            return f"Снимок страницы {args.get('url')} отправлен пользователю (сервис {service})."
         if name in ("call_api", "api_screenshot"):
             status.actions.append(f"🔌 {(args.get('method') or 'GET').upper()} "
                                   f"{(args.get('connector') or '')} {args.get('path', '')}"[:90])
