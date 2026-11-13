@@ -487,33 +487,69 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await run_turn(update.message, user_id, user_text)
 
 
+user_epoch = {}          # user_id -> номер «эпохи»; очистка диалога его увеличивает
+active_turns = {}        # user_id -> задачи, которые сейчас отвечают или ждут очереди
+
+
+def stop_user_turns(user_id: int) -> int:
+    """Останавливает текущий ответ и выбрасывает очередь. Возвращает, сколько задач остановлено."""
+    user_epoch[user_id] = user_epoch.get(user_id, 0) + 1
+    me = asyncio.current_task()
+    tasks = [t for t in active_turns.get(user_id, set()) if t is not me and not t.done()]
+    for t in tasks:
+        t.cancel()
+    return len(tasks)
+
+
 async def run_turn(message, user_id: int, user_text: str):
-    lock = user_locks.setdefault(user_id, asyncio.Lock())
-    if lock.locked():
-        await message.reply_text("⏳ Ещё отвечаю на прошлое сообщение — это встанет следом.")
-    async with lock:
-        show = show_thoughts.get(user_id, True)
-        status_msg = await message.reply_text("⏳ Думаю…")
-        status = LiveStatus(status_msg, show)
-        ticker = asyncio.create_task(status.ticker())
-        try:
-            answer, reasoning, used_route = await ask_model(user_id, user_text, status)
-        except Exception as e:
-            ticker.cancel()
+    epoch = user_epoch.get(user_id, 0)
+    task = asyncio.current_task()
+    active_turns.setdefault(user_id, set()).add(task)
+    status_msg = ticker = None
+    try:
+        lock = user_locks.setdefault(user_id, asyncio.Lock())
+        if lock.locked():
+            await message.reply_text("⏳ Ещё отвечаю на прошлое сообщение — это встанет следом.")
+        async with lock:
+            if user_epoch.get(user_id, 0) != epoch:
+                return                      # пока ждали очереди, диалог очистили — пропускаем
+            show = show_thoughts.get(user_id, True)
+            status_msg = await message.reply_text("⏳ Думаю…")
+            status = LiveStatus(status_msg, show)
+            ticker = asyncio.create_task(status.ticker())
             try:
-                await status_msg.edit_text(f"⚠️ {e}")
+                answer, reasoning, used_route = await ask_model(user_id, user_text, status)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                ticker.cancel()
+                try:
+                    await status_msg.edit_text(f"⚠️ {e}")
+                except Exception:
+                    pass
+                return
+            ticker.cancel()
+            if user_epoch.get(user_id, 0) != epoch:
+                return                      # ответ пришёл уже после очистки — не показываем
+            seconds = int(time.time() - status.started)
+            try:
+                await status_msg.delete()
             except Exception:
                 pass
-            return
-        ticker.cancel()
-        seconds = int(time.time() - status.started)
-        try:
-            await status_msg.delete()
-        except Exception:
-            pass
-        if show and reasoning:
-            await send_thoughts(message, reasoning, seconds)
-        await send_answer(message, answer + f"\n\n_— {route_label(used_route)}_")
+            if show and reasoning:
+                await send_thoughts(message, reasoning, seconds)
+            await send_answer(message, answer + f"\n\n_— {route_label(used_route)}_")
+    except asyncio.CancelledError:
+        # остановлено очисткой диалога
+        if ticker:
+            ticker.cancel()
+        if status_msg:
+            try:
+                await status_msg.edit_text("🛑 Остановлено — диалог очищен")
+            except Exception:
+                pass
+    finally:
+        active_turns.get(user_id, set()).discard(task)
 
 
 # ---------- Файлы .txt ----------
@@ -672,6 +708,7 @@ async def instructions_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
 
 async def reset_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    stop_user_turns(update.effective_user.id)
     chat_histories.pop(update.effective_user.id, None)
     await update.effective_message.reply_text(
         "🗑 *Диалог очищен.* Начнём с чистого листа!",
@@ -696,6 +733,7 @@ async def toggle_web(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def clear_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
+    stop_user_turns(query.from_user.id)
     chat_histories.pop(query.from_user.id, None)
     await query.answer("Диалог очищен!")
     await query.edit_message_reply_markup(reply_markup=None)
