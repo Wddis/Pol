@@ -210,6 +210,7 @@ class LiveStatus:
 
     def __init__(self, message, show_thoughts: bool):
         self.msg = message
+        self.markup = None       # кнопка «🗑 Удалить запрос» во время ожидания лимита
         self.show = show_thoughts
         self.started = time.time()
         self.stage = "⏳ Думаю…"
@@ -238,7 +239,7 @@ class LiveStatus:
         self.last_edit = now
         self.last_text = text
         try:
-            await self.msg.edit_text(text, parse_mode="HTML")
+            await self.msg.edit_text(text, parse_mode="HTML", reply_markup=self.markup)
         except Exception:
             pass
 
@@ -263,6 +264,8 @@ async def countdown(status, model_key, wait):
     end = time.time() + wait
     label = MODELS[model_key]["label"]
     status.reasoning = ""
+    if getattr(status, "turn_id", None):
+        status.markup = remove_request_kb(status.turn_id)
     while True:
         left = int(end - time.time() + 0.999)
         if left <= 0:
@@ -272,6 +275,7 @@ async def countdown(status, model_key, wait):
         await status.update(force=True)
         await asyncio.sleep(min(3, max(0.5, end - time.time())))
     status.stage = "⏳ Думаю…"
+    status.markup = None
     await status.update(force=True)
 
 
@@ -557,21 +561,59 @@ def stop_user_turns(user_id: int) -> int:
     return len(tasks)
 
 
+def remove_request_kb(turn_id: str):
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Удалить запрос", callback_data=f"rmq:{turn_id}")]])
+
+
+turns = {}               # turn_id -> {"user", "task", "user_msg", "bot_msgs", "removed"}
+
+
+async def remove_request_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопка «🗑 Удалить запрос»: останавливает этот запрос и стирает его из чата."""
+    query = update.callback_query
+    t = turns.get(query.data.split(":", 1)[1])
+    if not t or t["user"] != query.from_user.id or t["task"].done():
+        await query.answer("Этот запрос уже обработан")
+        return
+    t["removed"] = True
+    t["task"].cancel()
+    await query.answer("Запрос удалён")
+    for m in [*([t["user_msg"]] if t["user_msg"] else []), *t["bot_msgs"]]:
+        try:
+            await m.delete()
+        except Exception:
+            pass
+
+
 async def run_turn(message, user_id: int, user_text: str, history_text=None):
     epoch = user_epoch.get(user_id, 0)
     task = asyncio.current_task()
     active_turns.setdefault(user_id, set()).add(task)
+    turn_id = secrets.token_hex(4)
+    own_msg = getattr(getattr(message, "from_user", None), "id", None) == user_id
+    turn = turns[turn_id] = {"user": user_id, "task": task, "removed": False, "bot_msgs": [],
+                             "user_msg": message if own_msg else None}
     status_msg = ticker = None
     try:
         lock = user_locks.setdefault(user_id, asyncio.Lock())
         if lock.locked():
-            await message.reply_text("⏳ Ещё отвечаю на прошлое сообщение — это встанет следом.")
+            notice = await message.reply_text("⏳ Ещё отвечаю на прошлое сообщение — это встанет следом.",
+                                              reply_markup=remove_request_kb(turn_id))
+            turn["bot_msgs"].append(notice)
         async with lock:
+            for m in list(turn["bot_msgs"]):       # очередь дошла — уведомление больше не нужно
+                try:
+                    await m.delete()
+                except Exception:
+                    pass
+            turn["bot_msgs"].clear()
             if user_epoch.get(user_id, 0) != epoch:
                 return                      # пока ждали очереди, диалог очистили — пропускаем
             show = show_thoughts.get(user_id, True)
             status_msg = await message.reply_text("⏳ Думаю…")
+            turn["bot_msgs"].append(status_msg)
             status = LiveStatus(status_msg, show)
+            status.turn_id = turn_id
             ticker = asyncio.create_task(status.ticker())
             try:
                 answer, reasoning, used_route = await ask_model(user_id, user_text, status, out=message, history_text=history_text)
@@ -596,16 +638,17 @@ async def run_turn(message, user_id: int, user_text: str, history_text=None):
                 await send_thoughts(message, reasoning, seconds)
             await send_answer(message, answer + f"\n\n_— {route_label(used_route)}_")
     except asyncio.CancelledError:
-        # остановлено очисткой диалога
+        # остановлено очисткой диалога или кнопкой «Удалить запрос»
         if ticker:
             ticker.cancel()
-        if status_msg:
+        if status_msg and not turn["removed"]:
             try:
                 await status_msg.edit_text("🛑 Остановлено — диалог очищен")
             except Exception:
                 pass
     finally:
         active_turns.get(user_id, set()).discard(task)
+        turns.pop(turn_id, None)
 
 
 # ---------- Файлы .txt ----------
@@ -1068,6 +1111,7 @@ app.add_handler(CommandHandler("web", toggle_web))
 app.add_handler(CommandHandler(["model", "ai"], choose_model))
 app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
 app.add_handler(CallbackQueryHandler(clear_callback, pattern="^clear$"))
+app.add_handler(CallbackQueryHandler(remove_request_callback, pattern="^rmq:"))
 app.add_handler(CommandHandler(["instructions", "instr"], show_instructions))
 app.add_handler(CallbackQueryHandler(md_choice_callback, pattern="^md(add|ana):"))
 app.add_handler(CallbackQueryHandler(instructions_callback, pattern="^ins(v:|d:|dall$)"))

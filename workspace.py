@@ -3,6 +3,7 @@
 Всё хранится на диске сервера в DATA_DIR/users/<user_id>/ и переживает сон/перезапуск бота.
 """
 import asyncio
+import base64
 import io
 import ipaddress
 import json
@@ -251,6 +252,21 @@ def _redact(text: str, secrets: list) -> str:
     return text
 
 
+def _fill_placeholders(uid: int, obj):
+    """В теле запроса «{{base64:имя}}» заменяется на base64 файла из рабочей папки,
+    «{{file:имя}}» — на его текст. Нужно, например, для записи файлов в GitHub."""
+    if isinstance(obj, dict):
+        return {k: _fill_placeholders(uid, v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_fill_placeholders(uid, v) for v in obj]
+    if isinstance(obj, str):
+        m = re.fullmatch(r"\{\{(base64|file):(.+?)\}\}", obj.strip())
+        if m:
+            data = read_bytes(uid, m.group(2))
+            return base64.b64encode(data).decode() if m.group(1) == "base64" else decode_text(data)
+    return obj
+
+
 async def call_api(uid: int, args: dict):
     """Выполняет HTTP-запрос через коннектор (или к публичному https-адресу).
     Возвращает dict для модели и для «скриншота». Секреты коннектора модели не показываются."""
@@ -284,7 +300,7 @@ async def call_api(uid: int, args: dict):
     host = urlsplit(url).hostname or ""
     if not host or not await asyncio.to_thread(_is_public_host, host):
         raise ValueError("этот адрес недоступен (только публичные https-сайты)")
-    body = args.get("body")
+    body = _fill_placeholders(uid, args.get("body"))
     t0 = time.time()
     async with httpx.AsyncClient(timeout=API_TIMEOUT, follow_redirects=False) as client:
         r = await client.request(method, url, params=query or None,
@@ -311,7 +327,11 @@ async def call_api(uid: int, args: dict):
         else:
             body_text = decode_text(raw) if is_text(raw) else f"<двоичные данные, {len(r.content)} байт, {ctype}>"
     shown_url = _redact(url + ("?" + urlencode(query) if query else ""), secrets_list)
+    saved_to = None
+    if args.get("save_to") and 200 <= r.status_code < 300:
+        saved_to = save_file(uid, args["save_to"], r.content)
     return {
+        "saved_to": saved_to,
         "method": method, "url": shown_url, "status": r.status_code, "reason": r.reason_phrase,
         "ms": ms, "content_type": ctype, "size": len(r.content),
         "headers": {k: _redact(v, secrets_list) for k, v in r.headers.items()
@@ -487,7 +507,9 @@ API_TOOLS = [
             "path": {"type": "string", "description": "Путь от адреса коннектора (/users/1) или полный https-адрес"},
             "query": {"type": "object", "description": "Параметры строки запроса"},
             "body": {"type": "object", "description": "JSON-тело для POST/PUT/PATCH"},
-            "headers": {"type": "object", "description": "Доп. заголовки (без авторизации)"}},
+            "headers": {"type": "object", "description": "Доп. заголовки (без авторизации)"},
+            "save_to": {"type": "string", "description": "Сохранить тело ответа в файл рабочей папки "
+                        "(например, скачать файл из GitHub для правки)"}},
             "required": ["path"]}}},
     {"type": "function", "function": {
         "name": "api_screenshot",
@@ -511,6 +533,15 @@ def workspace_note(uid: int) -> str:
              "скрипт — внеси правку в файл и пришли его через send_file. "
              "Можешь вызывать API (call_api) и присылать скриншоты их работы (api_screenshot), "
              "а также делать настоящие снимки сайтов (web_screenshot) — если просят фото/скрин сайта, используй его.",
+             "В теле call_api строка «{{base64:имя}}» заменяется на base64 файла из рабочей папки, "
+             "«{{file:имя}}» — на его текст; save_to сохраняет ответ в файл.",
+             "GitHub (если есть коннектор на api.github.com): список репозиториев — GET /user/repos; "
+             "прочитать файл — GET /repos/ВЛАДЕЛЕЦ/РЕПО/contents/ПУТЬ с заголовком "
+             "Accept: application/vnd.github.raw и save_to=имя (получишь файл в рабочей папке); "
+             "изменить файл — сначала GET того же пути без raw, чтобы узнать sha, затем "
+             "PUT /repos/ВЛАДЕЛЕЦ/РЕПО/contents/ПУТЬ с телом "
+             "{\"message\": \"описание\", \"content\": \"{{base64:имя}}\", \"sha\": \"…\", \"branch\": \"…\"}. "
+             "Перед записью в репозиторий кратко скажи пользователю, что именно и в какую ветку меняешь.",
              "ЭКОНОМЬ ШАГИ (у модели лимит запросов в минуту): делай нужные вызовы инструментов сразу "
              "за один шаг; для изменения файла с отправкой используй write_file/edit_file с send=true; "
              "не перечитывай файл, если его содержимое уже есть в этом сообщении или ты только что его записал; "
@@ -599,6 +630,9 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
                 body = body[:30_000] + f"\n[… тело обрезано, всего {len(res['body'])} символов]"
             head = f"{res['method']} {res['url']}\nСтатус: {res['status']} {res['reason']} · {res['ms']} мс · {res['size']} байт\n"
             head += "".join(f"{k}: {v}\n" for k, v in res["headers"].items())
+            if res.get("saved_to"):
+                status.actions.append(f"💾 Сохранил ответ в {res['saved_to']}")
+                head += f"[Тело ответа сохранено в файл {res['saved_to']}]\n"
             return head + "\n" + body + ("\n[скриншот отправлен пользователю]" if name == "api_screenshot" else "")
     except FileNotFoundError:
         return f"Файла {args.get('name')} нет. Посмотри list_files."
