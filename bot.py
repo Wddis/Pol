@@ -25,6 +25,13 @@ MODELS = {
     "z-ai/glm-5.3-flash-free": "🧩 GLM 5.3 Flash",
     "tencent/hy4-preview-free": "🐧 Tencent Hy4 (preview)",
 }
+# Настоящие названия и разработчики — модель получает их в системном промпте
+MODEL_IDENTITY = {
+    "deepseek/deepseek-v4.1-flash-free": ("DeepSeek V4.1 Flash", "DeepSeek"),
+    "deepseek/deepseek-v4-flash-free": ("DeepSeek V4 Flash", "DeepSeek"),
+    "z-ai/glm-5.3-flash-free": ("GLM 5.3 Flash", "Z.ai"),
+    "tencent/hy4-preview-free": ("Hunyuan Hy4 (preview)", "Tencent"),
+}
 DEFAULT_MODEL = os.environ.get("ORCA_MODEL", "deepseek/deepseek-v4.1-flash-free")
 # Если выбранная модель не отвечает — пробуем запасную
 FALLBACKS = {"deepseek/deepseek-v4-flash-free": "deepseek/deepseek-v4.1-flash-free"}
@@ -40,7 +47,8 @@ show_thoughts = {}       # user_id -> показывать ли размышле
 web_enabled = {}         # user_id -> разрешён ли интернет (по умолчанию да)
 user_locks = {}          # user_id -> asyncio.Lock, чтобы ответы шли по очереди
 
-SYSTEM_PROMPT = """Ты полезный ассистент. Отвечай на русском языке.
+SYSTEM_PROMPT = """Ты — {model_name}. Если спросят, какая ты модель или кто тебя создал, отвечай именно так: {model_name} от компании {vendor}. Не называй себя ChatGPT, Claude или другими моделями.
+Ты полезный ассистент. Отвечай на русском языке.
 Сегодня {today}.
 {web_note}
 Используй Telegram Markdown форматирование редко и уместно:
@@ -238,9 +246,12 @@ async def stream_completion(client, model, messages, status: LiveStatus, use_too
 async def ask_model(user_id: int, user_message: str, status: LiveStatus):
     history = chat_histories.setdefault(user_id, [])
     use_web = web_enabled.get(user_id, True)
-    system = SYSTEM_PROMPT.format(
-        today=datetime.now().strftime("%d.%m.%Y"),
-        web_note=WEB_NOTE_ON if use_web else WEB_NOTE_OFF)
+    def system_for(model):
+        name, vendor = MODEL_IDENTITY.get(model, (MODELS.get(model, model), "—"))
+        return SYSTEM_PROMPT.format(
+            model_name=name, vendor=vendor,
+            today=datetime.now().strftime("%d.%m.%Y"),
+            web_note=WEB_NOTE_ON if use_web else WEB_NOTE_OFF)
 
     chosen = user_models.get(user_id, DEFAULT_MODEL)
     turn = [{"role": "user", "content": user_message}]
@@ -249,13 +260,14 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
     async with httpx.AsyncClient(timeout=timeout) as client:
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             allow_tools = use_web and round_no < MAX_TOOL_ROUNDS
-            messages = [{"role": "system", "content": system}, *history, *turn]
             errors = []
             attempts = [chosen, chosen, FALLBACKS.get(chosen, DEFAULT_FALLBACK)]
             for n, model in enumerate(attempts):
+                messages = [{"role": "system", "content": system_for(model)}, *history, *turn]
                 try:
                     content, reasoning, calls = await stream_completion(
                         client, model, messages, status, allow_tools)
+                    used_model = model
                     break
                 except (httpx.TransportError, RetryableError) as e:
                     errors.append(f"{MODELS.get(model, model)}: {type(e).__name__} {e}"[:200])
@@ -277,7 +289,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
                     raise RuntimeError("Модель вернула пустой ответ, попробуй ещё раз.")
                 history.extend(turn)
                 history.append({"role": "assistant", "content": content})
-                return content, "\n\n".join(all_reasoning)
+                return content, "\n\n".join(all_reasoning), used_model
 
             # Модель хочет воспользоваться интернетом
             for i, c in enumerate(calls):
@@ -324,6 +336,8 @@ def split_text(text: str, limit: int = TG_LIMIT):
 
 
 async def send_answer(message, answer: str):
+    # Telegram Markdown понимает *жирный*, а модели часто пишут **жирный**
+    answer = answer.replace("**", "*").replace("__", "_")
     chunks = split_text(answer)
     for i, chunk in enumerate(chunks):
         markup = clear_button() if i == len(chunks) - 1 else None
@@ -367,7 +381,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         status = LiveStatus(status_msg, show)
         ticker = asyncio.create_task(status.ticker())
         try:
-            answer, reasoning = await ask_model(user_id, user_text, status)
+            answer, reasoning, used_model = await ask_model(user_id, user_text, status)
         except Exception as e:
             ticker.cancel()
             try:
@@ -383,7 +397,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             pass
         if show and reasoning:
             await send_thoughts(update.message, reasoning, seconds)
-        await send_answer(update.message, answer)
+        await send_answer(update.message, answer + f"\n\n_— {MODELS.get(used_model, used_model)}_")
 
 
 async def reset_dialog(update: Update, context: ContextTypes.DEFAULT_TYPE):
