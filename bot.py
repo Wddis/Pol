@@ -47,7 +47,6 @@ MODELS = {
 }
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "deepseek-v4.1-flash")
 # Если у выбранной модели все каналы исчерпаны — используем цепочку DeepSeek V4.1
-FALLBACK_CHAIN = ["deepseek-v4.1-flash", "qwen3.5-397b", "mistral-large-3"]
 
 # Провайдер упёрся в лимит → не трогаем его до этого времени (не тратим время на отказы)
 cooldown_until = {}      # (provider_id, model) -> unix time
@@ -206,6 +205,26 @@ def route_label(route):
     return next((v["label"] for v in MODELS.values() if route in v["routes"]), route[1])
 
 
+MAX_LIMIT_WAIT = 5 * 60   # дольше 5 минут не ждём — сообщаем, когда освободится
+
+
+async def countdown(status, model_key, wait):
+    """Показывает в сообщении статуса обратный отсчёт до снятия лимита."""
+    end = time.time() + wait
+    label = MODELS[model_key]["label"]
+    status.reasoning = ""
+    while True:
+        left = int(end - time.time() + 0.999)
+        if left <= 0:
+            break
+        status.stage = (f"⏳ Лимит {label}: 1 запрос в минуту. "
+                        f"Отвечу через {left // 60}:{left % 60:02d}")
+        await status.update(force=True)
+        await asyncio.sleep(min(3, max(0.5, end - time.time())))
+    status.stage = "⏳ Думаю…"
+    await status.update(force=True)
+
+
 class RetryableError(Exception):
     pass
 
@@ -234,6 +253,8 @@ async def stream_completion(client, route, messages, status: LiveStatus, use_too
     }) as resp:
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", "replace")
+            if resp.status_code == 403 and "consent" in body.lower():
+                cooldown_until[route] = time.time() + MAX_COOLDOWN   # нужно согласие на сайте
             if resp.status_code == 403 and "limit" in body.lower():
                 cooldown_until[route] = time.time() + 60
             if resp.status_code in (402, 429):
@@ -295,33 +316,37 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
     async with httpx.AsyncClient(timeout=timeout) as client:
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             allow_tools = use_web and round_no < MAX_TOOL_ROUNDS
+            # Только выбранная модель — никаких подмен. При лимите ждём с обратным отсчётом.
+            routes = [r for r in MODELS[chosen]["routes"] if PROVIDERS[r[0]]["key"]]
+            used_route = None
             errors = []
-            routes = [r for m in [chosen, *FALLBACK_CHAIN] for r in MODELS[m]["routes"]
-                      if PROVIDERS[r[0]]["key"]]
-            routes = list(dict.fromkeys(routes))          # без повторов, порядок сохраняем
-            now = time.time()
-            ready = [r for r in routes if cooldown_until.get(r, 0) <= now]
-            for n, route in enumerate(ready):
-                messages = [{"role": "system", "content": system_for(route)}, *history, *turn]
-                if cooldown_until.get(route, 0) > time.time():
-                    continue      # этот провайдер только что упёрся в лимит
-                try:
-                    content, reasoning, calls = await stream_completion(
-                        client, route, messages, status, allow_tools)
-                    used_route = route
-                    break
-                except (httpx.TransportError, RetryableError) as e:
-                    errors.append(f"{PROVIDERS[route[0]]['name']}: {type(e).__name__} {e}"[:200])
-                    if n + 1 < len(ready):
-                        status.stage = f"🔁 {route_label(route)} занят, пробую {route_label(ready[n + 1])}…"
-                        status.reasoning = ""
-                        await status.update(force=True)
-            else:
-                waits = [cooldown_until[r] for r in routes if r in cooldown_until]
-                when = ""
-                if waits and min(waits) > now:
-                    when = " Ближайший канал освободится в " + datetime.fromtimestamp(min(waits)).strftime("%H:%M") + " (UTC)."
-                raise RuntimeError("Все бесплатные каналы сейчас заняты." + when + "\n" + "\n".join(errors))
+            while used_route is None:
+                now = time.time()
+                ready = [r for r in routes if cooldown_until.get(r, 0) <= now]
+                if not ready:
+                    wait = min(cooldown_until[r] for r in routes) - now
+                    if wait > MAX_LIMIT_WAIT:
+                        free_at = datetime.fromtimestamp(now + wait).strftime("%H:%M")
+                        raise RuntimeError(f"Лимит модели {MODELS[chosen]['label']} исчерпан надолго — "
+                                           f"освободится примерно в {free_at} (UTC). Можно выбрать другую модель: /model")
+                    await countdown(status, chosen, wait)
+                    continue
+                for route in ready:
+                    messages = [{"role": "system", "content": system_for(route)}, *history, *turn]
+                    try:
+                        content, reasoning, calls = await stream_completion(
+                            client, route, messages, status, allow_tools)
+                        used_route = route
+                        break
+                    except httpx.TransportError as e:
+                        errors.append(f"{type(e).__name__}")
+                        cooldown_until[route] = time.time() + 5     # сетевой сбой — короткая пауза
+                    except RetryableError as e:
+                        errors.append(str(e)[:150])
+                        if route not in cooldown_until or cooldown_until[route] <= time.time():
+                            cooldown_until[route] = time.time() + 15  # непонятная ошибка — пауза 15 с
+                if len(errors) > 12:
+                    raise RuntimeError("Модель не отвечает, попробуй позже.\n" + "\n".join(errors[-3:]))
             if reasoning.strip():
                 all_reasoning.append(reasoning.strip())
 
