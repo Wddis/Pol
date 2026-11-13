@@ -58,7 +58,6 @@ cooldown_until = {}      # (provider_id, model) -> unix time
 MAX_COOLDOWN = 6 * 3600
 busy_strikes = {}        # route -> сколько раз подряд поставщики были заняты
 cooldown_reason = {}     # route -> "limit" | "busy"
-MAX_BUSY_WAIT = 8 * 60   # дольше ждать перегруженных поставщиков не будем
 BUSY_BASE = 30           # первая пауза при перегрузке (30 → 60 → 120 → 180 с)
 
 user_models = {}         # user_id -> выбранная модель
@@ -270,26 +269,33 @@ def route_label(route):
     return next((v["label"] for v in MODELS.values() if route in v["routes"]), route[1])
 
 
-MAX_LIMIT_WAIT = 5 * 60   # дольше 5 минут не ждём — сообщаем, когда освободится
 
 
-async def countdown(status, model_key, wait, reason="limit"):
-    """Показывает в сообщении статуса обратный отсчёт до снятия лимита."""
+def _fmt_left(sec: int) -> str:
+    h, rem = divmod(max(0, sec), 3600)
+    return f"{h}:{rem // 60:02d}:{rem % 60:02d}" if h else f"{rem // 60}:{rem % 60:02d}"
+
+
+async def countdown(status, model_key, wait, reason="limit", user_id=None):
+    """Обратный отсчёт до следующей попытки. Прерывается, если пользователь сменил модель."""
     end = time.time() + wait
     label = MODELS[model_key]["label"]
     status.reasoning = ""
     if getattr(status, "turn_id", None):
-        status.markup = remove_request_kb(status.turn_id)
+        status.markup = turn_kb(status.turn_id)
     while True:
         left = int(end - time.time() + 0.999)
         if left <= 0:
             break
+        if user_id is not None and user_models.get(user_id, DEFAULT_MODEL) != model_key:
+            break                                   # выбрали другую модель — пробуем её сразу
+        t = _fmt_left(left)
         if reason == "busy":
-            status.stage = (f"⏳ Бесплатный {label} сейчас перегружен у поставщика. "
-                            f"Повторю через {left // 60}:{left % 60:02d}")
+            status.stage = f"⏳ {label} сейчас перегружен у поставщика. Пробую снова через {t}"
+        elif reason == "error":
+            status.stage = f"⚠️ Поставщик {label} ответил ошибкой. Пробую снова через {t}"
         else:
-            status.stage = (f"⏳ Лимит {label}: 1 запрос в минуту. "
-                            f"Отвечу через {left // 60}:{left % 60:02d}")
+            status.stage = f"⏳ Лимит {label}: 1 запрос в минуту. Отвечу через {t}"
         await status.update(force=True)
         await asyncio.sleep(min(3, max(0.5, end - time.time())))
     status.stage = "⏳ Думаю…"
@@ -442,25 +448,20 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
             used_route = None
             errors = []
             while used_route is None:
+                # модель меняет только пользователь (кнопкой «Сменить ИИ») — сами не переключаем
+                picked = user_models.get(user_id, DEFAULT_MODEL)
+                if picked in MODELS and picked != chosen:
+                    chosen = picked
+                    status.vision = bool(MODELS[chosen].get("vision"))
+                    routes = [r for r in MODELS[chosen]["routes"] if PROVIDERS[r[0]]["key"]]
+                    status.actions.append(f"🤖 Переключился на {MODELS[chosen]['label']}")
                 now = time.time()
                 ready = [r for r in routes if cooldown_until.get(r, 0) <= now]
                 if not ready:
+                    # ждём и пробуем снова — сколько угодно раз; отменить можно кнопкой «Удалить запрос»
                     wait = min(cooldown_until[r] for r in routes) - now
-                    if wait > MAX_LIMIT_WAIT:
-                        free_at = datetime.fromtimestamp(now + wait).strftime("%H:%M")
-                        raise RuntimeError(f"Лимит модели {MODELS[chosen]['label']} исчерпан надолго — "
-                                           f"освободится примерно в {free_at} (UTC). Можно выбрать другую модель: /model")
                     soon = min(routes, key=lambda r: cooldown_until.get(r, 0))
-                    reason = cooldown_reason.get(soon, "limit")
-                    if reason == "busy":
-                        busy_since = getattr(status, "busy_since", None) or now
-                        status.busy_since = busy_since
-                        if now - busy_since + wait > MAX_BUSY_WAIT:
-                            raise RuntimeError(
-                                f"Бесплатный {MODELS[chosen]['label']} сейчас перегружен у поставщика "
-                                f"(все серверы заняты уже несколько минут). Попробуй чуть позже "
-                                f"или выбери другую модель: /model")
-                    await countdown(status, chosen, wait, reason)
+                    await countdown(status, chosen, wait, cooldown_reason.get(soon, "limit"), user_id)
                     continue
                 for route in ready:
                     messages = [{"role": "system", "content": system_for(route)}, *history, *with_reminder(turn)]
@@ -477,9 +478,10 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                             continue          # перегрузка поставщика — ждём с отсчётом, это не «ошибка»
                         errors.append(str(e)[:150])
                         if route not in cooldown_until or cooldown_until[route] <= time.time():
-                            cooldown_until[route] = time.time() + 15  # непонятная ошибка — пауза 15 с
-                if len(errors) > 12:
-                    raise RuntimeError("Модель не отвечает, попробуй позже.\n" + "\n".join(errors[-3:]))
+                            # непонятная ошибка — растущая пауза, но не сдаёмся
+                            n = busy_strikes[route] = busy_strikes.get(route, 0) + 1
+                            cooldown_until[route] = time.time() + min(15 * 2 ** (n - 1), 180)
+                            cooldown_reason[route] = "error"
             if reasoning.strip():
                 all_reasoning.append(reasoning.strip())
 
@@ -649,8 +651,23 @@ def stop_user_turns(user_id: int) -> int:
     return len(tasks)
 
 
-def remove_request_kb(turn_id: str):
-    return InlineKeyboardMarkup([[InlineKeyboardButton("🗑 Удалить запрос", callback_data=f"rmq:{turn_id}")]])
+def turn_kb(turn_id: str):
+    return InlineKeyboardMarkup([[InlineKeyboardButton("🤖 Сменить ИИ", callback_data=f"swm:{turn_id}"),
+                                  InlineKeyboardButton("🗑 Удалить запрос", callback_data=f"rmq:{turn_id}")]])
+
+
+remove_request_kb = turn_kb
+
+
+async def switch_model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Кнопка под отсчётом: показать выбор модели. Ожидающий запрос продолжится на выбранной."""
+    query = update.callback_query
+    await query.answer()
+    current = user_models.get(query.from_user.id, DEFAULT_MODEL)
+    await query.message.reply_text(
+        f"🤖 Сейчас: *{MODELS.get(current, MODELS[DEFAULT_MODEL])['label']}*\n"
+        "Выбери модель — ожидающий запрос сразу продолжится на ней:",
+        parse_mode="Markdown", reply_markup=models_keyboard(current))
 
 
 turns = {}               # turn_id -> {"user", "task", "user_msg", "bot_msgs", "removed"}
@@ -1236,6 +1253,7 @@ app.add_handler(CommandHandler(["model", "ai"], choose_model))
 app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
 app.add_handler(CallbackQueryHandler(clear_callback, pattern="^clear$"))
 app.add_handler(CallbackQueryHandler(remove_request_callback, pattern="^rmq:"))
+app.add_handler(CallbackQueryHandler(switch_model_callback, pattern="^swm:"))
 app.add_handler(CommandHandler(["instructions", "instr"], show_instructions))
 app.add_handler(CallbackQueryHandler(md_choice_callback, pattern="^md(add|ana):"))
 app.add_handler(CallbackQueryHandler(instructions_callback, pattern="^ins(v:|d:|dall$)"))
