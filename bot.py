@@ -825,6 +825,7 @@ if WEBHOOK_URL:
         webhook_url=f"{WEBHOOK_URL.rstrip('/')}/{secret[:32]}",
         secret_token=secret[32:64],
         allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True,   # после перезапуска не отвечаем на старые сообщения
     )
 else:
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
