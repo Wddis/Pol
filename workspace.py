@@ -18,10 +18,13 @@ from urllib.parse import urlencode, urlsplit
 
 import httpx
 
+import binary
+
 DATA_DIR = os.environ.get("DATA_DIR", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
 
-MAX_FILE_BYTES = 2 * 1024 * 1024          # один файл
-MAX_WORKSPACE_BYTES = 20 * 1024 * 1024    # все файлы пользователя
+MAX_FILE_BYTES = 2 * 1024 * 1024          # один текстовый файл
+MAX_BINARY_BYTES = 20 * 1024 * 1024       # один двоичный файл (.so и т.п.) — предел Telegram для ботов
+MAX_WORKSPACE_BYTES = 60 * 1024 * 1024    # все файлы пользователя
 MAX_FILES = 200
 MAX_ZIP_MEMBERS = 200
 MAX_HISTORY_MESSAGES = 60                 # сколько сообщений диалога помним
@@ -119,8 +122,9 @@ def decode_text(data: bytes) -> str:
 
 
 def save_file(uid: int, name: str, data: bytes) -> str:
-    if len(data) > MAX_FILE_BYTES:
-        raise ValueError(f"файл больше {MAX_FILE_BYTES // 1024 // 1024} МБ")
+    limit = MAX_FILE_BYTES if is_text(data) else MAX_BINARY_BYTES
+    if len(data) > limit:
+        raise ValueError(f"файл больше {limit // 1024 // 1024} МБ")
     name = safe_name(name)
     p = _path(uid, name)
     existing = os.path.getsize(p) if os.path.exists(p) else 0
@@ -128,7 +132,8 @@ def save_file(uid: int, name: str, data: bytes) -> str:
     if not os.path.exists(p) and len(files) >= MAX_FILES:
         raise ValueError(f"в рабочей папке уже {MAX_FILES} файлов — удали лишние (/files)")
     if sum(f["size"] for f in files) - existing + len(data) > MAX_WORKSPACE_BYTES:
-        raise ValueError("рабочая папка переполнена (20 МБ) — удали лишние файлы (/files)")
+        raise ValueError(f"рабочая папка переполнена ({MAX_WORKSPACE_BYTES // 1024 // 1024} МБ) — "
+                         f"удали лишние файлы (/files)")
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "wb") as f:
         f.write(data)
@@ -155,15 +160,12 @@ def extract_zip(uid: int, data: bytes):
     with zipfile.ZipFile(io.BytesIO(data)) as z:
         members = [m for m in z.infolist() if not m.is_dir()]
         for m in members[:MAX_ZIP_MEMBERS]:
-            if m.file_size > MAX_FILE_BYTES:
-                skipped.append(f"{m.filename} (больше 2 МБ)")
+            if m.file_size > MAX_BINARY_BYTES:
+                skipped.append(f"{m.filename} (больше 20 МБ)")
                 continue
             if any(seg in m.filename for seg in ("__MACOSX/", ".git/", "node_modules/", "__pycache__/")):
                 continue
             content = z.read(m)
-            if not is_text(content):
-                skipped.append(f"{m.filename} (не текст)")
-                continue
             try:
                 saved.append(save_file(uid, m.filename, content))
             except ValueError as e:
@@ -512,6 +514,7 @@ async def send_shot(out, shot: dict, caption: str):
 # ---------- Инструменты для модели ----------
 
 FILE_TOOLS = [
+    binary.TOOL,
     {"type": "function", "function": {
         "name": "list_files",
         "description": "Список файлов в рабочей папке пользователя (присланные им и созданные тобой).",
@@ -628,7 +631,10 @@ def workspace_note(uid: int) -> str:
              "ЭКОНОМЬ ШАГИ (у модели лимит запросов в минуту): делай нужные вызовы инструментов сразу "
              "за один шаг; для изменения файла с отправкой используй write_file/edit_file с send=true; "
              "не перечитывай файл, если его содержимое уже есть в этом сообщении или ты только что его записал; "
-             "не трогай файлы, о которых не просили."]
+             "не трогай файлы, о которых не просили.",
+             "Двоичные файлы (.so, исполняемые) анализируй через analyze_binary: summary, exports/imports, "
+             "functions, strings, sections, disasm (дизассемблер ARM64/ARM/x86). Изменять .so ты не можешь — "
+             "только изучать; правки предлагай в исходном коде."]
     if files:
         shown = files[:60]
         lines.append(f"Файлы ({len(files)}): " + ", ".join(f"{f['name']} ({f['size']} Б)" for f in shown)
@@ -660,7 +666,11 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
             files = list_files(uid)
             return "\n".join(f"{f['name']}\t{f['size']} байт" for f in files) or "Рабочая папка пуста."
         if name == "read_file":
-            text = decode_text(read_bytes(uid, args["name"]))
+            raw = read_bytes(uid, args["name"])
+            if not is_text(raw):
+                return (f"{args['name']} — двоичный файл ({binary.kind(raw)}, {len(raw)} байт). "
+                        f"Используй analyze_binary.")
+            text = decode_text(raw)
             off = max(0, int(args.get("offset") or 0))
             chunk = text[off:off + READ_CHUNK]
             more = f"\n[… ещё {len(text) - off - READ_CHUNK} символов, читай с offset={off + READ_CHUNK}]" \
@@ -690,6 +700,13 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
                                      caption=(args.get("caption") or "")[:1000] or None)
             status.actions.append(f"📤 Отправил {args['name']}")
             return f"Файл {args['name']} отправлен пользователю."
+        if name == "analyze_binary":
+            status.actions.append(f"🔬 {args.get('what', 'summary')} {args.get('name', '')}")
+            await status.update(force=True)
+            data = read_bytes(uid, args["name"])
+            return await asyncio.to_thread(
+                binary.analyze, data, args["name"], args.get("what") or "summary", args.get("query") or "",
+                int(args.get("offset") or 0), args.get("target") or "", int(args.get("count") or 120))
         if name == "web_screenshot":
             status.actions.append(f"📷 Снимок {args.get('url', '')[:60]}")
             await status.update(force=True)

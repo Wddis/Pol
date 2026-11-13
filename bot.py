@@ -702,7 +702,7 @@ async def handle_document(update: Update, context: ContextTypes.DEFAULT_TYPE):
     low = name.lower()
     is_md = low.endswith((".md", ".markdown")) or doc.mime_type == "text/markdown"
     is_zip = low.endswith(".zip")
-    limit = 10 * 1024 * 1024 if is_zip else MAX_FILE_BYTES
+    limit = 20 * 1024 * 1024                 # предел Telegram для ботов
     if doc.file_size and doc.file_size > limit:
         await update.message.reply_text(f"📄 Файл слишком большой — максимум {limit // 1024 // 1024} МБ.")
         return
@@ -748,10 +748,8 @@ async def add_to_batch(message, user_id, name, data, caption, is_zip):
             b["files"] += saved
             b["notes"].append(f"Архив {name}: распаковано {len(saved)} файлов"
                               + (f"; пропущено: {', '.join(skipped[:10])}" if skipped else ""))
-        elif ws.is_text(data):
-            b["files"].append(ws.save_file(user_id, name, data))
         else:
-            b["notes"].append(f"{name}: не текстовый файл — пропущен (понимаю код, текст и .zip)")
+            b["files"].append(ws.save_file(user_id, name, data))     # текст и двоичные (.so и т.п.)
     except (ValueError, Exception) as e:
         b["notes"].append(f"{name}: {e}")
     if b.get("task"):
@@ -777,7 +775,14 @@ async def _flush_batch_later(user_id):
     total = 0
     parts = []
     for f in files:
-        text = ws.decode_text(ws.read_bytes(user_id, f))
+        raw = ws.read_bytes(user_id, f)
+        if not ws.is_text(raw):
+            # двоичный файл: сразу даём модели сводку, детали — через analyze_binary
+            info = await asyncio.to_thread(ws.binary.summary, raw, f)
+            parts.append(f"[ДВОИЧНЫЙ ФАЙЛ {f}]\n{info}\n(подробнее — analyze_binary: exports, imports, "
+                         f"functions, strings, sections, disasm)")
+            continue
+        text = ws.decode_text(raw)
         if total + len(text) <= MAX_FILE_CHARS:
             parts.append(f"<<<ФАЙЛ {f}\n{text}\nФАЙЛ {f}>>>")
             total += len(text)

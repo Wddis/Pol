@@ -3,3 +3,5 @@ httpx
 beautifulsoup4
 ddgs
 pillow
+pyelftools
+capstone
