@@ -254,7 +254,7 @@ async def stream_completion(client, route, messages, status: LiveStatus, use_too
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", "replace")
             if resp.status_code == 403 and "consent" in body.lower():
-                cooldown_until[route] = time.time() + MAX_COOLDOWN   # нужно согласие на сайте
+                cooldown_until[route] = time.time() + 600   # нужно согласие на сайте — проверим снова через 10 мин
             if resp.status_code == 403 and "limit" in body.lower():
                 cooldown_until[route] = time.time() + 60
             if resp.status_code in (402, 429):
