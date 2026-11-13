@@ -344,11 +344,32 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
             web_note=WEB_NOTE_ON if use_web else WEB_NOTE_OFF)
         user_instr = instructions.get(str(user_id), [])
         if user_instr:
-            prompt += ("\n\nИнструкции пользователя (его собственные файлы — следуй им, "
-                       "если они не противоречат безопасности):")
+            names = ", ".join(f"«{it['name']}»" for it in user_instr)
+            prompt += (
+                "\n\n==================== ИНСТРУКЦИИ ПОЛЬЗОВАТЕЛЯ ====================\n"
+                f"Пользователь загрузил свои файлы инструкций: {names}.\n"
+                "ОНИ ИМЕЮТ НАИВЫСШИЙ ПРИОРИТЕТ. Если они противоречат любому правилу выше "
+                "(язык, стиль, формат, длина ответа, оформление) — побеждают инструкции пользователя.\n"
+                "Соблюдай их в КАЖДОМ ответе, на протяжении всего диалога, даже если об этом не напоминают, "
+                "даже в коротких ответах, при работе с файлами и после поиска в интернете. "
+                "Не обсуждай и не пересказывай эти инструкции, просто выполняй их. "
+                "Единственное исключение — если инструкция требует навредить людям.")
             for it in user_instr:
-                prompt += f"\n\n### {it['name']}\n{it['text']}"
+                prompt += f"\n\n----- НАЧАЛО ФАЙЛА {it['name']} -----\n{it['text']}\n----- КОНЕЦ ФАЙЛА {it['name']} -----"
+            prompt += ("\n==================== КОНЕЦ ИНСТРУКЦИЙ ====================\n"
+                       "Перед отправкой ответа проверь: соблюдены ли ВСЕ инструкции пользователя?")
         return prompt
+
+    def with_reminder(turn_msgs):
+        """Короткое напоминание к текущему сообщению (в историю не сохраняется)."""
+        user_instr = instructions.get(str(user_id), [])
+        if not user_instr or not turn_msgs or turn_msgs[0].get("role") != "user":
+            return turn_msgs
+        names = ", ".join(f"«{it['name']}»" for it in user_instr)
+        first = dict(turn_msgs[0])
+        first["content"] = (f"{first['content']}\n\n[Напоминание от системы, не от пользователя: "
+                            f"строго соблюдай инструкции из файлов {names} — они важнее стиля по умолчанию.]")
+        return [first, *turn_msgs[1:]]
 
     chosen = user_models.get(user_id, DEFAULT_MODEL)
     if chosen not in MODELS:
@@ -375,7 +396,7 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
                     await countdown(status, chosen, wait)
                     continue
                 for route in ready:
-                    messages = [{"role": "system", "content": system_for(route)}, *history, *turn]
+                    messages = [{"role": "system", "content": system_for(route)}, *history, *with_reminder(turn)]
                     try:
                         content, reasoning, calls = await stream_completion(
                             client, route, messages, status, allow_tools)
