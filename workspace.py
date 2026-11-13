@@ -521,11 +521,13 @@ FILE_TOOLS = [
         "parameters": {"type": "object", "properties": {}}}},
     {"type": "function", "function": {
         "name": "read_file",
-        "description": f"Прочитать текстовый файл из рабочей папки. Отдаёт до {READ_CHUNK} символов, "
-                       "для длинных файлов используй offset.",
+        "description": "Прочитать текстовый файл из рабочей папки С НОМЕРАМИ СТРОК (формат «номер→строка», "
+                       "номер не часть файла). Для больших файлов читай нужный кусок: start_line и limit. "
+                       "Номера строк используй для точных ссылок и правок.",
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string", "description": "Имя файла (путь в рабочей папке)"},
-            "offset": {"type": "integer", "description": "С какого символа читать (по умолчанию 0)"}},
+            "start_line": {"type": "integer", "description": "С какой строки (с 1)"},
+            "limit": {"type": "integer", "description": "Сколько строк (по умолчанию до 1500)"}},
             "required": ["name"]}}},
     {"type": "function", "function": {
         "name": "write_file",
@@ -538,13 +540,20 @@ FILE_TOOLS = [
             "required": ["name", "content"]}}},
     {"type": "function", "function": {
         "name": "edit_file",
-        "description": "Точечная правка: заменить фрагмент old на new в файле (old должен встречаться ровно один раз). "
-                       "Удобно для небольших изменений больших файлов.",
+        "description": "Точечная правка: заменить фрагмент old на new (точно, с отступами, БЕЗ номеров строк). "
+                       "old должен встречаться ровно один раз — или replace_all=true для замены всех вхождений "
+                       "(например, переименование). Для нескольких правок в одном файле используй edits — "
+                       "список {old, new}: применяются по порядку, всё или ничего.",
         "parameters": {"type": "object", "properties": {
             "name": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"},
+            "replace_all": {"type": "boolean", "description": "Заменить все вхождения old"},
+            "edits": {"type": "array", "description": "Несколько правок сразу: [{old, new, replace_all}]",
+                      "items": {"type": "object", "properties": {
+                          "old": {"type": "string"}, "new": {"type": "string"},
+                          "replace_all": {"type": "boolean"}}}},
             "send": {"type": "boolean", "description": "Сразу прислать изменённый файл пользователю"},
             "caption": {"type": "string"}},
-            "required": ["name", "old", "new"]}}},
+            "required": ["name"]}}},
     {"type": "function", "function": {
         "name": "delete_file",
         "description": "Удалить файл из рабочей папки.",
@@ -674,12 +683,21 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
             if not is_text(raw):
                 return (f"{args['name']} — двоичный файл ({binary.kind(raw)}, {len(raw)} байт). "
                         f"Используй analyze_binary.")
-            text = decode_text(raw)
-            off = max(0, int(args.get("offset") or 0))
-            chunk = text[off:off + READ_CHUNK]
-            more = f"\n[… ещё {len(text) - off - READ_CHUNK} символов, читай с offset={off + READ_CHUNK}]" \
-                if len(text) > off + READ_CHUNK else ""
-            return f"Файл {args['name']} ({len(text)} символов):\n{chunk}{more}"
+            lines = decode_text(raw).splitlines()
+            start = max(1, int(args.get("start_line") or 1))
+            limit = max(1, min(int(args.get("limit") or 1500), 3000))
+            part, total_chars = [], 0
+            end = start - 1
+            for i in range(start - 1, min(len(lines), start - 1 + limit)):
+                ln = lines[i] if len(lines[i]) <= 2000 else lines[i][:2000] + " …[строка обрезана]"
+                if total_chars + len(ln) > READ_CHUNK:
+                    break
+                part.append(f"{i + 1}→{ln}")
+                total_chars += len(ln)
+                end = i + 1
+            more = (f"\n[… всего {len(lines)} строк; продолжение: start_line={end + 1}]"
+                    if end < len(lines) else "")
+            return f"Файл {args['name']} ({len(lines)} строк), строки {start}–{end}:\n" + "\n".join(part) + more
         if name == "write_file":
             saved = save_file(uid, args["name"], (args.get("content") or "").encode("utf-8"))
             status.actions.append(f"✏️ Записал {saved}")
@@ -687,13 +705,28 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
             return f"Файл {saved} сохранён ({len(args.get('content') or '')} символов).{sent}"
         if name == "edit_file":
             text = decode_text(read_bytes(uid, args["name"]))
-            n = text.count(args["old"])
-            if n != 1:
-                return f"Фрагмент old встречается {n} раз — нужно ровно 1. Уточни фрагмент или используй write_file."
-            save_file(uid, args["name"], text.replace(args["old"], args["new"]).encode("utf-8"))
+            edits = args.get("edits") or [{"old": args.get("old", ""), "new": args.get("new", ""),
+                                           "replace_all": args.get("replace_all")}]
+            total = 0
+            for k, e in enumerate(edits, 1):
+                old, new = e.get("old", ""), e.get("new", "")
+                if not old:
+                    return f"Правка {k}: пустой old. Ничего не изменено."
+                if old == new:
+                    return f"Правка {k}: old и new одинаковые. Ничего не изменено."
+                n = text.count(old)
+                if n == 0:
+                    return (f"Правка {k}: фрагмент old не найден (проверь отступы и что ты не скопировал номера "
+                            f"строк). Ничего не изменено — прочитай файл и повтори.")
+                if n > 1 and not e.get("replace_all"):
+                    return (f"Правка {k}: фрагмент old встречается {n} раз — добавь контекста, чтобы он был "
+                            f"уникальным, или replace_all=true. Ничего не изменено.")
+                text = text.replace(old, new) if e.get("replace_all") else text.replace(old, new, 1)
+                total += n if e.get("replace_all") else 1
+            save_file(uid, args["name"], text.encode("utf-8"))
             status.actions.append(f"✏️ Изменил {args['name']}")
             sent = await _maybe_send(uid, args["name"], args, out, status)
-            return f"Файл {args['name']} изменён.{sent}"
+            return f"Файл {args['name']} изменён (замен: {total}).{sent}"
         if name == "delete_file":
             delete_file(uid, args["name"])
             status.actions.append(f"🗑 Удалил {args['name']}")

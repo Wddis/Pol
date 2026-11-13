@@ -225,6 +225,13 @@ class LiveStatus:
     def render(self) -> str:
         secs = int(time.time() - self.started)
         parts = [f"<b>{html.escape(self.stage)}</b> · {secs} с"]
+        todos = getattr(self, "todos", None)
+        if todos:
+            icon = {"completed": "✅", "in_progress": "🔄"}
+            done = sum(t.get("status") == "completed" for t in todos)
+            parts.append(f"📋 План {done}/{len(todos)}:")
+            for t in todos[:12]:
+                parts.append(f"{icon.get(t.get('status'), '⬜')} {html.escape(str(t.get('content'))[:80])}")
         for a in self.actions[-4:]:
             parts.append(html.escape(a))
         if self.show and self.reasoning.strip():
