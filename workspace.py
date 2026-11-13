@@ -643,7 +643,8 @@ def workspace_note(uid: int) -> str:
              "не перечитывай файл, если его содержимое уже есть в этом сообщении или ты только что его записал; "
              "не трогай файлы, о которых не просили; как только данных достаточно — сразу дай ответ, "
              "не делай лишних проверок.",
-             "Двоичные файлы (.so, исполняемые) анализируй через analyze_binary. В summary уже есть "
+             "Двоичные файлы (.so, исполняемые) анализируй через analyze_binary — НАЧНИ с what=overview "
+             "(всё сразу за один вызов), затем при нужде disasm с targets=[несколько функций] за раз. Там есть "
              "архитектура, зависимости, экспортируемые функции, секции, движок и защита — читай его "
              "ВНИМАТЕЛЬНО и не запрашивай то, что там уже есть. Доп. вызовы: exports/imports/functions "
              "(query для поиска), strings (query), disasm (target=имя функции) — если нужны, запрашивай их "
@@ -743,7 +744,8 @@ async def run_file_or_api_tool(uid: int, name: str, args: dict, out, status) -> 
             data = read_bytes(uid, args["name"])
             return await asyncio.to_thread(
                 binary.analyze, data, args["name"], args.get("what") or "summary", args.get("query") or "",
-                int(args.get("offset") or 0), args.get("target") or "", int(args.get("count") or 120))
+                int(args.get("offset") or 0), args.get("target") or "", int(args.get("count") or 120),
+                args.get("targets") or None)
         if name == "web_screenshot":
             status.actions.append(f"📷 Снимок {args.get('url', '')[:60]}")
             await status.update(force=True)

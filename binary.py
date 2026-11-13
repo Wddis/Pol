@@ -222,7 +222,7 @@ def strings(data: bytes, query: str = "", min_len: int = 5, offset: int = 0) -> 
     return "\n".join(lines)
 
 
-def disasm(data: bytes, target: str, count: int = 120) -> str:
+def disasm(data: bytes, target: str = "", count: int = 120, targets: list = None) -> str:
     """target — имя функции (или часть имени) либо адрес 0x…"""
     if kind(data) != "ELF":
         return "Дизассемблер доступен только для ELF."
@@ -239,45 +239,146 @@ def disasm(data: bytes, target: str, count: int = 120) -> str:
         md = cs.Cs(cs.CS_ARCH_X86, cs.CS_MODE_32)
     else:
         return f"Архитектура {m} пока не поддерживается дизассемблером."
-    addr, size, label = None, 0, target
-    if target.lower().startswith("0x"):
-        addr = int(target, 16)
-    else:
-        funcs = _symbols(data, "functions", "")
-        exact = [f for f in funcs if f[0] == target or f[1] == target]
-        cands = exact or [f for f in funcs if target.lower() in f[0].lower() or target.lower() in f[1].lower()]
-        if not cands:
-            return f"Функция «{target}» не найдена. Посмотри список: what=functions, query=…"
-        if len(cands) > 1 and not exact:
-            return "Подходит несколько функций, уточни:\n" + "\n".join(f"{c[1]} [{c[0]}]" for c in cands[:30])
-        nm, dm, addr, size, _, _ = cands[0]
-        label = dm
-    if m == "EM_ARM":
-        addr &= ~1                                         # бит Thumb в адресе
-    # адрес -> смещение в файле
-    for seg in e.iter_segments():
-        if seg["p_type"] == "PT_LOAD" and seg["p_vaddr"] <= addr < seg["p_vaddr"] + seg["p_filesz"]:
-            off = seg["p_offset"] + (addr - seg["p_vaddr"])
-            break
-    else:
-        return f"Адрес 0x{addr:x} не попадает в загружаемые сегменты."
-    n = min(int(count or 120), MAX_DISASM)
-    length = size if size else n * 4
-    code = data[off:off + min(length, n * 15)]
-    lines = [f"{label} @ 0x{addr:x}" + (f", размер {size} байт" if size else "")]
-    for i, ins in enumerate(md.disasm(code, addr)):
-        if i >= n:
-            lines.append(f"… (показано {n} инструкций, проси count побольше или адрес 0x… для продолжения)")
-            break
-        lines.append(f"0x{ins.address:x}:\t{ins.mnemonic}\t{ins.op_str}")
-    return "\n".join(lines)
+    md.detail = False
+    funcs = _symbols(data, "functions", "")
+    symmap = {}
+    for nm, dm, a, sz, _, _ in funcs + _symbols(data, "exports", "") + _symbols(data, "imports", ""):
+        if a:
+            symmap[a & ~1] = dm if dm != nm else nm
+
+    def vaddr_off(a):
+        for seg in e.iter_segments():
+            if seg["p_type"] == "PT_LOAD" and seg["p_vaddr"] <= a < seg["p_vaddr"] + seg["p_filesz"]:
+                return seg["p_offset"] + (a - seg["p_vaddr"])
+        return None
+
+    def read_cstr(a):
+        o = vaddr_off(a)
+        if o is None:
+            return None
+        end = data.find(b"\x00", o, o + 200)
+        if end < 0:
+            return None
+        s = data[o:end]
+        if len(s) >= 2 and all(0x20 <= b < 0x7f or b in (9,) for b in s):
+            return s.decode("ascii", "replace")
+        return None
+
+    # диапазоны исполняемых секций — чтобы не комментировать переходы внутри кода как «данные»
+    exec_ranges = []
+    for sec in e.iter_sections():
+        if sec["sh_flags"] & 4 and sec["sh_addr"]:
+            exec_ranges.append((sec["sh_addr"], sec["sh_addr"] + sec["sh_size"]))
+
+    def in_code(a):
+        return any(lo <= a < hi for lo, hi in exec_ranges)
+
+    def annotate(a, is_call):
+        if a in symmap:
+            return f"  ; → {symmap[a]}"
+        if is_call or in_code(a):
+            return ""                       # переход/вызов внутри кода без имени — не шумим
+        st = read_cstr(a)
+        if st is not None:
+            return f'  ; "{st[:60]}"'
+        o = vaddr_off(a)
+        if o is not None and o + 4 <= len(data):
+            return f"  ; data@0x{a:x} = {int.from_bytes(data[o:o+4], 'little')}"
+        return ""
+
+    def one(tgt):
+        a, size, label = None, 0, tgt
+        if tgt.lower().startswith("0x"):
+            a = int(tgt, 16)
+        else:
+            exact = [f for f in funcs if f[0] == tgt or f[1] == tgt]
+            cands = exact or [f for f in funcs if tgt.lower() in f[0].lower() or tgt.lower() in f[1].lower()]
+            if not cands:
+                return f"Функция «{tgt}» не найдена (смотри what=functions)."
+            if len(cands) > 1 and not exact:
+                return "Несколько функций подходит, уточни: " + ", ".join(c[1] for c in cands[:20])
+            _, label, a, size, _, _ = cands[0]
+        if m == "EM_ARM":
+            a &= ~1
+        off = vaddr_off(a)
+        if off is None:
+            return f"Адрес 0x{a:x} не в загружаемых сегментах."
+        n = min(int(count or 120), MAX_DISASM)
+        code = data[off:off + min(size or n * 4, n * 15)]
+        out = [f"{label} @ 0x{a:x}" + (f", размер {size} байт:" if size else ":")]
+        # отслеживаем adrp/adr для разбора ссылок на строки/данные (ARM64)
+        pend = {}
+        for i, ins in enumerate(md.disasm(code, a)):
+            if i >= n:
+                out.append(f"… (ещё; увеличь count или дизасемблируй с адреса 0x{ins.address:x})")
+                break
+            mn, ops = ins.mnemonic, ins.op_str
+            note = ""
+            tgt_a = None
+            if mn in ("bl", "b", "b.eq", "b.ne", "b.lt", "b.gt", "b.le", "b.ge", "b.hi", "b.lo",
+                      "call", "jmp") and "#0x" in ops:
+                try:
+                    tgt_a = int(ops.rsplit("#", 1)[1].split()[0], 16)
+                except ValueError:
+                    pass
+            if mn == "adrp" and "#0x" in ops:
+                reg = ops.split(",")[0].strip()
+                pend[reg] = int(ops.rsplit("#", 1)[1], 16)
+            elif mn == "adr" and "#0x" in ops:
+                tgt_a = int(ops.rsplit("#", 1)[1], 16)
+            elif mn == "add" and "," in ops:
+                parts = [p.strip() for p in ops.split(",")]
+                if len(parts) == 3 and parts[1] in pend and parts[2].startswith("#"):
+                    try:
+                        tgt_a = pend[parts[0]] = pend[parts[1]] + int(parts[2][1:], 16)
+                    except ValueError:
+                        pass
+            elif mn.startswith("ld") and "[" in ops:
+                base = ops.split("[", 1)[1].split(",")[0].split("]")[0].strip()
+                if base in pend:
+                    disp = 0
+                    mm = re.search(r"#(0x[0-9a-f]+|\d+)", ops.split("[", 1)[1])
+                    if mm:
+                        disp = int(mm.group(1), 16) if mm.group(1).startswith("0x") else int(mm.group(1))
+                    tgt_a = pend[base] + disp
+            if tgt_a is not None:
+                note = annotate(tgt_a, mn in ("bl", "b", "call", "jmp"))
+            out.append(f"0x{ins.address:x}:\t{mn}\t{ops}{note}")
+        return "\n".join(out)
+
+    tgts = targets if targets else [target]
+    return "\n\n".join(one(t) for t in tgts if t)
+
+
+def overview(data: bytes, name: str) -> str:
+    """Всё сразу за один вызов: сводка + функции + импорты + заметные строки. Экономит шаги."""
+    if kind(data) != "ELF":
+        return summary(data, name) + "\n\n" + strings(data)
+    parts = [summary(data, name)]
+    exp = symbols(data, "functions", "")
+    parts.append("\n=== Экспортируемые функции ===\n" + exp)
+    imp = symbols(data, "imports", "")
+    if "всего 0" not in imp:
+        parts.append("\n=== Импорт (вызовы из других библиотек) ===\n" + imp)
+    # интересные строки: форматы, пути, ошибки, ключи, url
+    hot = strings(data, "", min_len=5)
+    keep = [ln for ln in hot.splitlines()[1:]
+            if any(w in ln.lower() for w in ("%", "/", "error", "fail", "key", "sign", "http", "token",
+                                             "license", "price", "money", "crop", "sell", "buy", ".c", ".cpp",
+                                             "assert", "debug", "version"))]
+    if keep:
+        parts.append(f"\n=== Заметные строки ({len(keep)}) ===\n" + "\n".join(keep[:120]))
+    parts.append("\nДальше: disasm (targets=[список функций] за один раз), strings/functions (query).")
+    return "\n".join(parts)
 
 
 def analyze(data: bytes, name: str, what: str = "summary", query: str = "", offset: int = 0,
-            target: str = "", count: int = 120) -> str:
+            target: str = "", count: int = 120, targets: list = None) -> str:
     what = (what or "summary").lower()
     if what == "summary":
         return summary(data, name)
+    if what == "overview":
+        return overview(data, name)
     if what in ("exports", "imports", "functions"):
         return symbols(data, what, query, offset)
     if what == "sections":
@@ -285,21 +386,26 @@ def analyze(data: bytes, name: str, what: str = "summary", query: str = "", offs
     if what == "strings":
         return strings(data, query, offset=offset)
     if what == "disasm":
-        return disasm(data, target or query, count)
+        return disasm(data, target or query, count, targets)
     return "what должен быть: summary, exports, imports, functions, sections, strings, disasm"
 
 
 TOOL = {"type": "function", "function": {
     "name": "analyze_binary",
-    "description": "Анализ двоичного файла из рабочей папки (.so/ELF библиотеки игр и движков, исполняемые файлы). "
-                   "what: summary — архитектура, зависимости, JNI, защиты, движок; exports/imports/functions — "
-                   "символы (можно query для поиска); sections — секции; strings — строки внутри (query для поиска); "
-                   "disasm — дизассемблировать функцию (target = имя или 0xадрес, count = число инструкций).",
+    "description": "Анализ двоичного файла (.so/ELF библиотеки игр и движков, исполняемые). "
+                   "what=overview — ВСЁ СРАЗУ за один вызов (сводка + функции + импорт + заметные строки), "
+                   "начинай с него; summary — только сводка; exports/imports/functions — символы (query для поиска); "
+                   "sections; strings (query); disasm — дизассемблировать функции с аннотациями "
+                   "(в комментариях видно строки, данные и вызываемые функции). Для disasm передавай "
+                   "targets=[несколько имён функций] — все разберутся за ОДИН шаг (экономит время при лимите).",
     "parameters": {"type": "object", "properties": {
         "name": {"type": "string", "description": "Имя файла в рабочей папке"},
-        "what": {"type": "string", "description": "summary|exports|imports|functions|sections|strings|disasm"},
+        "what": {"type": "string",
+                 "description": "overview|summary|exports|imports|functions|sections|strings|disasm"},
         "query": {"type": "string", "description": "Фильтр по подстроке"},
-        "target": {"type": "string", "description": "Для disasm: имя функции или адрес 0x…"},
-        "count": {"type": "integer", "description": "Для disasm: сколько инструкций (до 400)"},
+        "target": {"type": "string", "description": "Для disasm: одна функция (имя или 0xадрес)"},
+        "targets": {"type": "array", "items": {"type": "string"},
+                    "description": "Для disasm: несколько функций за один вызов"},
+        "count": {"type": "integer", "description": "Для disasm: сколько инструкций на функцию (до 400)"},
         "offset": {"type": "integer", "description": "Для длинных списков: с какого элемента"}},
         "required": ["name"]}}}
