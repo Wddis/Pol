@@ -18,39 +18,39 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 # ---------- Провайдеры ----------
 # Подключаются те, для которых задан ключ в переменных окружения.
 PROVIDERS = {
-    "orca": {"name": "OrcaRouter", "url": "https://api.orcarouter.ai/v1", "env": "ORCAROUTER_API_KEY"},
-    "unorouter": {"name": "UnoRouter", "url": "https://api.unorouter.com/v1", "env": "UNOROUTER_API_KEY"},
+    "uno": {"name": "UnoRouter", "url": "https://api.unorouter.com/v1", "env": "UNOROUTER_API_KEY"},
 }
 for _p in PROVIDERS.values():
     _p["key"] = os.environ.get(_p["env"], "")
 if not any(p["key"] for p in PROVIDERS.values()):
-    raise SystemExit("Не задан ни один ключ провайдера (ORCAROUTER_API_KEY, UNOROUTER_API_KEY)")
+    raise SystemExit("Не задан ни один ключ провайдера (UNOROUTER_API_KEY)")
 
 # Модели и цепочки провайдеров: бот идёт по списку, пока кто-то не ответит.
 MODELS = {
+    # У DeepSeek две бесплатные версии с раздельными лимитами — используем обе по очереди
     "deepseek-v4.1-flash": {
         "label": "🐋 DeepSeek V4.1 Flash", "identity": ("DeepSeek V4.1 Flash", "DeepSeek"),
-        "routes": [("orca", "deepseek/deepseek-v4.1-flash-free"),
-                   ("unorouter", "deepseek-v4.1-flash:free"),
-                   ("orca", "deepseek/deepseek-v4-flash-free")]},
-    "deepseek-v4-flash": {
-        "label": "🐳 DeepSeek V4 Flash", "identity": ("DeepSeek V4 Flash", "DeepSeek"),
-        "routes": [("orca", "deepseek/deepseek-v4-flash-free"),
-                   ("orca", "deepseek/deepseek-v4.1-flash-free"),
-                   ("unorouter", "deepseek-v4.1-flash:free")]},
+        "routes": [("uno", "deepseek-v4.1-flash:free"),
+                   ("uno", "deepseek-v4.1-flash-1017:free")]},
+    "qwen3.5-397b": {
+        "label": "🐉 Qwen 3.5 397B", "identity": ("Qwen 3.5 397B", "Alibaba"),
+        "routes": [("uno", "qwen3.5-397b-a17b:free")]},
+    "mistral-large-3": {
+        "label": "🌬 Mistral Large 3", "identity": ("Mistral Large 3", "Mistral AI"),
+        "routes": [("uno", "mistral-large-3-675b-instruct-2512:free")]},
+    "gemini-3.6-flash": {
+        "label": "✨ Gemini 3.6 Flash", "identity": ("Gemini 3.6 Flash", "Google"),
+        "routes": [("uno", "gemini-3.6-flash:free")]},
     "glm-5.3-flash": {
         "label": "🧩 GLM 5.3 Flash", "identity": ("GLM 5.3 Flash", "Z.ai"),
-        "routes": [("orca", "z-ai/glm-5.3-flash-free")]},
-    "hy4-preview": {
-        "label": "🐧 Tencent Hy4 (preview)", "identity": ("Hunyuan Hy4 (preview)", "Tencent"),
-        "routes": [("orca", "tencent/hy4-preview-free")]},
+        "routes": [("uno", "glm-5.3-flash:free")]},
 }
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "deepseek-v4.1-flash")
 # Если у выбранной модели все каналы исчерпаны — используем цепочку DeepSeek V4.1
-FALLBACK_MODEL = "deepseek-v4.1-flash"
+FALLBACK_CHAIN = ["deepseek-v4.1-flash", "qwen3.5-397b", "mistral-large-3"]
 
 # Провайдер упёрся в лимит → не трогаем его до этого времени (не тратим время на отказы)
-cooldown_until = {}      # provider_id -> unix time
+cooldown_until = {}      # (provider_id, model) -> unix time
 MAX_COOLDOWN = 6 * 3600
 
 user_models = {}         # user_id -> выбранная модель
@@ -203,11 +203,7 @@ class LiveStatus:
 # ---------- Модель ----------
 
 def route_label(route):
-    pid, model = route
-    label = next((v["label"] for v in MODELS.values() if route in v["routes"]), model)
-    if "v4-flash" in model and "v4.1" not in model:
-        label = MODELS["deepseek-v4-flash"]["label"]
-    return f"{label} · {PROVIDERS[pid]['name']}"
+    return next((v["label"] for v in MODELS.values() if route in v["routes"]), route[1])
 
 
 class RetryableError(Exception):
@@ -239,14 +235,14 @@ async def stream_completion(client, route, messages, status: LiveStatus, use_too
         if resp.status_code != 200:
             body = (await resp.aread()).decode("utf-8", "replace")
             if resp.status_code == 403 and "limit" in body.lower():
-                cooldown_until[pid] = time.time() + 60
+                cooldown_until[route] = time.time() + 60
             if resp.status_code in (402, 429):
                 # лимит: запоминаем, сколько ждать (Retry-After), но не дольше MAX_COOLDOWN
                 try:
                     wait = int(float(resp.headers.get("retry-after", "60")))
                 except ValueError:
                     wait = 60
-                cooldown_until[pid] = time.time() + min(max(wait, 30), MAX_COOLDOWN)
+                cooldown_until[route] = time.time() + min(max(wait, 30), MAX_COOLDOWN)
             raise RetryableError(f"{resp.status_code}: {body[:150]}")
         async for line in resp.aiter_lines():
             if not line.startswith("data: ") or line == "data: [DONE]":
@@ -284,8 +280,6 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
     def system_for(route):
         logical = chosen if route in MODELS[chosen]["routes"] else \
             next((k for k, v in MODELS.items() if route in v["routes"]), chosen)
-        if "v4-flash" in route[1].lower() and "v4.1" not in route[1]:
-            logical = "deepseek-v4-flash"
         name, vendor = MODELS[logical]["identity"]
         return SYSTEM_PROMPT.format(
             model_name=name, vendor=vendor,
@@ -302,14 +296,14 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             allow_tools = use_web and round_no < MAX_TOOL_ROUNDS
             errors = []
-            routes = [r for r in MODELS[chosen]["routes"] + MODELS[FALLBACK_MODEL]["routes"]
+            routes = [r for m in [chosen, *FALLBACK_CHAIN] for r in MODELS[m]["routes"]
                       if PROVIDERS[r[0]]["key"]]
             routes = list(dict.fromkeys(routes))          # без повторов, порядок сохраняем
             now = time.time()
-            ready = [r for r in routes if cooldown_until.get(r[0], 0) <= now]
+            ready = [r for r in routes if cooldown_until.get(r, 0) <= now]
             for n, route in enumerate(ready):
                 messages = [{"role": "system", "content": system_for(route)}, *history, *turn]
-                if cooldown_until.get(route[0], 0) > time.time():
+                if cooldown_until.get(route, 0) > time.time():
                     continue      # этот провайдер только что упёрся в лимит
                 try:
                     content, reasoning, calls = await stream_completion(
@@ -319,11 +313,11 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus):
                 except (httpx.TransportError, RetryableError) as e:
                     errors.append(f"{PROVIDERS[route[0]]['name']}: {type(e).__name__} {e}"[:200])
                     if n + 1 < len(ready):
-                        status.stage = f"🔁 {PROVIDERS[route[0]]['name']} занят, пробую {PROVIDERS[ready[n + 1][0]]['name']}…"
+                        status.stage = f"🔁 {route_label(route)} занят, пробую {route_label(ready[n + 1])}…"
                         status.reasoning = ""
                         await status.update(force=True)
             else:
-                waits = [cooldown_until[p] for p in {r[0] for r in routes} if p in cooldown_until]
+                waits = [cooldown_until[r] for r in routes if r in cooldown_until]
                 when = ""
                 if waits and min(waits) > now:
                     when = " Ближайший канал освободится в " + datetime.fromtimestamp(min(waits)).strftime("%H:%M") + " (UTC)."
