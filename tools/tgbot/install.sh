@@ -7,4 +7,6 @@ npm install playwright@1 && npx playwright install --with-deps chromium
 python3 -c "from faster_whisper import WhisperModel as W; [W(m,device='cpu',compute_type='int8') for m in ('base','small')]"
 mkdir -p fonts && cd fonts && for p in @fontsource/russo-one@5.3.0 @fontsource/montserrat@5.2.5; do npm pack $p >/dev/null; done && \
   for f in *.tgz; do tar xzf $f; cp package/files/*-{cyrillic,latin}-*{400,600,800,900}-normal.woff . 2>/dev/null; rm -rf package; done; cd ..
-echo "OK. Run:  TG_BOT_TOKEN=... SHORTS_FONTS=$PWD/fonts python3 tools/tgbot/bot.py"
+CMAKE_ARGS="-DGGML_NATIVE=ON" pip3 install --break-system-packages llama-cpp-python   # local AI helper (CPU)
+mkdir -p models && curl -L -o models/qwen3b.gguf https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
+echo "OK. Run (ASSIST_MODEL=$PWD/models/qwen3b.gguf for the AI helper):  TG_BOT_TOKEN=... SHORTS_FONTS=$PWD/fonts python3 tools/tgbot/bot.py"

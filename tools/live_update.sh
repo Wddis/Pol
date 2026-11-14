@@ -5,13 +5,17 @@
 T=$(cd "$(dirname "$0")" && pwd); cd "${2:-.}"; S=${FW_SRC_PARENT:-..}; VOD=${1:?usage: live_update.sh VOD_ID [workdir]}
 while true; do
   last=$(tail -1 transcript_live.txt | awk -F'-' '{print int($1)}'); [ -z "$last" ] && last=0
-  python3 $T/vod.py $VOD Audio_Only audio.mp4 >/dev/null 2>&1 || { echo "audio fetch failed"; sleep 120; continue; }
+  free=$(df -Pm . | awk 'NR==2{print $4}')
+  [ "${free:-0}" -lt 1500 ] && { echo "ERROR disk: only ${free} MB free"; sleep 120; continue; }
+  python3 $T/vod.py $VOD Audio_Only audio.mp4 > vod_err.txt 2>&1 || { echo "ERROR audio fetch failed: $(tail -1 vod_err.txt | cut -c1-150)"; sleep 120; continue; }
   dur=$(ffprobe -v error -show_entries format=duration -of csv=p=0 audio.mp4 | cut -d. -f1)
   if [ "$dur" -gt $((last+60)) ]; then
     ffmpeg -loglevel error -y -i audio.mp4 -ac 1 -ar 16000 audio.wav
-    nice -n 10 python3 $T/stt.py audio.wav new.txt $((last+1)) $dur >/dev/null 2>&1
-    cat new.txt >> transcript_live.txt
-    SEGS_ONLY=1 python3 $T/vod.py $VOD 1080p60 video.mp4 $((last-30)) $dur >/dev/null 2>&1
+    echo "WORK transcribe $((last+1)) $dur"
+    rm -f new.txt
+    if nice -n 10 python3 $T/stt.py audio.wav new.txt $((last+1)) $dur > stt_err.txt 2>&1; then cat new.txt >> transcript_live.txt
+    else echo "ERROR transcribe: $(tail -1 stt_err.txt | cut -c1-150)"; fi
+    [ "${LIVE_VIDEO:-1}" = "1" ] && SEGS_ONLY=1 python3 $T/vod.py $VOD 1080p60 video.mp4 $((last-30)) $dur >/dev/null 2>&1
     echo "VOD ${dur}s ($((dur/60)) min); transcript up to $(tail -1 transcript_live.txt | cut -c1-8)s; last: $(tail -1 transcript_live.txt | cut -c17-100)"
   else
     echo "VOD ${dur}s — no new audio (stream ended?)"

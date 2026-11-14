@@ -27,13 +27,19 @@ DONAT = re.compile(r"(?i)(спасибо за донат|первый донат
 def stem(w): return w[:6]
 def words(t): return [stem(w) for w in re.findall(r"[а-яёa-z0-9]+", t.lower()) if len(w) > 2 and w not in STOP]
 
+def is_hum(t):
+    """humming / «ооооо» / «бррррр» / «рэс, рэс, рэс…» — not speech (no backtracking regex)"""
+    s = re.sub(r"\W", "", t.lower())
+    if len(s) >= 10 and len(set(s)) <= 3: return True
+    toks = [w for w in re.split(r"[\s,.!?-]+", t.lower()) if w]
+    return len(toks) >= 6 and max(toks.count(w) for w in set(toks)) / len(toks) > 0.7
 def load(path, a=0, b=1e9):
     out = []
     for l in open(path, encoding="utf-8"):
         m = re.match(r"\s*([\d.]+)-\s*([\d.]+)\s(.*)", l)
         if not m: continue
         s, e, t = float(m[1]), float(m[2]), m[3].strip()
-        if a <= s <= b and t and not re.fullmatch(r"(\w+[-,\s]*)\1{6,}", t): out.append((s, e, t))
+        if a <= s <= b and t and not is_hum(t): out.append((s, e, t))
     out.sort(); dedup = []
     for x in out:                                                       # batched whisper can repeat a line
         if dedup and abs(dedup[-1][0] - x[0]) < 1.0 and dedup[-1][2][:20] == x[2][:20]: continue

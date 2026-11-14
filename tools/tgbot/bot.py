@@ -77,19 +77,34 @@ def run(cmd, cwd=None, env=None, timeout=None, tail=15):
     blog("run", cmd=c[:400], rc=p.returncode, sec=round(time.time() - t0, 1), tail=out[-(tail if p.returncode else 4):])
     return p.returncode == 0, "\n".join(out[-tail:])
 
+# ----------------------------------------------------------------- job queue (heavy jobs run one by one, never refused)
+import queue as _queue
+JOBQ = _queue.Queue(); QLIST = []                                       # QLIST: names waiting (for status)
+def activity(text):
+    """what the bot is doing right now — shown in every status/report"""
+    S["now"] = {"what": text, "since": time.time()}; save(); blog("activity", what=text)
 def bg(name, fn, *a):
-    """one heavy job at a time; reports errors to the owner"""
-    if S.get("busy") and S["busy"] != name and THREADS.get(S["busy"]) and THREADS[S["busy"]].is_alive():
-        return say(f"⏳ Уже идёт: <b>{esc(S['busy'])}</b>. Дождись или /status.")
-    def wrap():
-        S["busy"] = name; save()
-        try: fn(*a)
+    """put a heavy job into the queue; the owner always sees its place in line"""
+    if S.get("busy"):
+        say(f"🕐 Поставил в очередь: <b>{esc(name)}</b> (сейчас идёт: {esc(S['busy'])}; впереди {len(QLIST)}).")
+    QLIST.append(name); JOBQ.put((name, fn, a)); blog("queued", job=name, ahead=len(QLIST) - 1)
+def _worker():
+    while True:
+        name, fn, a = JOBQ.get()
+        try: QLIST.remove(name)
+        except ValueError: pass
+        S["busy"] = name; save(); activity(name); t0 = time.time()
+        try: fn(*a); blog("job_done", job=name, sec=round(time.time() - t0))
         except Exception as ex:
             log(traceback.format_exc()); blog("error", job=name, err=str(ex)[:2000], tb=traceback.format_exc()[-3000:])
-            say(f"❌ {esc(name)}: <code>{esc(str(ex)[:800])}</code>")
-        finally: S["busy"] = ""; save()
-    th = threading.Thread(target=wrap, daemon=True); THREADS[name] = th; th.start()
+            say(f"❌ <b>{esc(name)}</b> — ошибка: <code>{esc(str(ex)[:700])}</code>\nНичего не сломано, остальное продолжаю. Повторить — той же командой.")
+        finally: S["busy"] = ""; S["now"] = {}; save()
+threading.Thread(target=_worker, daemon=True).start()
 THREADS = {}
+def need_disk(gb, what):
+    free = shutil.disk_usage(WORK).free / 2**30
+    if free < gb:
+        raise RuntimeError(f"мало места на диске: {free:.1f} ГБ, а для «{what}» нужно ~{gb:.0f} ГБ. Удали старые нарезки (/clean) и повтори.")
 
 # ----------------------------------------------------------------- paths / jobs
 def vdir(vod=None):
@@ -153,11 +168,47 @@ HELP = """<b>Двойная резка — бот</b> 🧪 бета (основ�
 /status · /stop — остановить слежение"""
 
 def cmd_start(m, a): say(HELP)
-def cmd_status(m, a):
-    j = S.get("job"); jd = jload(j) if j else None
-    say(f"VOD: <b>{esc(S.get('vod', '—'))}</b> · слежение: {'да' if S.get('watch_pid') and pid_alive(S['watch_pid']) else 'нет'}\n"
-        f"Занят: {esc(S.get('busy') or 'нет')} · нарезка: {esc(j or '—')} ({esc(jd.get('stage') if jd else '')})\n"
-        f"Studio: {'работает' if panel_up() else 'выключена'} · диск: {disk()}")
+STAGE_RU = {"queued": "в очереди", "review": "👀 ЖДЁТ ТЕБЯ: проверь моменты → /go", "preview": "✅ превью готово → обложка/название/публикация",
+            "published": "📤 опубликовано", "shelf": "на полке (шортс)"}
+def live_state():
+    """parse live_update.sh log → (state text, error or '')"""
+    if not S.get("vod"): return "", ""
+    lf = os.path.join(vdir(), "live.log")
+    if not os.path.exists(lf): return "", ""
+    ls = [l for l in open(lf).read().splitlines() if l.strip()][-4:]
+    last = ls[-1] if ls else ""
+    err = next((l if l.startswith("ERROR") else "ERROR " + l for l in reversed(ls) if l.startswith("ERROR") or "failed" in l), "")
+    if last.startswith("WORK transcribe"):
+        a, b = map(float, last.split()[2:4]); return f"расшифровываю новый кусок эфира {fmt(a)}→{fmt(b)}", ""
+    if last.startswith("VOD"): return "жду следующий кусок записи (каждые 4 мин)", ""
+    if "no new audio" in last: return "запись не растёт — стрим, похоже, закончился", ""
+    return "", err
+def status_text():
+    jobs_root = os.path.join(WORK, "jobs"); out = []
+    tr = os.path.join(vdir(), "transcript_live.txt") if S.get("vod") else ""
+    upto = 0.0
+    if tr and os.path.exists(tr) and os.path.getsize(tr):
+        try: upto = float(open(tr).read().strip().splitlines()[-1].split("-")[0])
+        except Exception: pass
+    now = S.get("now") or {}
+    lst, lerr = live_state()
+    out.append(f"🎬 Стрим: <b>{esc(S.get('vod', '—'))}</b>" + (" · 🔴 нарезка эфира ВКЛ" if S.get("live_on") else "") + (f" · расшифровано до {fmt(upto)}" if upto else ""))
+    doing = now.get("what") or lst or "ничего — жду команду"
+    out.append(f"🔄 Сейчас: {esc(doing)}" + (f" ({int((time.time() - now['since']) / 60)} мин)" if now.get("since") else ""))
+    if lerr: out.append(f"⚠️ Проблема: {esc(lerr[6:])}")
+    if QLIST: out.append("🕐 Очередь: " + ", ".join(esc(x) for x in QLIST))
+    js = sorted(os.listdir(jobs_root))[-6:] if os.path.isdir(jobs_root) else []
+    if js:
+        out.append("✂️ Нарезки:")
+        for j in js:
+            jd = jload(j) or {}
+            out.append(f"  • {j} {fmt(jd.get('from', 0))}–{fmt(jd.get('to', 0))} — {esc(STAGE_RU.get(jd.get('stage'), jd.get('stage', '')))}" + (f" {jd['link']}" if jd.get("link") else ""))
+    else: out.append("✂️ Нарезок пока нет")
+    todo = [j for j in js if (jload(j) or {}).get("stage") in ("review", "preview")]
+    out.append("👉 От тебя: " + ("; ".join(f"{j} — {STAGE_RU[(jload(j) or {})['stage']]}" for j in todo) if todo else "ничего, работаю сам"))
+    out.append(f"💾 Диск: {disk()} · Studio: {'вкл' if panel_up() else 'выкл'}")
+    return "\n".join(out)
+def cmd_status(m, a): say(status_text())
 def pid_alive(p):
     try: os.kill(p, 0); return True
     except Exception: return False
@@ -188,6 +239,16 @@ def watch_reporter(d):
         for l in new.splitlines():
             if "no new audio" in l: say("📴 Похоже, стрим закончился (VOD не растёт). /map — темы, /stop — выключить слежение.")
             elif l.startswith("VOD"): S["live_last"] = l; save()
+def cmd_clean(m, a):
+    """free disk: remove sources of published jobs and old VOD segments"""
+    freed = 0
+    for j in os.listdir(os.path.join(WORK, "jobs")) if os.path.isdir(os.path.join(WORK, "jobs")) else []:
+        jd = jload(j) or {}
+        if jd.get("stage") == "published":
+            for f in ("ev.mp4", "out.mp4", "src.mp4"):
+                p_ = os.path.join(jdir(j), f)
+                if os.path.exists(p_): freed += os.path.getsize(p_); os.remove(p_)
+    say(f"🧹 Освобождено {freed / 2**30:.1f} ГБ. {disk()}")
 def cmd_stop(m, a):
     S["live_on"] = False
     p = S.get("watch_pid")
@@ -199,12 +260,12 @@ def cmd_transcribe(m, a):
     bg("расшифровка", cmd_transcribe_job)
 def cmd_transcribe_job():
     if True:
-        d = vdir(); say("🎧 Качаю звук VOD…")
+        d = vdir(); need_disk(2, "расшифровка"); activity("качаю звук стрима"); say("🎧 Качаю звук VOD…")
         ok, out = run(["python3", os.path.join(T, "vod.py"), S["vod"], "Audio_Only", "audio.mp4"], cwd=d, timeout=3600)
         if not ok: return say(f"❌ звук: <code>{esc(out)}</code>")
         run("ffmpeg -loglevel error -y -i audio.mp4 -ac 1 -ar 16000 audio.wav", cwd=d)
         dur = float(run("ffprobe -v error -show_entries format=duration -of csv=p=0 audio.wav", cwd=d)[1] or 0)
-        say(f"📝 Расшифровка {fmt(dur)} (≈{int(dur / 27 / 60) + 1} мин)…")
+        activity(f"расшифровка {fmt(dur)} (≈{int(dur / 27 / 60) + 1} мин)"); say(f"📝 Расшифровка {fmt(dur)} (≈{int(dur / 27 / 60) + 1} мин)…")
         ok, out = run(["python3", os.path.join(T, "stt.py"), "audio.wav", "transcript_live.txt"], cwd=d, timeout=8 * 3600)
         say("✅ Расшифровка готова." if ok else f"❌ <code>{esc(out)}</code>")
 
@@ -240,11 +301,10 @@ def cut_do(m, a):
     if not r: return say("Формат: /cut 12  ·  /cut 5-9 (склеить темы)  ·  /cut 94-110 (минуты)  ·  /cut 1:34:00-1:50:30\n"
                          "Длинная игра → лучшие моменты: /cut 168-384 25  (25 = длина ролика в минутах)")
     if not tgt and r[1] - r[0] > 45 * 60: tgt = 25
-    j = time.strftime("%m%d_%H%M%S"); S["job"] = j; save()
-    jsave(j, {"vod": S["vod"], "from": r[0], "to": r[1], "stage": "queued", "kind": "main", "target": tgt})
-    bg(f"нарезка {j}", main_job, j)
+    start_cut(r[0], r[1], tgt)
 def main_job(j):
     jd = jload(j); d = jdir(j); vd = vdir(jd["vod"]); a, b = jd["from"], jd["to"]
+    need_disk((b - a) / 3600 * 4 + 2, "нарезка"); activity(f"нарезка {j}: качаю видео 1080p60 {fmt(a)}–{fmt(b)}")
     say(f"✂️ Нарезка <b>{j}</b>: {fmt(a)}–{fmt(b)} ({(b - a) / 60:.1f} мин)\n1/6 видео 1080p60…")
     segs = os.path.join(vd, "video.mp4.segs")
     ok, out = run(["python3", os.path.join(T, "vod.py"), jd["vod"], "1080p60", os.path.join(vd, "video.mp4"), str(a - 20), str(b + 20)],
@@ -253,6 +313,7 @@ def main_job(j):
     ok, out = run(["python3", os.path.join(T, "vodcut.py"), jd["vod"], "1080p60", segs, str(a - 3), str(b + 3), "ev.mp4"], cwd=d, timeout=3600)
     if not ok: raise RuntimeError("vodcut: " + out)
     off = float(re.findall(r"offset ([\d.]+)", out)[-1]); jd["offset"] = off
+    activity(f"нарезка {j}: составляю план")
     say("2/6 план монтажа по правилам (тишина/пустые донаты/гудение — вон; начало и конец события целиком)…")
     ok, out = run(["python3", os.path.join(T, "auto_plan.py"), os.path.join(vd, "transcript_live.txt"), str(a), str(b), str(off), "plan.json"]
                   + (["--target", str(jd["target"])] if jd.get("target") else []), cwd=d)
@@ -265,7 +326,7 @@ def show_moments(j):
     kept = sum(c["e"] - c["s"] for c in plan["clips"]) / 60
     lines = [f"<b>{i}.</b> {fmt(mo['from'])}–{fmt(mo['to'])} {'⚠️ ' + esc('; '.join(mo['risk'])) if mo['risk'] else ''}\n«{esc(mo['text'][:170])}»"
              for i, mo in enumerate(plan.get("moments", []), 1)]
-    say(f"🧾 <b>План {j}</b>: {kept:.1f} мин, моментов {len(lines)} (время — по стриму)\n\n" + "\n\n".join(lines) +
+    say(f"🧾 <b>План нарезки {j} готов</b> — {kept:.1f} мин из {len(lines)} моментов (время — по стриму).\n👉 Проверь: лишнее убери /drop №, недостающее добавь /add, потом «▶️ Рендер».\n\n" + "\n\n".join(lines) +
         "\n\n/drop № — убрать момент · /add 1:34:10-1:36:00 — добавить кусок стрима · /go — рендер",
         [[{"text": "▶️ Рендер", "callback_data": f"go:{j}"}]])
 
@@ -302,22 +363,25 @@ def cmd_go(m, a):
 
 def render_job(j):
     jd = jload(j); d = jdir(j)
+    activity(f"нарезка {j}: ищу промокоды в чате")
     say("3/6 ищу промокоды FONBET в чате (блюр только окошка сообщения)…")
     ok, out = run(["python3", os.path.join(T, "chat_promo_scan.py"), "ev.mp4", "--out", "promo.json"], cwd=d, timeout=4 * 3600)
     plan = json.load(open(os.path.join(d, "plan.json")))
     promo = json.load(open(os.path.join(d, "promo.json"))) if ok else []
     for c in plan["clips"]: c["blur"] = [x for x in c["blur"] if len(x) == 4] + [p for p in promo if p[5] > c["s"] and p[4] < c["e"]]
     json.dump(plan, open(os.path.join(d, "plan.json"), "w"), ensure_ascii=False)
+    activity(f"нарезка {j}: рендер 1080p60")
     say(f"   промо-сообщений в чате: {len(promo)}\n4/6 рендер 1080p60 (без зума, вебка не блюрится)…")
     ok, out = run(["python3", os.path.join(T, "edit2.py"), "ev.mp4", "plan.json", "out.mp4", "2"], cwd=d, timeout=6 * 3600)
     if not ok: raise RuntimeError("рендер: " + out)
+    activity(f"нарезка {j}: интро и тайм-коды")
     say("5/6 интро «Ретро-ТВ» + тайм-коды…")
     ok, out = run(["bash", os.path.join(T, "add_intro.sh"), "out.mp4", "final.mp4"], cwd=d, timeout=3600)
     if not ok: raise RuntimeError("интро: " + out)
     jd["chapters"] = [c for c in plan["chapters"] if any(cl["s"] - 0.6 <= c["src"] <= cl["e"] for cl in plan["clips"])] or \
                      [{"src": plan["clips"][0]["s"] + 0.5, "title": "Начало"}]
     jd["stage"] = "preview"; jsave(j, jd)
-    say("6/6 превью…"); make_preview(d, "final.mp4", "preview.mp4")
+    activity(f"нарезка {j}: превью"); say("6/6 превью…"); make_preview(d, "final.mp4", "preview.mp4")
     send_file(os.path.join(d, "preview.mp4"), f"Превью {j}", "video")
     refs(d, jd)
     say(f"✅ Готово: <b>{j}</b>. Дальше:\n• /title НАЗВАНИЕ (формат «КАПС-ХУК - суть / РЕАКЦИЯ T2x2»)\n• /chapters — проверить тайм-коды, /chapter № название — поправить\n"
@@ -601,50 +665,58 @@ def mode_live():
         f"VOD {rec['id']} (уже {fmt(rec['lengthSeconds'])}).\n<b>Составить нарезки идущего стрима?</b>\n"
         "Каждые 4 мин пришлю, что нарезается; остановить — кнопкой.", live_start, rec["id"], warn=warn)
 def live_start(vod):
-    S["vod"] = vod; S["live_on"] = True; S["live_proposed"] = []; save(); vdir(vod)
-    d = vdir(); open(os.path.join(d, "transcript_live.txt"), "a").close()
-    p = S.get("watch_pid")
-    if not (p and pid_alive(p)):
-        pr = subprocess.Popen(["bash", os.path.join(T, "live_update.sh"), vod, d], env=dict(os.environ, LIVE_EVERY="240"),
-                              stdout=open(os.path.join(d, "live.log"), "a"), stderr=subprocess.STDOUT, start_new_session=True)
-        S["watch_pid"] = pr.pid; save()
-    blog("live_start", vod=vod)
-    say("▶️ Нарезка эфира запущена. Первый отчёт через ~4 мин (сначала догоняю расшифровку с начала стрима).",
+    S["vod"] = vod; S["live_on"] = True; S["live_proposed"] = []; S.setdefault("live_auto", True); save(); vdir(vod)
+    blog("live_start", vod=vod); ensure_watch(vod)
+    say("▶️ <b>Нарезка эфира запущена.</b>\nЧто будет дальше:\n1) догоняю расшифровку с начала стрима (≈5–10 мин), потом дописываю каждые 4 мин;\n"
+        "2) каждые 4 мин присылаю отчёт: что делаю, какие темы закончились;\n3) годные законченные темы сам ставлю в нарезку → присылаю план на проверку "
+        "(рендер только после твоего «▶️ Рендер»).\nВопросы можно писать обычным текстом.",
         [[{"text": "⏹ Остановить нарезку эфира", "callback_data": "live:stop"}]])
     threading.Thread(target=live_loop, args=(vod,), daemon=True).start()
+def ensure_watch(vod):
+    p = S.get("watch_pid")
+    if p and pid_alive(p): return
+    d = vdir(vod); open(os.path.join(d, "transcript_live.txt"), "a").close()
+    pr = subprocess.Popen(["bash", os.path.join(T, "live_update.sh"), vod, d], env=dict(os.environ, LIVE_EVERY="240", LIVE_VIDEO="0"),
+                          stdout=open(os.path.join(d, "live.log"), "a"), stderr=subprocess.STDOUT, start_new_session=True)
+    S["watch_pid"] = pr.pid; save(); blog("watch_started", pid=pr.pid)
 def live_stop():
     S["live_on"] = False; save(); cmd_stop(None, ""); blog("live_stop", vod=S.get("vod"))
 def live_loop(vod):
-    d = vdir(vod); tr = os.path.join(d, "transcript_live.txt"); last_len = -1
+    d = vdir(vod); tr = os.path.join(d, "transcript_live.txt"); last_err = ""
     while S.get("live_on") and S.get("vod") == vod:
         time.sleep(240)
         if not S.get("live_on"): break
+        ensure_watch(vod)                                                  # restart the watcher if it died
         st, vids = twitch_info(2); rec = next((v for v in vids if v["id"] == vod), {})
-        lines = sum(1 for _ in open(tr)) if os.path.exists(tr) else 0
-        upto = 0.0
-        if lines:
-            try: upto = float(open(tr).read().strip().splitlines()[-1].split("-")[0])
-            except Exception: pass
         ev = []
-        if lines > 50:
+        if os.path.exists(tr) and os.path.getsize(tr) > 2000:
             run(["python3", os.path.join(T, "auto_events.py"), tr, "--json", os.path.join(d, "events.json")])
             try: ev = json.load(open(os.path.join(d, "events.json")))
             except Exception: ev = []
-        done = ev[:-1]                                                     # the last topic is still going on
+        done = ev[:-1]
         good = [e for e in done if e["score"] >= float(os.environ.get("LIVE_MIN_SCORE", 3.8)) and 4 <= e["dur_min"] <= 45 and not e.get("risk")]
         new = [e for e in good if e["start"] not in S.get("live_proposed", [])]
-        jobs = [f"{j}: {(jload(j) or {}).get('stage')}" for j in sorted(os.listdir(os.path.join(WORK, 'jobs')))[-5:]] if os.path.isdir(os.path.join(WORK, "jobs")) else []
-        blog("live_tick", vod=vod, vod_len=rec.get("lengthSeconds"), transcript_upto=upto, topics=len(ev), good=len(good), new=len(new), live=bool(st))
-        txt = (f"📡 <b>Эфир</b>: {'идёт' if st else 'ЗАКОНЧИЛСЯ'} · VOD {fmt(rec.get('lengthSeconds', 0))} · расшифровано до {fmt(upto)}\n"
-               f"Тем найдено: {len(ev)} (завершённых {len(done)}, годных в нарезку {len(good)})"
-               + ("\n\n<b>Новые темы для нарезки:</b>\n" + "\n".join(f"• {fmt(e['start'])}–{fmt(e['end'])} ({e['dur_min']} мин) ⭐{e['score']} «{esc(e['first'][:90])}»" for e in new) if new else "")
-               + ("\n\nНарезки: " + "; ".join(esc(x) for x in jobs) if jobs else ""))
-        kb = [[{"text": f"✂️ {fmt(e['start'])} ({e['dur_min']}м)", "callback_data": f"cut:{fmt(e['start'])}-{fmt(e['end'])}"}] for e in new[:4]]
+        lst, lerr = live_state()
+        blog("live_tick", vod=vod, vod_len=rec.get("lengthSeconds"), topics=len(ev), good=len(good), new=len(new), live=bool(st), state=lst, err=lerr)
+        head = f"📡 <b>Эфир {'идёт' if st else 'ЗАКОНЧИЛСЯ'}</b> · запись {fmt(rec.get('lengthSeconds', 0))} · тем: {len(ev)} (законченных {len(done)}, годных {len(good)})"
+        body = status_text()
+        if new:
+            body += "\n\n🆕 <b>Новые темы</b>" + (" — ставлю в нарезку:" if S.get("live_auto") else " — нажми ✂️, чтобы нарезать:") + "\n" + \
+                    "\n".join(f"• {fmt(e['start'])}–{fmt(e['end'])} ({e['dur_min']} мин) ⭐{e['score']} «{esc(e['first'][:90])}»" for e in new)
+        kb = [] if S.get("live_auto") else [[{"text": f"✂️ {fmt(e['start'])} ({e['dur_min']}м)", "callback_data": f"cut:{fmt(e['start'])}-{fmt(e['end'])}"}] for e in new[:4]]
         kb.append([{"text": "⏹ Остановить нарезку эфира", "callback_data": "live:stop"}])
-        say(txt, kb)
+        say(head + "\n" + body, kb)
         S.setdefault("live_proposed", []).extend(e["start"] for e in new); save()
+        if S.get("live_auto"):
+            for e in new: start_cut(e["start"], e["end"], 0, quiet=True)
+        if lerr and lerr != last_err: blog("live_problem", err=lerr)
+        last_err = lerr
         if not st:
-            S["live_on"] = False; save(); say("🏁 Стрим закончился. /map — все темы, нарезка по кнопкам."); break
+            S["live_on"] = False; save(); say("🏁 Стрим закончился. Темы: /map. Нарезки в работе — в /status."); break
+def start_cut(a, b, tgt, quiet=False):
+    j = time.strftime("%m%d_%H%M%S") + f"_{int(a)}"; S["job"] = j; save()
+    jsave(j, {"vod": S["vod"], "from": a, "to": b, "stage": "queued", "kind": "main", "target": tgt})
+    bg(f"нарезка {j}", main_job, j)
 
 def mode_past():
     st, vids = twitch_info(7)
@@ -680,11 +752,58 @@ def cmd_logs(m, a):
     z = os.path.join(WORK, "logs.zip"); run(["zip", "-j", "-q", z] + [os.path.join(LOGD, f) for f in files])
     send_file(z, f"Логи бота за {len(files)} дн.")
 
+# ----------------------------------------------------------------- free text → assistant (rules + local AI)
+sys.path.insert(0, os.path.dirname(__file__))
+import assist
+def recent_log(n=25):
+    f = os.path.join(LOGD, time.strftime("%Y-%m-%d") + ".jsonl")
+    if not os.path.exists(f): return []
+    out = []
+    for l in open(f).read().splitlines()[-200:]:
+        try: r = json.loads(l)
+        except Exception: continue
+        if r["kind"] in ("out", "run"): continue
+        out.append({k: (str(v)[:160]) for k, v in r.items() if k not in ("tb",)})
+    return out[-n:]
+def facts():
+    evs = []
+    try: evs = json.load(open(os.path.join(vdir(), "events.json")))[:14] if S.get("vod") else []
+    except Exception: pass
+    return {"статус": re.sub(r"<[^>]+>", "", status_text()),
+            "темы_стрима": [{"№": i + 1, "время": f"{fmt(e['start'])}-{fmt(e['end'])}", "мин": e["dur_min"], "оценка": e["score"],
+                             "начало": e["first"][:120]} for i, e in enumerate(evs)],
+            "последние_события": recent_log(12)}
+def on_text(m, txt):
+    def work():
+        try:
+            evs, lines = [], []
+            if S.get("vod"):
+                tr = os.path.join(vdir(), "transcript_live.txt")
+                try: evs = json.load(open(os.path.join(vdir(), "events.json")))
+                except Exception: evs = []
+                if os.path.exists(tr): lines = assist.AE.load(tr)
+            if not any(re.search(rx, txt.lower()) for rx, _ in assist.STATE_RULES) and assist.MODEL:
+                say("🤖 Думаю…")
+            reply, k, cmd = assist.answer(txt, evs, lines, facts())
+            blog("assist", q=txt[:300], rule=k, reply=(reply or "")[:500], cmd=cmd)
+            if k == "status": return say(status_text())
+            if k == "problem":
+                lst, lerr = live_state(); errs = [r for r in recent_log(80) if r.get("kind") == "error"][-2:]
+                msg = (f"⚠️ Последняя проблема: {esc(lerr[6:])}\n" if lerr else "") + "".join(f"❌ {esc(e.get('job', ''))}: {esc(e.get('err', ''))}\n" for e in errs)
+                return say((msg or "Ошибок не вижу.\n") + "\n" + status_text())
+            if k == "help": return say(BETA + "\n\n" + HELP, MENU)
+            if k == "topics": return cmd_map(None, "")
+            if cmd: ask(f"🤖 {esc(reply)}\nВыполнить <code>{esc(cmd)}</code>?", lambda c=cmd: handle({"message": {"from": {"id": S["owner"]}, "text": c}}))
+            else: say(f"🤖 {esc(reply)}")
+        except Exception as ex:
+            blog("error", where="assist", err=str(ex)[:500], tb=traceback.format_exc()[-1500:]); say("🤖 Не смог ответить (ошибка помощника). /status — что происходит.")
+    threading.Thread(target=work, daemon=True).start()
+
 CMDS = {"start": cmd_start, "menu": cmd_start, "help": cmd_help, "logs": cmd_logs, "live": lambda m, a: mode_live(), "past": lambda m, a: mode_past(), "status": cmd_status, "vod": cmd_vod, "watch": cmd_watch, "stop": cmd_stop,
         "transcribe": cmd_transcribe, "map": cmd_map, "cut": cmd_cut, "title": cmd_title, "chapters": cmd_chapters,
         "chapter": cmd_chapter, "desc": cmd_desc, "publish": cmd_publish, "jobs": cmd_jobs, "job": cmd_job, "short": cmd_short,
         "stitle": cmd_stitle, "shorts": cmd_shorts, "pubshorts": cmd_pubshorts, "cookies": cmd_cookies, "panel": cmd_panel,
-        "limits": cmd_limits, "pair": cmd_pair, "drop": cmd_drop, "add": cmd_add, "go": cmd_go}
+        "limits": cmd_limits, "pair": cmd_pair, "clean": cmd_clean, "drop": cmd_drop, "add": cmd_add, "go": cmd_go}
 
 def handle(u):
     if "callback_query" in u:
@@ -713,9 +832,12 @@ def handle(u):
         f = CMDS.get(c)
         if f: f(m, a.strip())
         else: say("Не знаю такую команду. /help")
+    elif txt.strip():
+        on_text(m, txt.strip())
 
 def main():
-    log("bot started; work dir", WORK); blog("start", work=WORK, owner=bool(S.get("owner")))
+    log("bot started; work dir", WORK); blog("start", work=WORK, owner=bool(S.get("owner")), ai=bool(assist.MODEL))
+    assist.preload()
     tg("setMyCommands", commands=[{"command": c, "description": d} for c, d in [
         ("status", "что происходит"), ("vod", "выбрать VOD/канал"), ("watch", "следить за стримом"), ("transcribe", "расшифровать VOD"),
         ("start", "меню: эфир / прошедший стрим"), ("live", "нарезать идущий эфир"), ("past", "нарезать прошедший стрим"), ("logs", "логи бота"),
