@@ -132,5 +132,14 @@ jobs:
         env:
           SLUG: ${{ vars.VIBE_SLUG || 'noizoz-bot' }}
         run: |
-          sleep 15
-          curl -s -o /dev/null -w "HTTP %{http_code}\n" -m 60 "https://$SLUG.thevibehosting.com/" || true
+          # Будим контейнер публичными запросами: supervisor запускает run.sh на первом запросе,
+          # холодный старт (venv + инициализация вебхука) занимает до ~90 с. 404 на / — это норма
+          # (в режиме webhook обслуживается только секретный путь), 502 — ещё спит/поднимается.
+          code=000
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" -m 20 "https://$SLUG.thevibehosting.com/" || echo 000)
+            echo "wake $i: HTTP $code"
+            case "$code" in 200|404|401) echo "бот поднялся (HTTP $code)"; exit 0;; esac
+            sleep 3
+          done
+          echo "WARNING: бот не поднялся за ~90 с (последний код $code)"; exit 1
