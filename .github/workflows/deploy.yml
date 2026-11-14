@@ -105,28 +105,25 @@ jobs:
           [ -d venv ] || python3 -m venv venv
           venv/bin/pip install -q --upgrade pip >/dev/null
           venv/bin/pip install -q -r requirements.txt
+          # run.sh — простой foreground-запуск, как требует supervisor Vibe (без перенаправления вывода:
+          # это ломало детект приложения). Диагностику старта ловим отдельным разовым запуском ниже.
           cat > /root/run.sh <<'SH'
           #!/usr/bin/env bash
           cd /root/bot
           set -a; . ./.env; set +a
-          exec /root/bot/venv/bin/python bot.py >> /root/bot/bot.log 2>&1
+          exec /root/bot/venv/bin/python bot.py
           SH
           chmod +x /root/run.sh
-          : > /root/bot/bot.log
           echo "=== ключи в .env (только имена) ==="; grep -oE '^[A-Z_]+=' /root/bot/.env | tr -d '=' || true
-          # перезапуск: останавливаем любой процесс бота, supervisor поднимет run.sh заново
-          pkill -f '[b]ot\.py' || true
-          ok=""
-          for i in $(seq 1 20); do
-            sleep 2
-            if curl -s -o /dev/null -m 5 "http://127.0.0.1:80/" 2>/dev/null; then ok=1; break; fi
-            if pgrep -f '[v]env/bin/python bot\.py' >/dev/null; then ok=1; fi
-          done
-          sleep 4
-          echo "=== bot.log (последние строки) ==="; tail -30 /root/bot/bot.log 2>/dev/null || echo "(лог пуст)"
-          if curl -s -o /dev/null -m 5 "http://127.0.0.1:80/"; then echo "deployed, bot отвечает на :80"; else echo "WARNING: бот не отвечает на :80 — см. лог выше"; fi
-          EOF
-          rm -f "$K/ssh_key"
+          # Разовая диагностика старта: ловим ошибки импорта/конфига до того, как доверим supervisor
+          pkill -f '[b]ot\.py' || true; sleep 2
+          timeout 25 bash -c 'cd /root/bot; set -a; . ./.env; set +a; /root/bot/venv/bin/python bot.py' > /root/bot/startup.log 2>&1 &
+          DIAG=$!; sleep 20
+          echo "=== startup.log (разовый запуск) ==="; tail -25 /root/bot/startup.log 2>/dev/null || echo "(пусто)"
+          up=""; curl -s -o /dev/null -m 5 "http://127.0.0.1:80/" && up=1
+          echo "бот на :80 при разовом запуске: ${up:-нет}"
+          kill $DIAG 2>/dev/null; pkill -f '[b]ot\.py' || true; sleep 2
+          # supervisor сам поднимет run.sh; окончательную проверку делает шаг Check через публичный адрес
 
       - name: Check
         env:
