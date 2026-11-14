@@ -44,10 +44,13 @@ def cos(c1, c2):
     num = sum(c1[k] * c2.get(k, 0) for k in c1); den = math.sqrt(sum(v * v for v in c1.values()) * sum(v * v for v in c2.values()))
     return num / den if den else 0.0
 
-def boundaries(L, win=90.0):
+import os
+P = {k: float(os.environ.get("AE_" + k, v)) for k, v in dict(WIN=150, COS=0.08, SIL=15, STEP=30, MINW=25).items()}
+def boundaries(L, win=None):
+    win = win or P["WIN"]
     cuts = set()
     for i in range(1, len(L)):
-        if L[i][0] - L[i - 1][1] > 25: cuts.add(i)
+        if L[i][0] - L[i - 1][1] > P["SIL"]: cuts.add(i)
         if SWITCH.search(L[i][2]): cuts.add(i)
     # lexical drop every ~30 s
     i = 0
@@ -55,9 +58,9 @@ def boundaries(L, win=90.0):
         t = L[i][0]
         prev = collections.Counter(w for s, e, x in L if t - win <= s < t for w in words(x))
         nxt = collections.Counter(w for s, e, x in L if t <= s < t + win for w in words(x))
-        if sum(prev.values()) > 25 and sum(nxt.values()) > 25 and cos(prev, nxt) < 0.06: cuts.add(i)
+        if sum(prev.values()) > P["MINW"] and sum(nxt.values()) > P["MINW"] and cos(prev, nxt) < P["COS"]: cuts.add(i)
         j = i
-        while j < len(L) and L[j][0] < t + 30: j += 1
+        while j < len(L) and L[j][0] < t + P["STEP"]: j += 1
         i = max(j, i + 1)
     return sorted(cuts)
 
@@ -103,3 +106,20 @@ if __name__ == "__main__":
     if x.json: json.dump(ev, open(x.json, "w"), ensure_ascii=False, indent=1)
     for i, e in enumerate(ev, 1):
         print(f"#{i} {int(e['start']//60)}–{int(e['end']//60)} мин ({e['dur_min']} мин) score {e['score']} | {', '.join(e['keywords'][:5])}\n   «{e['first'][:150]}»")
+
+def refine(L, a, b, win=20.0, thr=None):
+    """trim the edges of a chosen topic: drop leading/trailing ~20 s windows that don't share words with the topic core
+    (middle 60 %). Used by /cut after the owner picks topics (eval_cut T1)."""
+    thr = thr if thr is not None else float(os.environ.get("AE_RTHR", 0.05))
+    part = [l for l in L if a <= l[0] < b]
+    if len(part) < 10: return a, b
+    n = len(part); core = collections.Counter(w for _, _, t in part[n // 5: n - n // 5] for w in words(t))
+    def ok(s0):
+        c = collections.Counter(w for s, e, t in part if s0 <= s < s0 + win for w in words(t))
+        return sum(c.values()) >= 4 and cos(c, core) >= thr
+    na = a
+    while na < a + (b - a) * 0.25 and not ok(na): na += win / 2
+    nb = b
+    while nb > b - (b - a) * 0.25 and not ok(nb - win): nb -= win / 2
+    sa = next((s for s, e, t in part if s >= na), a); sb = max((e for s, e, t in part if e <= nb), default=b)
+    return (sa, sb) if sb - sa > 60 else (a, b)

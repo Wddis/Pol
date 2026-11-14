@@ -238,6 +238,7 @@ def main_job(j):
     ok, out = run(["python3", os.path.join(T, "auto_plan.py"), os.path.join(vd, "transcript_live.txt"), str(a), str(b), str(off), "plan.json"]
                   + (["--target", str(jd["target"])] if jd.get("target") else []), cwd=d)
     if not ok: raise RuntimeError("план: " + out)
+    shutil.copy(os.path.join(d, "plan.json"), os.path.join(d, "plan_auto.json"))   # for learning from the owner's edits
     jd["stage"] = "review"; jsave(j, jd); show_moments(j)
 
 def show_moments(j):
