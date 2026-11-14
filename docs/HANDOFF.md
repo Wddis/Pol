@@ -1,6 +1,6 @@
 # ПЕРЕДАЧА СЕССИИ — с чего начать, где мы, что умеем (обновлено 12.11.2026, ~18:00 UTC)
 
-Читать ПЕРВЫМ в новой сессии. Дальше — `docs/STATUS.md` (детальный статус), правила — `docs/montage-style.md`,
+Читать ПЕРВЫМ в новой сессии. **Telegram-бот всего процесса — `tools/tgbot/README.md`** (14.11, без ИИ-ключа, cookies владельца). Дальше — `docs/STATUS.md` (детальный статус), правила — `docs/montage-style.md`,
 `docs/playbook-vod.md`, `docs/no-yellow-card.md`, `docs/youtube-rules.md`, `docs/whisper.md`,
 публикация — `docs/publishing-methods.md`, **тайм-коды в описании (обязательно) — `docs/timecodes.md`**, интро — `assets/intro/README.md` (основное с 12.11 вечер — **«Ретро-ТВ»**).
 
