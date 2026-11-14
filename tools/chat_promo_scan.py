@@ -23,27 +23,41 @@ TIME = re.compile(r"^\s*\d{1,2}[:.]\d{2}")
 from rapidocr_onnxruntime import RapidOCR
 ocr = RapidOCR()
 
-def maroon_score(img):
+def maroon_mask(img):
     r, g, b = img[..., 0].astype(int), img[..., 1].astype(int), img[..., 2].astype(int)
-    m = (r > 45) & (r < 95) & (g > 25) & (g < 55) & (b > 30) & (b < 65) & (r - g > 12) & (r > b)
-    return int(m.sum())
+    return (r > 45) & (r < 95) & (g > 25) & (g < 55) & (b > 30) & (b < 65) & (r - g > 12) & (r > b)
+def maroon_score(img): return int(maroon_mask(img).sum())
+
+def snap_x(img, y0, y1, xs):
+    """horizontal bounds of the message box INSIDE the chat frame: the highlighted (maroon) background of the bot's
+    message; fallback — the OCR text extents + small padding. Never the whole crop region (owner 14.11: blur must not
+    stick out of the chat window)."""
+    y0, y1 = max(0, y0), min(img.shape[0], y1)
+    m = maroon_mask(img[y0:y1])
+    if m.size:
+        cols = np.where(m.mean(0) > 0.25)[0]
+        if len(cols) > 40: return int(cols.min()), int(cols.max()) + 1
+    return max(0, min(xs[0]) - 6), min(img.shape[1], max(xs[1]) + 6)
 
 def promo_boxes(img):
     res, _ = ocr(np.ascontiguousarray(img[..., ::-1]))           # BGR for the OCR
     if not res: return []
-    lines = sorted([(min(p[1] for p in b), max(p[1] for p in b), min(p[0] for p in b), t) for b, t, c in res])
+    lines = sorted([(min(p[1] for p in b), max(p[1] for p in b), min(p[0] for p in b), t, max(p[0] for p in b)) for b, t, c in res])
     out = []
-    for i, (y0, y1, x0, t) in enumerate(lines):
+    for i, (y0, y1, x0, t, _x1) in enumerate(lines):
         if not KEY.search(t): continue
         j = i                                                    # go up to the message start («HH:MM» line)
         while j > 0 and not TIME.match(lines[j][3]) and lines[j][0] - lines[j - 1][1] < 25: j -= 1
         k = i                                                    # go down until the next message starts
         while k + 1 < len(lines) and not TIME.match(lines[k + 1][3]) and lines[k + 1][0] - lines[k][1] < 25: k += 1
-        out.append((int(lines[j][0]) - 5, int(lines[k][1]) + 6))
+        ya, yb = int(lines[j][0]) - 5, int(lines[k][1]) + 6
+        xa, xb = snap_x(img, ya, yb, (min(l[2] for l in lines[j:k + 1]), max(l[4] for l in lines[j:k + 1])))
+        out.append((ya, yb, int(xa), int(xb)))
     merged = []
-    for y0, y1 in sorted(out):
-        if merged and y0 <= merged[-1][1]: merged[-1] = (merged[-1][0], max(merged[-1][1], y1))
-        else: merged.append((y0, y1))
+    for y0, y1, x0, x1 in sorted(out):
+        if merged and y0 <= merged[-1][1]:
+            m = merged[-1]; merged[-1] = (m[0], max(m[1], y1), min(m[2], x0), max(m[3], x1))
+        else: merged.append((y0, y1, x0, x1))
     return merged
 
 fr = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-i", a.video, "-vf", f"fps={a.fps},crop={RW}:{RH}:{RX}:{RY}",
@@ -55,13 +69,14 @@ while True:
     t = k / a.fps; k += 1
     img = np.frombuffer(buf, np.uint8).reshape(RH, RW, 3)
     if maroon_score(img) < 1500: continue
-    for y0, y1 in promo_boxes(img):
-        hits.append([RX, RY + max(0, y0), RW, min(RH, y1) - max(0, y0), t - 0.5 / a.fps - 0.05, t + 0.5 / a.fps + 0.05])
+    for y0, y1, x0, x1 in promo_boxes(img):
+        hits.append([RX + x0, RY + max(0, y0), x1 - x0, min(RH, y1) - max(0, y0), t - 0.5 / a.fps - 0.05, t + 0.5 / a.fps + 0.05])
 # merge consecutive samples with near-identical boxes (chat scrolls -> a new box when it moves)
 boxes = []
 for h in hits:
     if boxes and abs(boxes[-1][1] - h[1]) < 12 and abs(boxes[-1][3] - h[3]) < 16 and h[4] <= boxes[-1][5] + 0.05:
-        b = boxes[-1]; y0 = min(b[1], h[1]); y1 = max(b[1] + b[3], h[1] + h[3]); b[1], b[3], b[5] = y0, y1 - y0, h[5]
+        b = boxes[-1]; y0 = min(b[1], h[1]); y1 = max(b[1] + b[3], h[1] + h[3]); x0 = min(b[0], h[0]); x1 = max(b[0] + b[2], h[0] + h[2])
+        b[0], b[1], b[2], b[3], b[5] = x0, y0, x1 - x0, y1 - y0, h[5]
     else: boxes.append(list(h))
 boxes = [[int(b[0]), int(b[1]), int(b[2]), int(b[3]), round(max(0, b[4]), 2), round(b[5], 2)] for b in boxes]
 js = json.dumps(boxes)
