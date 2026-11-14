@@ -23,37 +23,23 @@ TELEGRAM_TOKEN = os.environ["TELEGRAM_TOKEN"]
 # ---------- Провайдеры ----------
 # Подключаются те, для которых задан ключ в переменных окружения.
 PROVIDERS = {
-    "coa": {"name": "CoArena", "url": "https://coarena.ai/api/v1", "env": "COARENA_API_KEY"},
+    "thk": {"name": "TokenHarbor", "url": "https://tokenharbor.ai/v1", "env": "TOKENHARBOR_API_KEY"},
 }
 for _p in PROVIDERS.values():
     _p["key"] = os.environ.get(_p["env"], "")
 if not any(p["key"] for p in PROVIDERS.values()):
-    raise SystemExit("Не задан ключ провайдера (COARENA_API_KEY)")
+    raise SystemExit("Не задан ключ провайдера (TOKENHARBOR_API_KEY)")
 
 # Модели и цепочки провайдеров: бот идёт по списку маршрутов, пока кто-то не ответит.
 # vision=True — модель видит картинки (нужно для самопроверки скриншотов сайтов).
+# Модели «:free» на TokenHarbor бесплатные (баланс не нужен), инструменты поддерживают.
 MODELS = {
     "deepseek-v4.1-flash": {
         "label": "🐋 DeepSeek V4.1 Flash", "identity": ("DeepSeek V4.1 Flash", "DeepSeek"),
-        "vision": True, "routes": [("coa", "deepseek-v4-1-flash-1017")]},
-    "gemini-flash": {
-        "label": "✨ Gemini 3.8 Flash", "identity": ("Gemini 3.8 Flash", "Google"),
-        "vision": True, "routes": [("coa", "gemini-3-8-flash")]},
-    "qwen3.8": {
-        "label": "🐉 Qwen 3.8", "identity": ("Qwen 3.8", "Alibaba"),
-        "vision": True, "routes": [("coa", "qwen3-8-2-4t-a95b")]},
-    "glm-5.3-flash": {
-        "label": "🧩 GLM 5.3 Flash", "identity": ("GLM 5.3 Flash", "Z.ai"),
-        "vision": True, "routes": [("coa", "glm-5-3-flash")]},
-    "kimi-k3": {
-        "label": "🌙 Kimi K3", "identity": ("Kimi K3", "Moonshot AI"),
-        "routes": [("coa", "kimi-k3")]},
-    "gpt-6-luna": {
-        "label": "🟢 GPT-6 Luna", "identity": ("GPT-6 Luna", "OpenAI"),
-        "routes": [("coa", "gpt-6-luna")]},
-    "grok-4.7": {
-        "label": "⚡ Grok 4.7", "identity": ("Grok 4.7", "xAI"),
-        "routes": [("coa", "grok-4-7")]},
+        "vision": True, "routes": [("thk", "deepseek-v4.1-flash:free")]},
+    "deepseek-v4-flash": {
+        "label": "🐳 DeepSeek V4 Flash", "identity": ("DeepSeek V4 Flash", "DeepSeek"),
+        "routes": [("thk", "deepseek-v4-flash:free")]},
 }
 DEFAULT_MODEL = os.environ.get("DEFAULT_MODEL", "deepseek-v4.1-flash")
 # Если у выбранной модели все каналы исчерпаны — используем цепочку DeepSeek V4.1
@@ -486,8 +472,8 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                         break
                     except FatalError as e:
                         raise RuntimeError(
-                            "⚠️ Провайдер CoArena отклонил запрос: " + str(e)[:200]
-                            + "\nПохоже, кончился баланс или неверный ключ. Проверь аккаунт coarena.ai.")
+                            "⚠️ Провайдер TokenHarbor отклонил запрос: " + str(e)[:200]
+                            + "\nПохоже, кончился баланс или неверный ключ. Проверь аккаунт tokenharbor.ai.")
                     except httpx.TransportError as e:
                         errors.append(f"{type(e).__name__}")
                         cooldown_until[route] = time.time() + 5     # сетевой сбой — короткая пауза

@@ -10,8 +10,9 @@ Telegram-бот **@Noizoz_bot** (id `8751101888`) — ИИ-ассистент с
 Автор/владелец аккаунта: dimazoltinsky@gmail.com (GitHub `Wddis`).
 
 ## Где и как работает
-- Бот запущен на бесплатном хостинге **The Vibe Hosting**: `https://noizoz-bot.thevibehosting.com`,
-  сервер `46.225.188.115`, SSH-порт `37621`. Это ~256 МБ RAM, без Android-SDK. Сервер
+- Бот запущен на бесплатном хостинге **The Vibe Hosting**: `https://noizoz-bot2.thevibehosting.com`
+  (сервер `srv_6189a3bac5`, `46.225.188.115`, SSH-порт `32025`; старый `noizoz-bot`:37621 умер 2026-11-14,
+  ключа к нему нет). Это ~256 МБ RAM, без Android-SDK. Сервер
   **засыпает после ~10 минут простоя** (первое сообщение после простоя идёт на пару секунд дольше —
   сервер просыпается; это не краш, 502 на `/` сразу после простоя = сон).
 - Режим **webhook**: бот при старте сам ставит вебхук на `WEBHOOK_URL`. На `/` отвечает 404 (это норма,
@@ -40,24 +41,17 @@ Telegram-бот **@Noizoz_bot** (id `8751101888`) — ИИ-ассистент с
   capstone, pyflakes, pyyaml.
 
 ## Провайдер моделей
-**Только CoArena** (OpenAI-совместимый). UnoRouter удалён (его бесплатный DeepSeek постоянно был перегружен).
-- База: `https://coarena.ai/api/v1`, ключ в env `COARENA_API_KEY`.
-- Ключ (на момент передачи): `coa_14809a379dbf0f7773238f61fbe305ee` — аккаунт пользователя с балансом.
-  Если баланс кончится или ключ сменят — бот скажет об этом прямо (FatalError), не зациклится.
-- Провайдер-агностичная архитектура: все инструменты работают с любой моделью одинаково.
+**Только TokenHarbor** (OpenAI-совместимый), CoArena удалён (2026-11-14).
+- База: `https://tokenharbor.ai/v1`, ключ в env `TOKENHARBOR_API_KEY` (ключ у пользователя,
+  дашборд https://tokenharbor.ai/dashboard/api-keys). В репо ключ не храним.
+- Баланс на аккаунте 0, поэтому используются БЕСПЛАТНЫЕ модели `:free` (инструменты работают).
+  При пополнении/Pass можно добавить платные модели в `MODELS` (список: `GET /v1/models`).
 
-### Меню `/model` (логическая модель → модель CoArena)
-- 🐋 DeepSeek V4.1 Flash (по умолчанию, vision) → `deepseek-v4-1-flash-1017`
-- ✨ Gemini 3.8 Flash (vision) → `gemini-3-8-flash`
-- 🐉 Qwen 3.8 (vision) → `qwen3-8-2-4t-a95b`
-- 🧩 GLM 5.3 Flash (vision) → `glm-5-3-flash`
-- 🌙 Kimi K3 → `kimi-k3`
-- 🟢 GPT-6 Luna → `gpt-6-luna`
-- ⚡ Grok 4.7 → `grok-4-7`
-Все проверены на вызов инструментов. vision=True (видит картинки, нужно для самопроверки скриншотов):
-DeepSeek, Gemini, Qwen, GLM. При занятости/ошибке провайдера бот ждёт и пробует снова каждые 30 с
-(постоянный интервал), сам модель НЕ меняет; пользователь меняет кнопкой «🤖 Сменить ИИ» — ожидающий
-запрос сразу продолжается на выбранной модели. Кнопка «🗑 Удалить запрос» отменяет запрос и чистит чат.
+### Меню `/model`
+- 🐋 DeepSeek V4.1 Flash (по умолчанию, vision) → `deepseek-v4.1-flash:free`
+- 🐳 DeepSeek V4 Flash (без картинок) → `deepseek-v4-flash:free`
+Обе проверены на вызов инструментов (обычный и потоковый ответ).
+При занятости провайдера бот ждёт и пробует снова каждые 30 с; модель меняет только пользователь.
 
 ## Команды бота
 `/start`, `/model` (сменить ИИ), `/instructions` (свои .md-инструкции), `/files` (рабочая папка),
@@ -65,7 +59,7 @@ DeepSeek, Gemini, Qwen, GLM. При занятости/ошибке провай
 `/thoughts` (показ размышлений), `/web` (интернет вкл/выкл), `/claim` (стать владельцем → запуск кода).
 Внизу экрана кнопки: «🗑 Новый диалог», «🤖 Сменить ИИ», «📌 Инструкции», «📁 Файлы», «🔌 API».
 
-## Инструменты модели (все работают через CoArena)
+## Инструменты модели (все работают через TokenHarbor)
 Файлы: list_files, read_file (с номерами строк, потоково для больших), write_file (send=true — сразу
 прислать), edit_file (replace_all + пакетные edits, атомарно), delete_file, send_file, rename_file.
 Код: run_code/run_file (владелец, песочница 30 c / 300 МБ, без секретов бота), check_code (py/json/yaml/
@@ -95,17 +89,17 @@ web_screenshot (+ send_screenshot, модель сама проверяет сн
 (`<run_id>.pub`), ждёт зашифрованный пакет `deploy/<run_id>.enc` в ветке рабочей (`ccr-246ecdfb-jd9nn5`),
 расшифровывает секреты ТОЛЬКО внутри раннера, по SSH заливает *.py на сервер, пишет `.env`, перезапускает
 бота (supervisor Vibe поднимает `/root/run.sh`), логирует старт в `/root/bot/bot.log`.
-Секреты (TELEGRAM_TOKEN, COARENA_API_KEY) в репозитории НЕ хранятся даже зашифрованными — пакет удаляется
+Секреты (TELEGRAM_TOKEN, TOKENHARBOR_API_KEY) в репозитории НЕ хранятся даже зашифрованными — пакет удаляется
 после деплоя. Метка версии: бот пишет `сборка <8 hex>` (sha256 всех .py) в своё короткое описание в
 Telegram (`getMyShortDescription`) — так видно, какая версия реально запущена.
 
 ### Как задеплоить из новой сессии
-Секреты (нужны у исполнителя): `TELEGRAM_TOKEN=8751101888:...`, `COARENA_API_KEY=coa_...`.
-1. Запушить изменения в `main` и `ccr-246ecdfb-jd9nn5`.
+Секреты (нужны у исполнителя): `TELEGRAM_TOKEN=8751101888:...`, `TOKENHARBOR_API_KEY=thk_live_...`.
+1. Запушить изменения в рабочую ветку (сейчас `ccr-0af174ef-akfigz`). Прямой SSH из облачной сессии Claude заблокирован — только через Actions.
 2. Запустить workflow `deploy.yml` на `main` с input `secrets_branch=ccr-246ecdfb-jd9nn5`
    (через GitHub MCP `actions_run_trigger` или `gh workflow run`).
 3. Дождаться в ветке `deploy-secrets` коммита `pubkey for run <RID>`, взять `<RID>.pub`.
-4. Зашифровать JSON `{TELEGRAM_TOKEN, COARENA_API_KEY, SSH_KEY_B64(base64 ssh-ключа Vibe)}` этим публичным
+4. Зашифровать JSON `{TELEGRAM_TOKEN, TOKENHARBOR_API_KEY, SSH_KEY_B64(base64 ssh-ключа Vibe)}` этим публичным
    ключом (RSA-OAEP-SHA256 для AES-ключа + AES-256-CBC pbkdf2 для данных), положить в
    `deploy/<RID>.enc` рабочей ветки. Скрипт-помощник был в скретчпаде: `scratchpad/encrypt_bundle.sh`
    и `scratchpad/deploy_finish.sh` (их придётся воссоздать — они временные).
@@ -131,7 +125,7 @@ curl -s "https://api.telegram.org/bot<TOKEN>/getMyShortDescription"   # сбор
 curl -s "https://api.telegram.org/bot<TOKEN>/getWebhookInfo"          # pending=0, last_error=null — ок
 curl -s "https://api.telegram.org/bot<TOKEN>/getMyCommands"           # список команд
 ```
-Полная проверка связи с CoArena — только реальным сообщением боту (у ассистента нет своего Telegram).
+Полная проверка связи с TokenHarbor — только реальным сообщением боту (у ассистента нет своего Telegram).
 
 ## Атрибуция коммитов (по требованию харнесса)
 Коммиты заканчивать: `Co-Authored-By: Claude <noreply@anthropic.com>` и `Claude-Session: <ссылка>`.
