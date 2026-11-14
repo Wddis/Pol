@@ -16,5 +16,5 @@ while true; do
   else
     echo "VOD ${dur}s — no new audio (stream ended?)"
   fi
-  sleep 480
+  sleep ${LIVE_EVERY:-480}
 done

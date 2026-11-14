@@ -21,6 +21,13 @@ STATE_F = os.path.join(WORK, "bot_state.json")
 TG_LIMIT = 48 * 1024 * 1024                         # bot API upload limit is 50 MB
 
 def log(*a): print(time.strftime("%H:%M:%S"), *a, flush=True)
+LOGD = os.path.join(WORK, "logs"); os.makedirs(LOGD, exist_ok=True)
+_loglock = threading.Lock()
+def blog(kind, **data):
+    """structured log, one JSON per line: WORK/logs/YYYY-MM-DD.jsonl — read by Claude to improve the bot (/logs sends it)"""
+    rec = {"t": time.strftime("%Y-%m-%dT%H:%M:%S"), "kind": kind, **data}
+    line = json.dumps(rec, ensure_ascii=False, default=str).replace(TOKEN, "<token>")
+    with _loglock, open(os.path.join(LOGD, time.strftime("%Y-%m-%d") + ".jsonl"), "a") as f: f.write(line + "\n")
 def load_state():
     try: return json.load(open(STATE_F))
     except Exception: return {}
@@ -46,6 +53,7 @@ def tg(method, **kw):
     return {}
 def say(text, kb=None):
     if not S.get("owner"): return
+    blog("out", text=re.sub(r"<[^>]+>", "", text)[:1500], buttons=[b["text"] for row in (kb or []) for b in row])
     for chunk in [text[i:i + 3900] for i in range(0, len(text), 3900)] or [""]:
         tg("sendMessage", chat_id=S["owner"], text=chunk, parse_mode="HTML", disable_web_page_preview=True,
            **({"reply_markup": {"inline_keyboard": kb}} if kb else {}))
@@ -59,10 +67,14 @@ def esc(s): return html.escape(str(s))
 
 def run(cmd, cwd=None, env=None, timeout=None, tail=15):
     """run a step; returns (ok, last lines)"""
-    e = dict(os.environ, **(env or {}))
-    log("RUN", cmd if isinstance(cmd, str) else " ".join(cmd))
-    p = subprocess.run(cmd, cwd=cwd, env=e, shell=isinstance(cmd, str), capture_output=True, text=True, timeout=timeout)
+    e = dict(os.environ, **(env or {})); c = cmd if isinstance(cmd, str) else " ".join(cmd); t0 = time.time()
+    log("RUN", c)
+    try:
+        p = subprocess.run(cmd, cwd=cwd, env=e, shell=isinstance(cmd, str), capture_output=True, text=True, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        blog("run", cmd=c[:400], rc="timeout", sec=round(time.time() - t0, 1)); return False, f"timeout after {timeout}s"
     out = (p.stdout + p.stderr).strip().splitlines()
+    blog("run", cmd=c[:400], rc=p.returncode, sec=round(time.time() - t0, 1), tail=out[-(tail if p.returncode else 4):])
     return p.returncode == 0, "\n".join(out[-tail:])
 
 def bg(name, fn, *a):
@@ -73,7 +85,8 @@ def bg(name, fn, *a):
         S["busy"] = name; save()
         try: fn(*a)
         except Exception as ex:
-            log(traceback.format_exc()); say(f"❌ {esc(name)}: <code>{esc(str(ex)[:800])}</code>")
+            log(traceback.format_exc()); blog("error", job=name, err=str(ex)[:2000], tb=traceback.format_exc()[-3000:])
+            say(f"❌ {esc(name)}: <code>{esc(str(ex)[:800])}</code>")
         finally: S["busy"] = ""; save()
     th = threading.Thread(target=wrap, daemon=True); THREADS[name] = th; th.start()
 THREADS = {}
@@ -85,7 +98,10 @@ def jdir(j): d = os.path.join(WORK, "jobs", j); os.makedirs(d, exist_ok=True); r
 def jload(j):
     try: return json.load(open(os.path.join(jdir(j), "job.json")))
     except Exception: return None
-def jsave(j, d): json.dump(d, open(os.path.join(jdir(j), "job.json"), "w"), ensure_ascii=False, indent=1)
+def jsave(j, d):
+    old = jload(j) if os.path.exists(os.path.join(WORK, "jobs", j, "job.json")) else {}
+    if (old or {}).get("stage") != d.get("stage"): blog("stage", job=j, stage=d.get("stage"), frm=d.get("from"), to=d.get("to"))
+    json.dump(d, open(os.path.join(jdir(j), "job.json"), "w"), ensure_ascii=False, indent=1)
 def parse_t(s):
     """'94' -> 94 min, '94:30' -> 94.5 min, '1:34:30' -> h:m:s ; returns seconds"""
     p = [float(x) for x in s.split(":")]
@@ -116,7 +132,8 @@ def studio_url():
     except Exception: return ""
 
 # ----------------------------------------------------------------- commands
-HELP = """<b>Двойная резка — бот</b> (всё по правилам ветки)
+HELP = """<b>Двойная резка — бот</b> 🧪 бета (основной способ пока — нарезка в сессии Claude)
+/start — меню: 🔴 Прямой эфир · 📼 Прошедший стрим · /live · /past · /logs [дней] — логи
 <b>Стрим</b>
 /vod &lt;id или канал&gt; — выбрать VOD (канал → последний VOD)
 /watch — следить за идущим стримом (расшифровка+видео каждые 8 мин)
@@ -152,7 +169,7 @@ def cmd_vod(m, a):
         ok, out = run(["yt-dlp", "--no-warnings", "--flat-playlist", "-I", "1", "--print", "id", f"https://www.twitch.tv/{v}/videos?filter=archives&sort=time"], timeout=120)
         v = out.strip().splitlines()[-1].lstrip("v") if ok and out.strip() else ""
         if not v.isdigit(): return say("Не нашёл VOD канала.")
-    S["vod"] = v; save(); vdir(v); say(f"VOD <b>{v}</b> выбран. Дальше: /watch (идёт стрим) или /transcribe (закончен).")
+    S["vod"] = v; S["vod_len"] = 0; save(); vdir(v); say(f"VOD <b>{v}</b> выбран. Дальше: /watch (идёт стрим) или /transcribe (закончен).")
 
 def cmd_watch(m, a):
     if not S.get("vod"): return say("Сначала /vod")
@@ -172,13 +189,16 @@ def watch_reporter(d):
             if "no new audio" in l: say("📴 Похоже, стрим закончился (VOD не растёт). /map — темы, /stop — выключить слежение.")
             elif l.startswith("VOD"): S["live_last"] = l; save()
 def cmd_stop(m, a):
+    S["live_on"] = False
     p = S.get("watch_pid")
     if p and pid_alive(p): os.killpg(p, 15)
     S["watch_pid"] = 0; save(); say("Слежение остановлено.")
 
 def cmd_transcribe(m, a):
     if not S.get("vod"): return say("Сначала /vod")
-    def job():
+    bg("расшифровка", cmd_transcribe_job)
+def cmd_transcribe_job():
+    if True:
         d = vdir(); say("🎧 Качаю звук VOD…")
         ok, out = run(["python3", os.path.join(T, "vod.py"), S["vod"], "Audio_Only", "audio.mp4"], cwd=d, timeout=3600)
         if not ok: return say(f"❌ звук: <code>{esc(out)}</code>")
@@ -186,8 +206,7 @@ def cmd_transcribe(m, a):
         dur = float(run("ffprobe -v error -show_entries format=duration -of csv=p=0 audio.wav", cwd=d)[1] or 0)
         say(f"📝 Расшифровка {fmt(dur)} (≈{int(dur / 27 / 60) + 1} мин)…")
         ok, out = run(["python3", os.path.join(T, "stt.py"), "audio.wav", "transcript_live.txt"], cwd=d, timeout=8 * 3600)
-        say("✅ Расшифровка готова. /map — темы стрима." if ok else f"❌ <code>{esc(out)}</code>")
-    bg("расшифровка", job)
+        say("✅ Расшифровка готова." if ok else f"❌ <code>{esc(out)}</code>")
 
 def cmd_map(m, a):
     tr = os.path.join(vdir(), "transcript_live.txt")
@@ -214,7 +233,7 @@ def resolve_range(a):
     if m2: return parse_t(m2[1]), parse_t(m2[2])
     return None
 
-def cmd_cut(m, a):
+def cut_do(m, a):
     if not S.get("vod"): return say("Сначала /vod")
     parts = (a or "").split(); r = resolve_range(parts[0]) if parts else None
     tgt = float(parts[1]) if len(parts) > 1 and parts[1].replace(".", "").isdigit() else 0
@@ -251,6 +270,7 @@ def show_moments(j):
         [[{"text": "▶️ Рендер", "callback_data": f"go:{j}"}]])
 
 def plan_edit(j, drop=None, add=None):
+    blog("edit_plan", job=j, drop=drop, add=add)
     d = jdir(j); jd = jload(j); pf = os.path.join(d, "plan.json"); plan = json.load(open(pf)); off = jd["offset"]
     if drop is not None:
         mo = plan["moments"].pop(drop)
@@ -330,7 +350,7 @@ def cmd_title(m, a):
     if not jd: return say("Нет текущей нарезки (/jobs)")
     if not a: return say(f"Название: <b>{esc(jd.get('title', '—'))}</b>\nФормат: /title КАПС-ХУК - суть / РЕАКЦИЯ T2x2 (≤100)")
     if len(a) > 100: return say(f"Длина {len(a)} > 100")
-    jd["title"] = a.strip(); jsave(j, jd); say(f"✅ Название: <b>{esc(a)}</b>")
+    blog("edit_title", job=j, title=a.strip()); jd["title"] = a.strip(); jsave(j, jd); say(f"✅ Название: <b>{esc(a)}</b>")
 def cmd_chapters(m, a):
     j, jd = cur_job()
     if not jd: return say("Нет текущей нарезки")
@@ -341,6 +361,7 @@ def cmd_chapter(m, a):
     if not jd or not mm: return say("Формат: /chapter 3 Письмо сына из интерната ( 25 копеек )")
     i = int(mm[1]) - 1; ch = jd.get("chapters", [])
     if not 0 <= i < len(ch): return say("Нет такой главы")
+    blog("edit_chapter", job=j, n=i + 1, auto=ch[i]["title"], owner=mm[2].strip())
     if mm[2].strip() == "-": ch.pop(i)
     else: ch[i]["title"] = mm[2].strip()
     jd["chapters"] = ch; jsave(j, jd); cmd_chapters(m, "")
@@ -374,7 +395,7 @@ def publish(meta_path, label):
     if link: return link[-1], ""
     if "UPLOAD_LIMIT" in out: return None, "LIMIT"
     return None, out[-600:]
-def cmd_publish(m, a):
+def publish_do(m, a):
     j, jd = cur_job()
     if not jd: return say("Нет текущей нарезки")
     if not jd.get("title"): return say("Сначала /title")
@@ -437,7 +458,7 @@ def shelf():
     return [j for j in sorted(os.listdir(root)) if j.startswith("s") and (jload(j) or {}).get("stage") == "shelf"] if os.path.isdir(root) else []
 def cmd_shorts(m, a):
     say("\n".join(f"<b>{j}</b> {esc((jload(j) or {}).get('title') or (jload(j) or {}).get('lines'))}" for j in shelf()) or "Полка пуста")
-def cmd_pubshorts(m, a):
+def pubshorts_do(m, a):
     iv = int(a) if a and a.strip().isdigit() else 10; q = shelf()
     if not q: return say("Полка пуста")
     def job():
@@ -482,7 +503,175 @@ def cmd_pair(m, a):
     if not S.get("owner") and a.strip() == S.get("pair_code"):
         S["owner"] = m["from"]["id"]; S.pop("pair_code", None); save(); say("🔐 Бот привязан к тебе. " + HELP)
 
-CMDS = {"start": cmd_start, "help": cmd_start, "status": cmd_status, "vod": cmd_vod, "watch": cmd_watch, "stop": cmd_stop,
+# ----------------------------------------------------------------- confirmations: the bot double-checks every heavy request
+PENDING = {}
+def ask(text, fn, *args, warn=None):
+    key = secrets.token_hex(4); PENDING[key] = (fn, args, time.time())
+    w = ("\n\n⚠️ <b>Проверь:</b>\n" + "\n".join("• " + esc(x) for x in warn)) if warn else ""
+    blog("confirm_ask", key=key, text=re.sub(r"<[^>]+>", "", text)[:500], warn=warn or [])
+    say(f"❓ {text}{w}", [[{"text": "✅ Да", "callback_data": f"ok:{key}"}, {"text": "✖️ Отмена", "callback_data": f"no:{key}"}]])
+def confirm_answer(k, key):
+    item = PENDING.pop(key, None)
+    blog("confirm_answer", key=key, answer=k, known=bool(item))
+    if not item: return say("Это подтверждение устарело — повтори команду.")
+    if k == "no" or time.time() - item[2] > 3600: return say("Отменено 👍" if k == "no" else "Подтверждение просрочено (больше часа). Повтори команду.")
+    fn, args, _ = item; fn(*args)
+
+MAT_RE = re.compile(r"(?i)(бля|хуй|хуе|пизд|ебат|ебан|ёбан|сука|залуп|мудак)")
+def cmd_cut(m, a):
+    if not S.get("vod"): return say("Сначала выбери стрим: /start → режим")
+    parts = (a or "").split(); r = resolve_range(parts[0]) if parts else None
+    if not r: return cut_do(m, a)                                       # prints the format help
+    if r[1] <= r[0]: return say(f"Конец ({fmt(r[1])}) раньше начала ({fmt(r[0])}) — проверь запрос. Пример: /cut 94-110")
+    warn = []; dur = r[1] - r[0]; vlen = S.get("vod_len", 0)
+    if dur < 180: warn.append(f"очень короткий кусок: {dur / 60:.1f} мин — точно основное видео, а не шортс?")
+    if dur > 3 * 3600: warn.append(f"очень длинный кусок: {dur / 3600:.1f} ч")
+    if vlen and r[1] > vlen + 60: warn.append(f"конец {fmt(r[1])} дальше конца VOD ({fmt(vlen)})")
+    if dur > 45 * 60 and not (len(parts) > 1): warn.append("длиннее 45 мин → соберу ЛУЧШИЕ МОМЕНТЫ на ~25 мин (или укажи длину: /cut … 30)")
+    for j in os.listdir(os.path.join(WORK, "jobs")) if os.path.isdir(os.path.join(WORK, "jobs")) else []:
+        jd = jload(j) or {}
+        if jd.get("vod") == S["vod"] and jd.get("kind") == "main" and min(jd.get("to", 0), r[1]) - max(jd.get("from", 0), r[0]) > 60:
+            warn.append(f"этот кусок уже нарезался: {j} ({jd.get('stage')})"); break
+    ask(f"Нарезать VOD {S['vod']}: <b>{fmt(r[0])}–{fmt(r[1])}</b> ({dur / 60:.1f} мин)?", cut_do, m, a, warn=warn)
+def cmd_publish(m, a):
+    j, jd = cur_job()
+    if not jd: return say("Нет текущей нарезки (/jobs)")
+    warn = []
+    if not jd.get("title"): return say("Сначала /title НАЗВАНИЕ")
+    if MAT_RE.search(jd["title"]): warn.append("в названии мат/грубое слово → риск 18+ (docs/no-yellow-card.md)")
+    if len(jd["title"]) > 100: warn.append("название длиннее 100 символов")
+    if not jd.get("cover"): warn.append("нет обложки (пришли фото), опубликую без неё только если ответишь «Да»")
+    if len(jd.get("chapters", [])) < 3: warn.append("меньше 3 глав — YouTube не покажет тайм-коды")
+    if jd.get("link"): warn.append(f"уже опубликовано: {jd['link']} — будет ДУБЛЬ")
+    ask(f"Опубликовать <b>{esc(jd['title'])}</b> ({j}) на канал?", publish_do, m, "без обложки" if not jd.get("cover") else a, warn=warn)
+def cmd_pubshorts(m, a):
+    q = shelf()
+    if not q: return say("Полка пуста")
+    lst = "\n".join(f"• {esc((jload(j) or {}).get('title') or (jload(j) or {}).get('lines'))}" for j in q)
+    iv = int(a) if a and a.strip().isdigit() else 10
+    warn = [f"шортсов {len(q)} — суточный лимит канала ~3–4 загрузки"] if len(q) > 4 else []
+    ask(f"Опубликовать полку ({len(q)} шт., интервал {iv} мин)?\n{lst}", pubshorts_do, m, a, warn=warn)
+
+# ----------------------------------------------------------------- Twitch: live status / last streams (public GQL)
+GQL_ID = "kimne78kx3ncx6brgo4mv6wki5h1ko"
+TWITCH = os.environ.get("TWITCH_LOGIN", "t2x2")
+def gql(q):
+    try:
+        return requests.post("https://gql.twitch.tv/gql", headers={"Client-Id": GQL_ID}, json={"query": q}, timeout=20).json().get("data") or {}
+    except Exception as e:
+        blog("error", where="gql", err=str(e)); return {}
+def twitch_info(n=6):
+    d = gql('query{user(login:"%s"){stream{id createdAt game{displayName} viewersCount} videos(first:%d,type:ARCHIVE,sort:TIME)'
+            '{edges{node{id createdAt lengthSeconds status game{displayName}}}}}}' % (TWITCH, n))
+    u = d.get("user") or {}
+    vids = [e["node"] for e in (u.get("videos") or {}).get("edges", [])]
+    return u.get("stream"), vids
+def when(iso):
+    """Twitch UTC time -> Moscow time (owner's)"""
+    import calendar
+    t = calendar.timegm(time.strptime(iso[:19], "%Y-%m-%dT%H:%M:%S")) + 3 * 3600
+    return time.strftime("%d.%m %H:%M МСК", time.gmtime(t))
+
+MENU = [[{"text": "🔴 Прямой эфир", "callback_data": "mode:live"}, {"text": "📼 Прошедший стрим", "callback_data": "mode:past"}],
+        [{"text": "🎬 Шортсы (полка)", "callback_data": "mode:shorts"}, {"text": "ℹ️ Статус", "callback_data": "mode:status"}]]
+BETA = "🧪 <b>Бета-тест.</b> Основной способ нарезки пока — по опыту в сессии Claude; бот учится по логам."
+def cmd_start(m, a): say(f"{BETA}\n\nВыбери режим:", MENU)
+def cmd_help(m, a): say(HELP)
+
+def mode_live():
+    st, vids = twitch_info(3)
+    if not st:
+        blog("live_check", live=False)
+        return say(f"⚫ {TWITCH} сейчас НЕ в эфире. Можно нарезать прошедший стрим.", [[{"text": "📼 Прошедший стрим", "callback_data": "mode:past"}]])
+    rec = next((v for v in vids if v.get("status") == "RECORDING"), None)
+    if not rec: return say("Эфир идёт, но запись (VOD) не найдена — у стримера могут быть выключены записи. Нарезать нечего.")
+    blog("live_check", live=True, vod=rec["id"], game=(st.get("game") or {}).get("displayName"))
+    warn = []
+    if S.get("live_on"): warn.append(f"нарезка эфира уже идёт (VOD {S.get('vod')}) — перезапущу")
+    ask(f"🔴 {TWITCH} в эфире: {esc((st.get('game') or {}).get('displayName', ''))}, {st.get('viewersCount', '?')} зрителей, "
+        f"VOD {rec['id']} (уже {fmt(rec['lengthSeconds'])}).\n<b>Составить нарезки идущего стрима?</b>\n"
+        "Каждые 4 мин пришлю, что нарезается; остановить — кнопкой.", live_start, rec["id"], warn=warn)
+def live_start(vod):
+    S["vod"] = vod; S["live_on"] = True; S["live_proposed"] = []; save(); vdir(vod)
+    d = vdir(); open(os.path.join(d, "transcript_live.txt"), "a").close()
+    p = S.get("watch_pid")
+    if not (p and pid_alive(p)):
+        pr = subprocess.Popen(["bash", os.path.join(T, "live_update.sh"), vod, d], env=dict(os.environ, LIVE_EVERY="240"),
+                              stdout=open(os.path.join(d, "live.log"), "a"), stderr=subprocess.STDOUT, start_new_session=True)
+        S["watch_pid"] = pr.pid; save()
+    blog("live_start", vod=vod)
+    say("▶️ Нарезка эфира запущена. Первый отчёт через ~4 мин (сначала догоняю расшифровку с начала стрима).",
+        [[{"text": "⏹ Остановить нарезку эфира", "callback_data": "live:stop"}]])
+    threading.Thread(target=live_loop, args=(vod,), daemon=True).start()
+def live_stop():
+    S["live_on"] = False; save(); cmd_stop(None, ""); blog("live_stop", vod=S.get("vod"))
+def live_loop(vod):
+    d = vdir(vod); tr = os.path.join(d, "transcript_live.txt"); last_len = -1
+    while S.get("live_on") and S.get("vod") == vod:
+        time.sleep(240)
+        if not S.get("live_on"): break
+        st, vids = twitch_info(2); rec = next((v for v in vids if v["id"] == vod), {})
+        lines = sum(1 for _ in open(tr)) if os.path.exists(tr) else 0
+        upto = 0.0
+        if lines:
+            try: upto = float(open(tr).read().strip().splitlines()[-1].split("-")[0])
+            except Exception: pass
+        ev = []
+        if lines > 50:
+            run(["python3", os.path.join(T, "auto_events.py"), tr, "--json", os.path.join(d, "events.json")])
+            try: ev = json.load(open(os.path.join(d, "events.json")))
+            except Exception: ev = []
+        done = ev[:-1]                                                     # the last topic is still going on
+        good = [e for e in done if e["score"] >= float(os.environ.get("LIVE_MIN_SCORE", 3.8)) and 4 <= e["dur_min"] <= 45 and not e.get("risk")]
+        new = [e for e in good if e["start"] not in S.get("live_proposed", [])]
+        jobs = [f"{j}: {(jload(j) or {}).get('stage')}" for j in sorted(os.listdir(os.path.join(WORK, 'jobs')))[-5:]] if os.path.isdir(os.path.join(WORK, "jobs")) else []
+        blog("live_tick", vod=vod, vod_len=rec.get("lengthSeconds"), transcript_upto=upto, topics=len(ev), good=len(good), new=len(new), live=bool(st))
+        txt = (f"📡 <b>Эфир</b>: {'идёт' if st else 'ЗАКОНЧИЛСЯ'} · VOD {fmt(rec.get('lengthSeconds', 0))} · расшифровано до {fmt(upto)}\n"
+               f"Тем найдено: {len(ev)} (завершённых {len(done)}, годных в нарезку {len(good)})"
+               + ("\n\n<b>Новые темы для нарезки:</b>\n" + "\n".join(f"• {fmt(e['start'])}–{fmt(e['end'])} ({e['dur_min']} мин) ⭐{e['score']} «{esc(e['first'][:90])}»" for e in new) if new else "")
+               + ("\n\nНарезки: " + "; ".join(esc(x) for x in jobs) if jobs else ""))
+        kb = [[{"text": f"✂️ {fmt(e['start'])} ({e['dur_min']}м)", "callback_data": f"cut:{fmt(e['start'])}-{fmt(e['end'])}"}] for e in new[:4]]
+        kb.append([{"text": "⏹ Остановить нарезку эфира", "callback_data": "live:stop"}])
+        say(txt, kb)
+        S.setdefault("live_proposed", []).extend(e["start"] for e in new); save()
+        if not st:
+            S["live_on"] = False; save(); say("🏁 Стрим закончился. /map — все темы, нарезка по кнопкам."); break
+
+def mode_past():
+    st, vids = twitch_info(7)
+    done = [v for v in vids if v.get("status") != "RECORDING"]
+    if not done: return say("Не нашёл прошедших стримов (VOD скрыты/удалены?)")
+    blog("past_list", vods=[v["id"] for v in done])
+    kb = [[{"text": f"📼 {when(v['createdAt'])} · {fmt(v['lengthSeconds'])} · {(v.get('game') or {}).get('displayName', '')[:18]}",
+            "callback_data": f"past:{v['id']}"}] for v in done[:6]]
+    say("Последние стримы — какой нарезаем?" + ("\n(сейчас идёт эфир — для него «🔴 Прямой эфир»)" if st else ""), kb)
+def past_pick(vod):
+    st, vids = twitch_info(8); v = next((x for x in vids if x["id"] == vod), None)
+    if not v: return say("Этот VOD не найден (удалён?)")
+    warn = []
+    if v.get("status") == "RECORDING": warn.append("это ИДУЩИЙ эфир — лучше режим «🔴 Прямой эфир»")
+    tr = os.path.join(WORK, f"vod{vod}", "transcript_live.txt")
+    have = os.path.exists(tr) and os.path.getsize(tr) > 1000
+    if have: warn.append("расшифровка уже есть — сразу покажу темы")
+    if S.get("live_on"): warn.append("сейчас идёт нарезка эфира — она продолжится параллельно")
+    ask(f"Нарезать стрим <b>{when(v['createdAt'])}</b> ({fmt(v['lengthSeconds'])}, {esc((v.get('game') or {}).get('displayName', ''))}), VOD {vod}?"
+        + ("" if have else f"\nСначала расшифровка (~{int(v['lengthSeconds'] / 27 / 60) + 3} мин)."), past_start, vod, v["lengthSeconds"], have, warn=warn)
+def past_start(vod, length, have):
+    S["vod"] = vod; S["vod_len"] = length; save(); vdir(vod); blog("past_start", vod=vod, have_transcript=have)
+    if have: return cmd_map(None, "")
+    def job():
+        cmd_transcribe_job(); cmd_map(None, "")
+    bg("расшифровка", job)
+
+def cmd_logs(m, a):
+    n = int(a) if a and a.isdigit() else 1
+    files = sorted(f for f in os.listdir(LOGD) if f.endswith(".jsonl"))[-n:]
+    if not files: return say("Логов пока нет")
+    if len(files) == 1: return send_file(os.path.join(LOGD, files[0]), f"Лог бота {files[0]} — перешли его Claude для улучшения бота")
+    z = os.path.join(WORK, "logs.zip"); run(["zip", "-j", "-q", z] + [os.path.join(LOGD, f) for f in files])
+    send_file(z, f"Логи бота за {len(files)} дн.")
+
+CMDS = {"start": cmd_start, "menu": cmd_start, "help": cmd_help, "logs": cmd_logs, "live": lambda m, a: mode_live(), "past": lambda m, a: mode_past(), "status": cmd_status, "vod": cmd_vod, "watch": cmd_watch, "stop": cmd_stop,
         "transcribe": cmd_transcribe, "map": cmd_map, "cut": cmd_cut, "title": cmd_title, "chapters": cmd_chapters,
         "chapter": cmd_chapter, "desc": cmd_desc, "publish": cmd_publish, "jobs": cmd_jobs, "job": cmd_job, "short": cmd_short,
         "stitle": cmd_stitle, "shorts": cmd_shorts, "pubshorts": cmd_pubshorts, "cookies": cmd_cookies, "panel": cmd_panel,
@@ -493,7 +682,12 @@ def handle(u):
         q = u["callback_query"]; tg("answerCallbackQuery", callback_query_id=q["id"])
         if q["from"]["id"] != S.get("owner"): return
         k, v = q["data"].split(":", 1)
+        blog("in", button=q["data"])
         if k == "cut": cmd_cut(q["message"], v)
+        if k in ("ok", "no"): return confirm_answer(k, v)
+        if k == "mode": return mode_live() if v == "live" else (mode_past() if v == "past" else (cmd_shorts(None, "") if v == "shorts" else cmd_status(None, "")))
+        if k == "past": return past_pick(v)
+        if k == "live" and v == "stop": return live_stop()
         if k == "go": cmd_go(q["message"], v)
         return
     m = u.get("message") or {}
@@ -502,6 +696,7 @@ def handle(u):
     if uid != S.get("owner"):
         if txt.startswith("/pair"): cmd_pair(m, txt[5:].strip())
         return                                                           # strangers are ignored
+    blog("in", text=txt[:500], photo="photo" in m, document=(m.get("document") or {}).get("file_name"))
     if "photo" in m: return on_photo(m)
     if "document" in m: return on_document(m)
     if txt.startswith("/"):
@@ -511,9 +706,10 @@ def handle(u):
         else: say("Не знаю такую команду. /help")
 
 def main():
-    log("bot started; work dir", WORK)
+    log("bot started; work dir", WORK); blog("start", work=WORK, owner=bool(S.get("owner")))
     tg("setMyCommands", commands=[{"command": c, "description": d} for c, d in [
         ("status", "что происходит"), ("vod", "выбрать VOD/канал"), ("watch", "следить за стримом"), ("transcribe", "расшифровать VOD"),
+        ("start", "меню: эфир / прошедший стрим"), ("live", "нарезать идущий эфир"), ("past", "нарезать прошедший стрим"), ("logs", "логи бота"),
         ("map", "темы стрима"), ("cut", "нарезать тему"), ("jobs", "нарезки"), ("title", "название"), ("chapters", "тайм-коды"),
         ("desc", "описание"), ("publish", "опубликовать"), ("short", "собрать шортс"), ("shorts", "полка шортсов"),
         ("pubshorts", "опубликовать полку"), ("limits", "18+/ограничения"), ("cookies", "прислать cookies"), ("panel", "поднять Studio"), ("help", "помощь")]])
