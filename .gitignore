@@ -2,3 +2,7 @@ cookies*.txt
 *.cookies
 __pycache__/
 out/
+
+# local AI model files (large, never commit)
+*.gguf
+models/
