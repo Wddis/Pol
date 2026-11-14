@@ -351,6 +351,8 @@ def cmd_title(m, a):
     if not a: return say(f"Название: <b>{esc(jd.get('title', '—'))}</b>\nФормат: /title КАПС-ХУК - суть / РЕАКЦИЯ T2x2 (≤100)")
     if len(a) > 100: return say(f"Длина {len(a)} > 100")
     blog("edit_title", job=j, title=a.strip()); jd["title"] = a.strip(); jsave(j, jd); say(f"✅ Название: <b>{esc(a)}</b>")
+    if S.get("publish_after_title") == j and jd.get("cover") and jd.get("stage") == "preview":
+        S["publish_after_title"] = ""; save(); cmd_publish(m, "")
 def cmd_chapters(m, a):
     j, jd = cur_job()
     if not jd: return say("Нет текущей нарезки")
@@ -381,7 +383,14 @@ def on_photo(m):
     j, jd = cur_job()
     if not jd: return say("Обложку некуда прикрепить: нет текущей нарезки (/jobs)")
     fid = m["photo"][-1]["file_id"]; path = os.path.join(jdir(j), "cover.jpg")
-    if download(fid, path): jd["cover"] = path; jsave(j, jd); say(f"🖼 Обложка для {j} сохранена. /publish — публикуем.")
+    if download(fid, path):
+        jd["cover"] = path; jsave(j, jd); blog("cover", job=j)
+        if jd.get("stage") not in ("preview", "published"):
+            return say(f"🖼 Обложка для {j} сохранена. Видео ещё не готово (стадия: {esc(jd.get('stage'))}) — предложу публикацию, когда будет превью.")
+        if not jd.get("title"):
+            S["publish_after_title"] = j; save()
+            return say(f"🖼 Обложка сохранена. Осталось название: /title КАПС-ХУК - суть / РЕАКЦИЯ T2x2 — и сразу предложу опубликовать.")
+        say("🖼 Обложка сохранена."); cmd_publish(m, "")                     # → confirmation ✅/✖️ with all checks
 def download(fid, path):
     r = tg("getFile", file_id=fid)
     if not r.get("ok"): return False
