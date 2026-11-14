@@ -105,8 +105,8 @@ jobs:
           [ -d venv ] || python3 -m venv venv
           venv/bin/pip install -q --upgrade pip >/dev/null
           venv/bin/pip install -q -r requirements.txt
-          # run.sh — простой foreground-запуск, как требует supervisor Vibe (без перенаправления вывода:
-          # это ломало детект приложения). Диагностику старта ловим отдельным разовым запуском ниже.
+          # run.sh — простой foreground-запуск, как требует supervisor Vibe (перенаправление вывода в файл
+          # ломало детект приложения). Один перезапуск за деплой — чтобы Telegram не включал flood control.
           cat > /root/run.sh <<'SH'
           #!/usr/bin/env bash
           cd /root/bot
@@ -115,15 +115,9 @@ jobs:
           SH
           chmod +x /root/run.sh
           echo "=== ключи в .env (только имена) ==="; grep -oE '^[A-Z_]+=' /root/bot/.env | tr -d '=' || true
-          # Разовая диагностика старта: ловим ошибки импорта/конфига до того, как доверим supervisor
-          pkill -f '[b]ot\.py' || true; sleep 2
-          timeout 25 bash -c 'cd /root/bot; set -a; . ./.env; set +a; /root/bot/venv/bin/python bot.py' > /root/bot/startup.log 2>&1 &
-          DIAG=$!; sleep 20
-          echo "=== startup.log (разовый запуск) ==="; tail -25 /root/bot/startup.log 2>/dev/null || echo "(пусто)"
-          up=""; curl -s -o /dev/null -m 5 "http://127.0.0.1:80/" && up=1
-          echo "бот на :80 при разовом запуске: ${up:-нет}"
-          kill $DIAG 2>/dev/null; pkill -f '[b]ot\.py' || true; sleep 2
-          # supervisor сам поднимет run.sh; окончательную проверку делает шаг Check через публичный адрес
+          # один перезапуск: убиваем старого бота, supervisor поднимет run.sh с новым кодом
+          pkill -f '[b]ot\.py' || true
+          echo "run.sh обновлён, бот перезапущен; проверка — через публичный адрес в шаге Check"
 
       - name: Check
         env:
