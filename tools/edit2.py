@@ -11,11 +11,18 @@ ax, ay = plan.get("zoom", {}).get("anchor", [1, 1])
 RAMP, PAD = 0.35, 0.4
 tmp = out + ".parts"; os.makedirs(tmp, exist_ok=True)
 
-def blur(inp, boxes=None):
-    f, cur = "", inp
-    for i, (x, y, w, h) in enumerate(plan.get("blur", []) if boxes is None else boxes):
-        f += f"[{cur}]split[b{i}a][b{i}b];[b{i}b]crop={w}:{h}:{x}:{y},gblur=sigma=25[b{i}c];[b{i}a][b{i}c]overlay={x}:{y}[bl{i}];"
-        cur = f"bl{i}"
+def blur(inp, boxes=None, s=0.0, e=1e9):
+    """boxes: [x,y,w,h] (whole sub-part) or [x,y,w,h,t0,t1] — timed box, t0/t1 in SOURCE-file seconds
+    (e.g. a FONBET promo message in chat, found by tools/chat_promo_scan.py). Sub-part starts at src time s."""
+    f, cur, i = "", inp, 0
+    for bx in (plan.get("blur", []) if boxes is None else boxes):
+        x, y, w, h = bx[:4]; en = ""
+        if len(bx) >= 6:
+            t0, t1 = bx[4], bx[5]
+            if t1 <= s or t0 >= e: continue
+            en = f":enable='between(t,{max(0, t0 - s):.3f},{t1 - s:.3f})'"
+        f += f"[{cur}]split[b{i}a][b{i}b];[b{i}b]crop={w}:{h}:{x}:{y},gblur=sigma=25[b{i}c];[b{i}a][b{i}c]overlay={x}:{y}{en}[bl{i}];"
+        cur = f"bl{i}"; i += 1
     return cur, f
 
 # build sub-parts: (start, end, zoom_window_relative or None)
@@ -38,7 +45,7 @@ for c in plan["clips"]:
 def render(i_sub):
     i, (s, e, zw, bl) = i_sub
     p = f"{tmp}/{i:04d}.mp4"
-    lab, bf = blur("0:v", bl)
+    lab, bf = blur("0:v", bl, s, e)
     if zw:
         a, b, zf = zw
         k = f"min(clip((t-{a})/{RAMP},0,1),clip(({b}-t)/{RAMP},0,1))"
