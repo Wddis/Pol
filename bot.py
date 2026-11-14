@@ -67,7 +67,8 @@ BUSY_BASE = 30           # пауза между попытками при пе�
 
 user_models = {}         # user_id -> выбранная модель
 
-MAX_TOOL_ROUNDS = 12     # сколько шагов с инструментами (поиск, файлы, API) за один ответ
+MAX_TOOL_ROUNDS = int(os.environ.get("MAX_TOOL_ROUNDS", "40"))   # шагов с инструментами за один ответ
+WINDDOWN_AT = 4          # за столько шагов до лимита просим модель начать подводить итог
 EDIT_INTERVAL = 2.5      # как часто обновлять сообщение «Думаю…» (сек)
 TG_LIMIT = 4000          # лимит длины сообщения Telegram (с запасом)
 
@@ -453,10 +454,20 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
     status.attach_images = []
     timeout = httpx.Timeout(connect=30, read=600, write=30, pool=30)
     async with httpx.AsyncClient(timeout=timeout) as client:
+        winddown_sent = False
         for round_no in range(MAX_TOOL_ROUNDS + 1):
             tools = (TOOLS if use_web else []) + ws.FILE_TOOLS + ws.API_TOOLS + devtools.TOOLS_ALL \
                 + bigfiles.TOOLS + (devtools.TOOLS_OWNER if devtools.is_owner(user_id) else []) \
                 if round_no < MAX_TOOL_ROUNDS else None
+            # За несколько шагов до лимита — просим модель начать подводить итог, чтобы не потерять работу
+            if tools and not winddown_sent and round_no >= MAX_TOOL_ROUNDS - WINDDOWN_AT and did_tools:
+                winddown_sent = True
+                turn.append({"role": "user", "content":
+                    "[Системное: осталось немного шагов на этот ответ. Для большой задачи работай ЧАСТЯМИ: "
+                    "заверши текущую часть и дай пользователю промежуточный результат по уже найденному, "
+                    "сохрани выводы в тексте ответа и ясно скажи, что проверил и что осталось. "
+                    "Если задача большая — предложи, какие части разобрать дальше (пользователь напишет «продолжи»). "
+                    "Не начинай новых длинных обходов, не трать шаги впустую.]"})
             # Только выбранная модель — никаких подмен. При лимите ждём с обратным отсчётом.
             routes = [r for r in MODELS[chosen]["routes"] if PROVIDERS[r[0]]["key"]]
             used_route = None
@@ -587,12 +598,17 @@ async def ask_model(user_id: int, user_message: str, status: LiveStatus, out=Non
                 turn.append({"role": "user", "content": parts})
                 status.attach_images = []
                 status.actions.append("👀 Проверяю снимок")
-            status.stage = "🧠 Думаю дальше…"
+            status.stage = f"🧠 Думаю дальше… (шаг {round_no + 1}/{MAX_TOOL_ROUNDS})"
             status.reasoning = ""
-    # исчерпали лимит шагов — не падаем, а отдаём что есть
+    # исчерпали лимит шагов — не падаем, а отдаём что есть, и приглашаем продолжить
     history.append({"role": "user", "content": history_text or user_message})
-    tail = content.strip() if content.strip() else \
-        "Задача оказалась слишком большой за один раз — задай её по частям, и я продолжу."
+    note = "\n\n_(Это промежуточный результат — задача большая. Напиши «продолжи», и я разберу дальше.)_"
+    if content.strip():
+        tail = content.strip() + note
+    else:
+        tail = ("Задача большая и за один проход не уместилась. Я уже кое-что собрал — напиши «продолжи», "
+                "и я продолжу с того же места. Или уточни, какую часть разобрать в первую очередь "
+                "(например, конкретную функцию, строку или участок).")
     history.append({"role": "assistant", "content": tail})
     ws.save_history(user_id, history)
     return tail, "\n\n".join(all_reasoning), used_route
