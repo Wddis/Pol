@@ -78,7 +78,8 @@ def main():
     out = (a * g[:, None]).clip(-32768, 32767).astype(np.int16)
     wo = wave.open(f"{tmp}/muted.wav", "wb"); wo.setnchannels(2); wo.setsampwidth(2); wo.setframerate(sr); wo.writeframes(out.tobytes()); wo.close()
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", x.inp, "-i", f"{tmp}/muted.wav", "-map", "0:v", "-map", "1:a",
-                    "-c:v", "copy", "-c:a", "aac", "-b:a", "192k", "-ar", "48000", "-movflags", "+faststart", x.out], check=True)
+                    "-c:v", "copy", "-af", "alimiter=limit=0.841:attack=5:release=50:level=false", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
+                    "-movflags", "+faststart", x.out], check=True)   # limiter: AAC re-encode overshoot (peak -0.5 dB seen 16.11)
     subprocess.run(["rm", "-rf", tmp])
     print("done", x.out)
 
