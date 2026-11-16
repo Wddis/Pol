@@ -1,3 +1,5 @@
+> **Начинать с `docs/REGLAMENT.md`** — сводный регламент (порядок работы, правила владельца, опыт, быстрые инструменты).
+
 # ПЕРЕДАЧА СЕССИИ — с чего начать, где мы, что умеем (обновлено 12.11.2026, ~18:00 UTC)
 
 Читать ПЕРВЫМ в новой сессии. **Регламент быстрых инструментов — `docs/tools-speed.md`; референсы обложки — `docs/cover-refs.md`.** **Telegram-бот @Jeskach_bim_bot — BETA / СЛАБЫЙ БОТ (вспомогательный). ОСНОВА ГЛАВНАЯ = ручная нарезка в сессии Claude по этой ветке.** Бот работает на GitHub Actions (`.github/workflows/t2x2-bot.yml` в main, секреты TG_BOT_TOKEN/TG_OWNER_ID/YT_COOKIES_B64), автонарезка ~80 % от ручной (`tools/tgbot/QUALITY.md`). Подробности: (`tools/tgbot/README.md`); ОСНОВНОЙ способ нарезки пока — вручную в сессии Claude по этой ветке. Логи бота `WORK/logs/*.jsonl` → улучшать бота по ним (`tools/eval_cut.py`, `tools/tgbot/QUALITY.md`). Дальше — `docs/STATUS.md` (детальный статус), правила — `docs/montage-style.md`,
