@@ -11,7 +11,7 @@ How it works: frames at --fps -> cheap prefilter (the bot's message is highlight
 «npoMoKoAy») -> lines matching promo keywords -> the whole message (from its «HH:MM» line to the next message)
 -> box padded a bit; boxes of consecutive samples are merged. Always CHECK a few frames by eye after rendering.
 Needs: pip install rapidocr-onnxruntime"""
-import sys, json, re, subprocess, argparse
+import sys, os, json, re, subprocess, argparse
 import numpy as np
 
 ap = argparse.ArgumentParser(); ap.add_argument("video"); ap.add_argument("--region", default="1540,90,380,900")
@@ -62,14 +62,21 @@ def promo_boxes(img):
 
 fr = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-i", a.video, "-vf", f"fps={a.fps},crop={RW}:{RH}:{RX}:{RY}",
                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
-n = RW * RH * 3; k = 0; hits = []
+n = RW * RH * 3; k = 0; hits = []; prev = None; OCR_N = [0]
 while True:
     buf = fr.stdout.read(n)
     if len(buf) < n: break
     t = k / a.fps; k += 1
     img = np.frombuffer(buf, np.uint8).reshape(RH, RW, 3)
-    if maroon_score(img) < 1500: continue
-    for y0, y1, x0, x1 in promo_boxes(img):
+    if maroon_score(img) < 1500: prev = None; continue
+    # speed-up (16.11): OCR only when the chat picture changed; otherwise reuse the previous boxes
+    small = img[::4, ::4].astype(np.int16)
+    if prev is not None and np.abs(small - prev[0]).mean() < float(os.environ.get("PROMO_DIFF", 2.0)):
+        res = prev[1]
+    else:
+        res = promo_boxes(img); OCR_N[0] += 1
+    prev = (small, res)
+    for y0, y1, x0, x1 in res:
         hits.append([RX + x0, RY + max(0, y0), x1 - x0, min(RH, y1) - max(0, y0), t - 0.5 / a.fps - 0.05, t + 0.5 / a.fps + 0.05])
 # merge consecutive samples with near-identical boxes (chat scrolls -> a new box when it moves)
 boxes = []
@@ -81,4 +88,4 @@ for h in hits:
 boxes = [[int(b[0]), int(b[1]), int(b[2]), int(b[3]), round(max(0, b[4]), 2), round(b[5], 2)] for b in boxes]
 js = json.dumps(boxes)
 if a.out: open(a.out, "w").write(js)
-print(f"promo boxes: {len(boxes)} (samples with promo: {len(hits)})", file=sys.stderr); print(js)
+print(f"promo boxes: {len(boxes)} (samples with promo: {len(hits)}, OCR runs: {OCR_N[0]} of {k} frames)", file=sys.stderr); print(js)
