@@ -15,13 +15,23 @@ def blur(inp, boxes=None, s=0.0, e=1e9):
     """boxes: [x,y,w,h] (whole sub-part) or [x,y,w,h,t0,t1] — timed box, t0/t1 in SOURCE-file seconds
     (e.g. a FONBET promo message in chat, found by tools/chat_promo_scan.py). Sub-part starts at src time s."""
     f, cur, i = "", inp, 0
-    for bx in (plan.get("blur", []) if boxes is None else boxes):
+    bl_ = plan.get("blur", []) if boxes is None else boxes
+    static = [b for b in bl_ if len(b) < 6]; timed = sorted([list(b) for b in bl_ if len(b) >= 6], key=lambda b: b[4])
+    merged = []                                       # glue boxes of the same message seen in neighbouring samples
+    for b in timed:
+        m = next((q for q in merged[-8:] if b[4] <= q[5] + 0.05 and abs(b[1] - q[1]) <= 6 and abs(b[3] - q[3]) <= 8), None)   # same place only
+        if m:
+            x0, y0 = min(m[0], b[0]), min(m[1], b[1]); x1, y1 = max(m[0] + m[2], b[0] + b[2]), max(m[1] + m[3], b[1] + b[3])
+            m[0], m[1], m[2], m[3], m[5] = x0, y0, x1 - x0, y1 - y0, max(m[5], b[5])
+        else: merged.append(b)
+    for bx in static + merged:
         x, y, w, h = bx[:4]; en = ""
         if len(bx) >= 6:
             t0, t1 = bx[4], bx[5]
             if t1 <= s or t0 >= e: continue
             en = f":enable='between(t,{max(0, t0 - s):.3f},{t1 - s:.3f})'"
-        f += f"[{cur}]split[b{i}a][b{i}b];[b{i}b]crop={w}:{h}:{x}:{y},gblur=sigma=25[b{i}c];[b{i}a][b{i}c]overlay={x}:{y}{en}[bl{i}];"
+        gen = en.replace(":enable", "enable") if en else ""                 # blur is computed ONLY while the box is shown
+        f += f"[{cur}]split[b{i}a][b{i}b];[b{i}b]crop={w}:{h}:{x}:{y},gblur=sigma=25{(':' + gen) if gen else ''}[b{i}c];[b{i}a][b{i}c]overlay={x}:{y}{en}[bl{i}];"
         cur = f"bl{i}"; i += 1
     return cur, f
 
@@ -46,6 +56,13 @@ def render(i_sub):
     i, (s, e, zw, bl) = i_sub
     p = f"{tmp}/{i:04d}.mp4"
     lab, bf = blur("0:v", bl, s, e)
+    mk = plan.get("mask"); extra = []
+    if mk:                                                  # frame-accurate promo mask (tools/chat_promo_mask.py)
+        mx, my, mw, mh = mk["x"], mk["y"], mk["w"], mk["h"]
+        extra = ["-ss", f"{s:.3f}", "-to", f"{e:.3f}", "-i", mk["file"]]
+        bf += (f"[{lab}]split[mka][mkb];[mkb]crop={mw}:{mh}:{mx}:{my},gblur=sigma=25[mkc];"
+               f"[1:v]fps=60,format=gray,scale={mw}:{mh}[mkm];[mkc][mkm]alphamerge[mkd];[mka][mkd]overlay={mx}:{my}:shortest=0:eof_action=pass[mkout];")
+        lab = "mkout"
     if zw:
         a, b, zf = zw
         k = f"min(clip((t-{a})/{RAMP},0,1),clip(({b}-t)/{RAMP},0,1))"
@@ -54,7 +71,7 @@ def render(i_sub):
               f"crop=1920:1080:x='floor(1920*({z}-1)*{ax})':y='floor(1080*({z}-1)*{ay})',fps=60,format=yuv420p[v]")
     else:
         vf = bf + f"[{lab}]fps=60,format=yuv420p[v]"
-    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{s:.3f}", "-to", f"{e:.3f}", "-i", src,
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{s:.3f}", "-to", f"{e:.3f}", "-i", src] + extra + [
                     "-filter_complex", vf, "-map", "[v]", "-map", "0:a",
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-g", "120", "-threads", str(max(1, 4 // jobs)),
                     "-c:a", "aac", "-b:a", "192k", "-ar", "48000", p], check=True)
