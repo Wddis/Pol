@@ -7,7 +7,7 @@
 # webcam layout, build the template with --talk too). Each crop is scaled to FILL its card (centre crop, no squash).
 # The webcam is NEVER blurred (owner's rule, 11.11.2026). Old grunge template: tools/shorts_render.sh (archive).
 src=$1; pre=$2; out=$3; segs=$4
-SCR=${SCR:-1264:711:328:0}; CAM=${CAM:-640:364:1280:716}
+SCR=${SCR:-1264:711:328:0}; CAM=${CAM:-620:349:1300:716}
 fill() { echo "crop=$1,scale=$2:$3:force_original_aspect_ratio=increase:flags=lanczos,crop=$2:$3"; }
 i=0; list=""
 for r in $segs; do a=${r%-*}; b=${r#*-}
