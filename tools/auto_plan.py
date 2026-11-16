@@ -117,7 +117,7 @@ clips = subtract(clips, cut_iv)                                   # donation blo
 if x.target and sum(e - s for s, e in clips) > x.target * 60 * 1.15:
     clips = highlights(L, clips, x.a, x.b, x.target * 60)
 clips = [c for c in clips if c[1] - c[0] > 1.0]
-BL = [[0, 0, 262, 105], [1600, 18, 320, 245]]
+BL = [[0, 0, 268, 108], [1610, 8, 302, 102]]
 plan = {"zoom": {"factor": 1.5, "anchor": [1, 1]}, "blur": BL, "vod_from": x.a, "vod_to": x.b, "file_offset": x.off,
         "clips": [{"s": round(s - x.off, 2), "e": round(e - x.off, 2), "zoom": [], "blur": list(BL)} for s, e in clips]}
 # moments = kept windows (for the owner's review in the bot) and chapters (≤ 14, ≥ 60 s, first = 0:00)

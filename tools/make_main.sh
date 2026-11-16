@@ -24,7 +24,7 @@ cl = []; cur = A
 for c in sorted(tuple(map(float, x.split("-"))) for x in cuts.split()):
     cl.append((cur, c[0])); cur = c[1]
 cl.append((cur, B))
-BL = [[0, 0, 262, 105], [1600, 18, 320, 245]]
+BL = [[0, 0, 268, 108], [1610, 8, 302, 102]]
 json.dump({"zoom": {"factor": 1.5, "anchor": [1, 1]}, "blur": BL, "mask": {"file": W + "/mask.mkv", "x": 1630, "y": 90, "w": 290, "h": 900},
            "clips": [{"s": round(a - off, 2), "e": round(b - off, 2), "zoom": [], "blur": list(BL)} for a, b in cl if b - a > 1]}, open("plan.json", "w"))
 print("plan:", len(cl), "clips,", round(sum(b - a for a, b in cl) / 60, 1), "min")
