@@ -1,6 +1,8 @@
 #!/bin/bash
 # GitHub Actions runner: start the bot for up to ~5.6 h; the next run (hourly schedule, concurrency queue) takes over.
 . ~/venv/bin/activate
+if [ -z "$TG_BOT_TOKEN" ]; then echo "::error::TG_BOT_TOKEN is empty: add it in Settings → Secrets and variables → Actions → Secrets (Repository secret)"; exit 1; fi
+echo "secrets: token yes, owner $([ -n "$TG_OWNER_ID" ] && echo yes || echo NO), cookies $([ -n "$YT_COOKIES_B64" ] && echo yes || echo NO)"
 mkdir -p ~/t2x2work
 if [ -n "$YT_COOKIES_B64" ]; then echo "$YT_COOKIES_B64" | base64 -d > ~/t2x2work/cookies.txt; chmod 600 ~/t2x2work/cookies.txt; fi
 export T2X2_WORK=~/t2x2work SHORTS_FONTS=~/fonts ASSIST_MODEL=~/models/qwen3b.gguf ASSIST_THREADS=3 GHA_RUN=1
