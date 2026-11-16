@@ -60,6 +60,27 @@ def promo_boxes(img):
         else: merged.append((y0, y1, x0, x1))
     return merged
 
+def promo_boxes_fast(img):
+    """speed-up 16.11: the bot's promo message sits on its own maroon highlight → find those bands by colour, OCR only
+    the band crops (≈5–10× less area), keep a band if its text has promo keywords. Box = the band itself."""
+    m = maroon_mask(img); rows = m.mean(1) > 0.2
+    bands = []; y = 0; H_ = len(rows)
+    while y < H_:
+        if rows[y]:
+            y0 = y
+            while y < H_ and rows[y]: y += 1
+            if y - y0 >= 18: bands.append((y0, y))
+        y += 1
+    out = []
+    for y0, y1 in bands:
+        crop = np.ascontiguousarray(img[y0:y1, :, ::-1])
+        res, _ = ocr(crop)
+        txt = " ".join(t for _, t, _ in (res or []))
+        if KEY.search(txt):
+            xa, xb = snap_x(img, y0, y1, (0, img.shape[1]))
+            out.append((y0 - 2, y1 + 2, xa, xb))
+    return out
+
 fr = subprocess.Popen(["ffmpeg", "-loglevel", "error", "-i", a.video, "-vf", f"fps={a.fps},crop={RW}:{RH}:{RX}:{RY}",
                        "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], stdout=subprocess.PIPE)
 n = RW * RH * 3; k = 0; hits = []; prev = None; OCR_N = [0]
@@ -74,7 +95,7 @@ while True:
     if prev is not None and np.abs(small - prev[0]).mean() < float(os.environ.get("PROMO_DIFF", 2.0)):
         res = prev[1]
     else:
-        res = promo_boxes(img); OCR_N[0] += 1
+        res = promo_boxes_fast(img) if os.environ.get("PROMO_FAST", "1") == "1" else promo_boxes(img); OCR_N[0] += 1
     prev = (small, res)
     for y0, y1, x0, x1 in res:
         hits.append([RX + x0, RY + max(0, y0), x1 - x0, min(RH, y1) - max(0, y0), t - 0.5 / a.fps - 0.05, t + 0.5 / a.fps + 0.05])
