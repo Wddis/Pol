@@ -46,9 +46,9 @@ jobs:
         run: bash tools/tgbot/gha_install.sh
       - name: Run bot
         env:
-          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
-          TG_OWNER_ID: ${{ secrets.TG_OWNER_ID }}
-          YT_COOKIES_B64: ${{ secrets.YT_COOKIES_B64 }}
+          TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN || vars.TG_BOT_TOKEN }}
+          TG_OWNER_ID: ${{ secrets.TG_OWNER_ID || vars.TG_OWNER_ID }}
+          YT_COOKIES_B64: ${{ secrets.YT_COOKIES_B64 || vars.YT_COOKIES_B64 }}
         run: bash tools/tgbot/gha_run.sh
       - name: Save bot state
         if: always()
