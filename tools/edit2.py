@@ -83,7 +83,7 @@ with cf.ThreadPoolExecutor(jobs) as ex:
 with open(f"{tmp}/list.txt", "w") as f:
     for p in parts: f.write(f"file '{os.path.abspath(p)}'\n")
 subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", f"{tmp}/list.txt",
-                "-c:v", "copy", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
-                "-movflags", "+faststart", out], check=True)
+                "-c", "copy", f"{tmp}/cat.mp4"], check=True)
+subprocess.run([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), "norm_audio.py"), f"{tmp}/cat.mp4", out], check=True)   # 2-pass linear (16.11)
 subprocess.run(["rm", "-rf", tmp])
 print("done", out, flush=True)
