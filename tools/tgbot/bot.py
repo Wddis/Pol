@@ -168,7 +168,7 @@ HELP = """<b>Двойная резка — бот</b> 🧪 бета (основ�
 /status · /stop — остановить слежение"""
 
 def cmd_start(m, a): say(HELP)
-STAGE_RU = {"queued": "в очереди", "review": "👀 ЖДЁТ ТЕБЯ: проверь моменты → /go", "preview": "✅ превью готово → обложка/название/публикация",
+STAGE_RU = {"interrupted": "⛔ прервана перезапуском — повтори /cut", "queued": "в очереди", "review": "👀 ЖДЁТ ТЕБЯ: проверь моменты → /go", "preview": "✅ превью готово → обложка/название/публикация",
             "published": "📤 опубликовано", "shelf": "на полке (шортс)"}
 def live_state():
     """parse live_update.sh log → (state text, error or '')"""
@@ -835,9 +835,32 @@ def handle(u):
     elif txt.strip():
         on_text(m, txt.strip())
 
+def resume_after_restart():
+    """the server restarts (GitHub Actions: every ~5.6 h; container restarts) — continue where it stopped"""
+    time.sleep(3)
+    notes = []
+    if S.get("busy"): notes.append(f"прервалась задача «{S['busy']}» — повтори её той же командой")
+    S["busy"] = ""; S["now"] = {}; save()
+    root = os.path.join(WORK, "jobs")
+    for j in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        jd = jload(j) or {}
+        if jd.get("stage") in ("queued", "review") and not os.path.exists(os.path.join(jdir(j), "ev.mp4")):
+            jd["stage"] = "interrupted"; jsave(j, jd); notes.append(f"нарезка {j} ({fmt(jd.get('from', 0))}–{fmt(jd.get('to', 0))}) прервана — /cut {fmt(jd.get('from', 0))}-{fmt(jd.get('to', 0))}")
+    if S.get("live_on") and S.get("vod"):
+        st, vids = twitch_info(2)
+        if st and any(v["id"] == S["vod"] and v.get("status") == "RECORDING" for v in vids):
+            ensure_watch(S["vod"]); threading.Thread(target=live_loop, args=(S["vod"],), daemon=True).start()
+            notes.append("нарезка эфира продолжается")
+        else:
+            S["live_on"] = False; save(); notes.append("эфир закончился, пока я перезапускался — темы: /map")
+    blog("resumed", notes=notes)
+    if notes and S.get("owner"):
+        say("🔁 <b>Бот перезапустился</b> (сервер обновился).\n" + "\n".join("• " + esc(n) for n in notes))
+
 def main():
     log("bot started; work dir", WORK); blog("start", work=WORK, owner=bool(S.get("owner")), ai=bool(assist.MODEL))
     assist.preload()
+    threading.Thread(target=resume_after_restart, daemon=True).start()
     tg("setMyCommands", commands=[{"command": c, "description": d} for c, d in [
         ("status", "что происходит"), ("vod", "выбрать VOD/канал"), ("watch", "следить за стримом"), ("transcribe", "расшифровать VOD"),
         ("start", "меню: эфир / прошедший стрим"), ("live", "нарезать идущий эфир"), ("past", "нарезать прошедший стрим"), ("logs", "логи бота"),
