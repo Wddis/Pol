@@ -844,9 +844,15 @@ def main():
         ("map", "темы стрима"), ("cut", "нарезать тему"), ("jobs", "нарезки"), ("title", "название"), ("chapters", "тайм-коды"),
         ("desc", "описание"), ("publish", "опубликовать"), ("short", "собрать шортс"), ("shorts", "полка шортсов"),
         ("pubshorts", "опубликовать полку"), ("limits", "18+/ограничения"), ("cookies", "прислать cookies"), ("panel", "поднять Studio"), ("help", "помощь")]])
-    off = S.get("offset", 0)
+    off = S.get("offset", 0); conflicts = 0
     while True:
         r = tg("getUpdates", offset=off, timeout=50)
+        if r and not r.get("ok") and "Conflict" in str(r.get("description")):
+            conflicts += 1; time.sleep(5)
+            if conflicts >= 3 and os.environ.get("BOT_YIELD") == "1":      # the permanent server took over
+                blog("yield", reason="another bot instance is polling"); log("another instance is running — exiting"); os._exit(0)
+            continue
+        conflicts = 0
         for u in r.get("result", []) if r else []:
             off = u["update_id"] + 1; S["offset"] = off; save()
             try: handle(u)
