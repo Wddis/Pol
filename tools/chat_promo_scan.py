@@ -37,7 +37,7 @@ def snap_x(img, y0, y1, xs):
     if m.size:
         cols = np.where(m.mean(0) > 0.25)[0]
         if len(cols) > 40: return int(cols.min()), int(cols.max()) + 1
-    return max(0, min(xs[0]) - 6), min(img.shape[1], max(xs[1]) + 6)
+    return max(0, int(xs[0]) - 6), min(img.shape[1], int(xs[1]) + 6)
 
 def promo_boxes(img):
     res, _ = ocr(np.ascontiguousarray(img[..., ::-1]))           # BGR for the OCR
