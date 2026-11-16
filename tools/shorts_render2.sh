@@ -5,7 +5,7 @@
 # Layout (template v2): screen card 1008x567 at 36,392; webcam card 1008x567 at 36,983; TALK: one card 1008x1158 at 36,392.
 # Crops from the 1920x1080 source (env): SCR="w:h:x:y" (screen), CAM="w:h:x:y" (webcam), TALK="w:h:x:y" (full-screen
 # webcam layout, build the template with --talk too). Each crop is scaled to FILL its card (centre crop, no squash).
-# The webcam is NEVER blurred (owner's rule, 11.11.2026). Old grunge template: tools/shorts_render.sh (archive).
+# Mat is muted by default (mat_mute.py, owner 16.11; MAT=0 turns it off). The webcam is NEVER blurred (owner's rule, 11.11.2026). Old grunge template: tools/shorts_render.sh (archive).
 src=$1; pre=$2; out=$3; segs=$4
 SCR=${SCR:-1264:711:328:0}; CAM=${CAM:-620:349:1300:716}
 fill() { echo "crop=$1,scale=$2:$3:force_original_aspect_ratio=increase:flags=lanczos,crop=$2:$3"; }
@@ -18,4 +18,6 @@ ffmpeg -loglevel error -y -ss $a -to $b -i $src -i ${pre}_bg.png -i ${pre}_fg.pn
 list="$list file '$PWD/part_${pre}_$i.mp4'\n"; i=$((i+1)); done
 printf "$list" > parts_${pre}.txt
 ffmpeg -loglevel error -y -f concat -safe 0 -i parts_${pre}.txt -c copy cat_${pre}.mp4 && \
- python3 "$(dirname "$0")/norm_audio.py" cat_${pre}.mp4 $out && rm -f part_${pre}_*.mp4 parts_${pre}.txt cat_${pre}.mp4
+ python3 "$(dirname "$0")/norm_audio.py" cat_${pre}.mp4 nm_${pre}.mp4 && \
+ if [ "$MAT" = 0 ]; then mv nm_${pre}.mp4 $out; else python3 "$(dirname "$0")/mat_mute.py" nm_${pre}.mp4 $out --report mat_${pre}.txt && rm -f nm_${pre}.mp4 nm_${pre}.mp4.words.json; fi && \
+ rm -f part_${pre}_*.mp4 parts_${pre}.txt cat_${pre}.mp4
