@@ -6,7 +6,7 @@
 ```
 КТО ПОБЕДИТ В ГОЛОДНЫХ ИГРАХ?! - MrBeast Воссоздал Голодные Игры В Реальной Жизни / РЕАКЦИЯ T2x2
 
-🎬 Оригинал видео - https://youtu.be/Q6fgVVmdpgY
+🎬 Оригинал видео - https://youtu.be/q6fgVVmdpgY
 💜 Твич T2x2 - https://www.twitch.tv/t2x2
 ✈️ Телеграм - t.me/t2xtwitch
 

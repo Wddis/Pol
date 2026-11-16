@@ -23,6 +23,7 @@ npm pack @fontsource/rubik-dirt@5.3.0 @fontsource/russo-one@5.3.0 @fontsource/mo
 
 ## 2. Что опубликовано (канал «Двойная резка / T2x2», UC4R6TINYFRWa_80Vewy068g)
 Основные (все с 12.11 — с интро):
+- КТО ПОБЕДИТ В ГОЛОДНЫХ ИГРАХ?! (MrBeast, стрим 15.11) — https://youtu.be/1RRtmznb1M0 (16.11, интро «Ретро-ТВ», тайм-коды, маска промо)
 - ЗАЧЕМ ДУШ НА ПОДИУМЕ?! — https://youtu.be/Od9xHXYs28U (08.11)
 - ЗАЧЕМ ТЫ УБЕГАЕШЬ?! (4 дикие погони) — https://youtu.be/d8Y2j1WE6Mk (08.11)
 - ГЛАВА NVIDIA И КИТАЙСКАЯ ШПИОНКА?! — https://youtu.be/zNd_s0iyrkc (12.11, с интро)
