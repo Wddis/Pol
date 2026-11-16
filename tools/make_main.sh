@@ -1,8 +1,8 @@
 #!/bin/bash
 # One command → finished main video (rules of this branch), steps overlapped where possible, resumable.
-# usage: tools/make_main.sh VOD FROM TO "cut_a-cut_b cut_a-cut_b ..." NAME [workdir]
+# usage: [ORIG=<original YouTube id> | GAME=1] tools/make_main.sh VOD FROM TO "cut_a-cut_b cut_a-cut_b ..." NAME [workdir]
 #   FROM/TO, cuts — VOD seconds (cuts: empty donations etc., check them with tools/donations.py first)
-# result: WORK/NAME.mp4 (1080p60 + intro «Ретро-ТВ»), WORK/NAME_preview_360p30.mp4, WORK/refs/*.jpg
+# result: WORK/NAME.mp4 (1080p60 + intro «Ретро-ТВ»), WORK/NAME_preview_360p30.mp4, WORK/refs/ (strict cover_refs set: original cover, faces ×8, cutouts ×4, screens ×4, sheet, zip)
 # Steps (each skipped if its output exists → rerun continues after a crash):
 #   1 segments 1080p60  ∥  (as soon as cut) 2 promo mask (chat_promo_mask.py) ∥ plan
 #   3 render edit2 (no zoom, webcam untouched, blur widget/banner + promo mask) → 4 intro ∥ cover refs → 5 preview
@@ -32,8 +32,11 @@ P
 [ -n "$MP" ] && wait $MP
 if [ ! -s out.mp4 ]; then log "3 render"; python3 $T/edit2.py ev.mp4 plan.json out.mp4 2 >> make.log 2>&1; fi
 log "4 intro + refs"; bash $T/add_intro.sh out.mp4 $NAME.mp4 >> make.log 2>&1 &
-mkdir -p refs; D=$(ffprobe -v error -show_entries format=duration -of csv=p=0 out.mp4)
-for i in 0 1 2 3 4 5; do ffmpeg -loglevel error -y -ss $(python3 -c "print($D*($i+0.5)/6)") -i out.mp4 -frames:v 1 -q:v 2 refs/frame_$i.jpg; done
+# cover refs — STRICT set (docs/cover-refs.md): reaction → ORIG=<YouTube id/url of the original> (its cover is required),
+# game → GAME=1. Without either the step fails on purpose (no refs without the original's cover).
+if [ -n "$ORIG" ]; then python3 $T/cover_refs.py out.mp4 refs --orig "$ORIG" >> make.log 2>&1
+elif [ -n "$GAME" ]; then python3 $T/cover_refs.py out.mp4 refs --game >> make.log 2>&1
+else log "REFS: set ORIG=<original id> (reaction) or GAME=1 (game) and rerun"; fi
 wait
 log "5 preview"; ffmpeg -loglevel error -y -i $NAME.mp4 -vf "scale=640:360,fps=30" -c:v libx264 -preset veryfast -crf 24 -c:a aac -b:a 128k ${NAME}_preview_360p30.mp4
 log "DONE $W/$NAME.mp4"

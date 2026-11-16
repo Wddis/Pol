@@ -11,7 +11,7 @@ The video ID is taken EXACTLY as YouTube gives it (case-sensitive: q6fg… ≠ Q
 import os, sys, re, argparse, subprocess, io, zipfile, urllib.request
 from PIL import Image, ImageStat
 ap = argparse.ArgumentParser(); ap.add_argument("video"); ap.add_argument("out"); ap.add_argument("--orig")
-ap.add_argument("--game", action="store_true"); ap.add_argument("--cam", default="655,368,1265,712", help="w,h,x,y of the webcam in 1920x1080")
+ap.add_argument("--game", action="store_true"); ap.add_argument("--cam", default="620,349,1300,716", help="w,h,x,y of the webcam in 1920x1080")
 a = ap.parse_args(); os.makedirs(a.out, exist_ok=True)
 name = os.path.splitext(os.path.basename(a.video))[0]; files = []
 def dur(f): return float(subprocess.check_output(["ffprobe", "-v", "error", "-show_entries", "format=duration", "-of", "csv=p=0", f]))
