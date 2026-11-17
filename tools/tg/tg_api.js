@@ -103,7 +103,12 @@ async function lock() {
 }
 
 let chain = Promise.resolve(); // in-process: one withTg at a time, the next starts only after the previous fully ended
-function withTg(fn, cdp, account) { const run = chain.then(() => withTgOnce(fn, cdp, account)); chain = run.catch(() => {}); return run; }
+function withTg(fn, cdp, account) {
+  const run = chain.then(() => withTgOnce(fn, cdp, account));
+  // the queue must not swallow errors (17.11: a tool exited silently with code 0 when the pult was down)
+  chain = run.catch(e => { console.error('ОШИБКА:', e.message); process.exitCode = 1; });
+  return run;
+}
 async function withTgOnce(fn, cdp = 'http://127.0.0.1:9222', account = 1) {
   const unlock = await lock();
   const b = await chromium.connectOverCDP(cdp);

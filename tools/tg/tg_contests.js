@@ -87,6 +87,7 @@ function importAll() {
 const SECTIONS = [
   { st: ['captcha'], h: '🤖 ПОДТВЕРДИТЬ «Я НЕ БОТ»', how: 'Нажмите «перейти на пост» → под постом «Участвовать» → пройдите проверку «я не бот» → дождитесь «Вы участвуете».', link: 'перейти на пост', act: 1 },
   { st: ['manual'], h: '✍️ ВЫПОЛНИТЬ УСЛОВИЕ ПОСТА', how: 'По условиям нужен комментарий, репост, лайк и т. п. — откройте пост и сделайте, что там написано.', link: 'перейти на пост', act: 1 },
+  { st: ['app_only'], h: '📱 НАЖАТЬ «УЧАСТВОВАТЬ» В ПРИЛОЖЕНИИ TELEGRAM', how: 'Бот RandomBeast не работает в веб-версии — откройте пост в приложении на телефоне и нажмите «Участвовать».', link: 'перейти на пост', act: 1, note: 1 },
   { st: ['unknown', 'bot_reply', 'error'], h: '🔎 ПРОВЕРИТЬ ВРУЧНУЮ', how: 'Бот не ответил ясно, участвуем ли мы. Откройте пост, нажмите «Участвовать» и посмотрите ответ.', link: 'перейти на пост', act: 1, note: 1 },
   { st: ['need_sub'], h: '⏳ ЖДЁТ ПОДПИСКИ НА КАНАЛЫ', how: 'Подписан ещё не на все каналы конкурса (лимит Telegram) — подпишу сам. Капчу по этим конкурсам пришлю ТОЛЬКО после проверки всех подписок. Сейчас ничего не нажимайте.', link: 'пост' },
   { st: ['won'], h: '🏆 ВЫИГРЫШ', how: 'Напишите организатору, от каналов не отписывайтесь до получения приза.', link: 'пост с итогами', act: 1 },
@@ -94,6 +95,7 @@ const SECTIONS = [
   { st: ['sub_only'], h: '☑️ УЧАСТВУЮ ПО ПОДПИСКЕ', how: 'Условие — только подписка, она оформлена. Бот такие конкурсы не подтверждает — проверим по итогам.', link: 'пост' },
   { st: ['no_post'], h: '📭 ПОДПИСАН, ПОСТ НЕ НАЙДЕН', how: 'На каналы подписан, но пост розыгрыша не нашёлся (закреп, старый пост или розыгрыш у партнёра). Загляните в канал при случае.', link: 'перейти в канал' },
   { st: ['lost'], h: '✗ ИТОГИ: НАС НЕТ', how: 'Можно отписываться (tg_contests.js leave).', link: 'пост с итогами' },
+  { st: ['excluded'], h: '🚫 ОТКАЗАЛСЯ ПО ПРАВИЛАМ — ОТПИСАЛСЯ', how: 'Не подходят под ваши правила (номер правила в строке): от каналов отписался, в конкурсах не участвуем.', link: 'пост' },
   { st: ['ended'], h: '⛔ РОЗЫГРЫШ УЖЕ ЗАВЕРШЁН', how: 'Участие невозможно — бот ответил «розыгрыш завершён».', link: 'пост' },
 ];
 const sortKey = c => dayTs(c.day) ? dayTs(c.day) + (c.time ? +c.time.slice(0, 2) * 3600 + +c.time.slice(3) * 60 : 86399) : 9e12;
@@ -106,7 +108,8 @@ function itemLine(c, sec) {
   const why = sec.note && c.note ? `\n   ↳ ${c.note.replace(/\s+/g, ' ').slice(0, 110)}` : '';
   const miss = (c.missing || []).length && sec.st.includes('need_sub') ? `\n   ↳ не хватает подписки: ${c.missing.join(', ')}${c.status === 'captcha' ? ' (после подписки — капча «я не бот»)' : ''}` :
     (sec.st.includes('need_sub') && c.status === 'captcha' && !c.verified ? '\n   ↳ подписки ещё не проверены (tg_contests.js verify)' : '');
-  return `• ${date} — ${c.title}${link}\n   каналы: ${chans}${why}${miss}`;
+  const verdict = c.status === 'excluded' ? `\n   🚫 правило ${c.rule}: ${c.why}` : c.verdict === 'warn' ? `\n   ⚠️ подозрение: ${c.why}` : c.verdict === 'clean' ? `\n   ✓ ${c.why}` : '';
+  return `• ${c.verdict === 'warn' && c.status !== 'excluded' ? '⚠️ ' : ''}${date} — ${c.title}${link}\n   каналы: ${chans}${verdict}${why}${miss}`;
 }
 function pack(head, blocks, cont) {
   const msgs = [head]; let cur = '';
@@ -142,6 +145,8 @@ function report() {
     head = [`🎁 ${o.title || 'МОИ РОЗЫГРЫШИ'} — обновлено ${upd}`, '━━━━━━━━━━━━━━━', `📊 Всего конкурсов: ${merge(cs.slice()).length} (одинаковые посты объединены)`, '',
       'НУЖНО ВАШЕ ДЕЙСТВИЕ:', ...SECTIONS.filter(x => x.act).map(x => `${x.h}: ${n(x.st)}`), '',
       'ДЕЛАЮ САМ / НИЧЕГО НЕ НУЖНО:', ...SECTIONS.filter(x => !x.act).map(x => `${x.h}: ${n(x.st)}`), '━━━━━━━━━━━━━━━', '',
+      'ПРАВИЛА ОТБОРА: доставка по всей России (СДЭК и т. п.), без самовывоза; без подписок вне Telegram; меньше 6 каналов;',
+      'приз дороже 1 000 ₽; сертификаты, промокоды, баллы — отказ. ⚠️ — условия не указаны в посте: участвуем, довод в строке.', '',
       'КАК ЧИТАТЬ: конкурсы разбиты по разделам — в заголовке раздела написано, что с ними делать.',
       'В каждой строке: 📅 дата и время итогов (МСК) — приз — ссылка на пост розыгрыша; ниже — каналы конкурса.',
       'Внутри раздела — по дате итогов, сначала ближайшие.', '', 'Списки по разделам — в следующих сообщениях 👇'].join('\n');
@@ -222,16 +227,19 @@ function dueList() { const lim = today() + (+o.days || 0) * 86400; return db.con
     save(); return;
   }
   if (cmd === 'leave') {
-    const active = new Set(db.contests.filter(c => !['lost', 'ended'].includes(c.status)).flatMap(c => c.channels.map(lc)));
-    const lost = db.contests.filter(c => c.status === 'lost' || c.status === 'ended');
-    const go = [...new Set(lost.flatMap(c => c.channels.map(lc)))].filter(ch => !active.has(ch));
-    const keep = [...new Set(lost.flatMap(c => c.channels.map(lc)))].filter(ch => active.has(ch));
+    const DROP = ['lost', 'ended', 'excluded'];
+    const chOf = c => (c.required && c.required.length ? c.required : c.channels).filter(x => !x.startsWith('+')).map(lc);
+    const active = new Set(db.contests.filter(c => !DROP.includes(c.status)).flatMap(chOf));
+    const lost = db.contests.filter(c => DROP.includes(c.status));
+    const go = [...new Set(lost.flatMap(chOf))].filter(ch => !active.has(ch));
+    const keep = [...new Set(lost.flatMap(chOf))].filter(ch => active.has(ch));
     if (keep.length) console.log(`оставляю (нужны в других конкурсах): ${keep.map(x => '@' + x).join(' ')}`);
     if (!o.yes) { console.log(`DRY RUN: отписка от ${go.length}: ${go.map(x => '@' + x).join(' ')}\nТолько по команде владельца: --yes`); return; }
     await withTg(async pg => {
       const log = await pg.evaluate(async go => { const T = window.__tg; const out = [];
         for (const ch of go) { try { const c = await T.resolve(ch);
-          await T.api('channels.leaveChannel', { channel: { _: 'inputChannel', channel_id: c.ent.id, access_hash: c.ent.access_hash } }); out.push('✓ @' + ch);
+          if (c.ent.pFlags && c.ent.pFlags.left) { out.push('= @' + ch + ' (не подписан)'); continue; }
+          await T.api('channels.leaveChannel', { channel: { _: 'inputChannel', channel_id: c.ent.id, access_hash: c.ent.access_hash } }); out.push('✓ @' + ch + ' — отписался');
         } catch (e) { out.push(`✗ @${ch}: ${e.type || e.message}`); if (/FLOOD/.test(e.type || '')) break; }
         await new Promise(r => setTimeout(r, 3000)); } return out; }, go);
       console.log(log.join('\n'));
