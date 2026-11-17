@@ -66,7 +66,7 @@ const ids = o.report ? String(o.report).split(',').map(Number) : [];
     const removedShown = db.contests.filter(c => c.status === 'removed' && chOf(c).some(h => !activeCh.has(h) && has(h)));
     P(!absent.length, `отчёт (${ids.length} сообщ.): все оставленные конкурсы в нём${absent.length ? ' — нет: ' + absent.map(c => c.title).join('; ') : ''}`);
     P(!removedShown.length, `отчёт: конкурсов без поста в нём нет${removedShown.length ? ' — есть: ' + removedShown.map(c => c.title).join('; ') : ''}`);
-    const head = /Всего конкурсов: (\d+)/.exec(t);
+    const head = /Всего(?: конкурсов)?: (\d+)/.exec(t);
     P(!!head, `отчёт: в сводке «Всего конкурсов: ${head ? head[1] : '?'}»`);
   }
   if (o.fix) { // write the live truth back: missing subscriptions → status need_sub (captcha stays gated)

@@ -159,11 +159,77 @@ function report() {
   if (o.out) { fs.writeFileSync(o.out, txt); console.log(`${o.out}: ${msgs.length} сообщ. (${msgs.map(m => m.length).join(', ')} симв.)`); } else console.log(txt);
 }
 
+// Report v3 — owner's sample (09.11): compact header with counts, ✋ actions first, legend, then ONE line per contest
+// grouped by week: «<category> ДД.ММ [ЧЧ:ММ] — приз · @каналы · доставка» (🔸 = доставка не указана, ⚠️ = подозрение).
+// The prize text is a clickable link to the giveaway post. Removed/excluded contests are not listed — only counted in 🧹.
+const CAT0 = t => /iphone|samsung|galaxy s|смартфон|телефон|xiaomi \d/i.test(t) ? '📱' : /ps5|playstation|gta|игр|консол|steam|nintendo|switch|powkiddy|r36|dualsense|xbox/i.test(t) ? '🎮'
+  : /airpods|наушник|колонк|станци|плеер|marshall|jbl|audio|акустик/i.test(t) ? '🎧' : /пк|корпус|rtx|macbook|монитор|сжо|ноутбук|планшет|гравер|техник|гаджет|клавиатур|мыш/i.test(t) ? '💻'
+  : /₽|руб|деньг|wb|ozon|сертификат/i.test(t) ? '💰' : '🎁';
+const CAT = (t, c) => (c && c.cat) || CAT0(t); // c.cat = manual override when keywords mislead («Игровой ПК», «Блендер + Ozon»)
+const MON = ['ЯНВАРЯ', 'ФЕВРАЛЯ', 'МАРТА', 'АПРЕЛЯ', 'МАЯ', 'ИЮНЯ', 'ИЮЛЯ', 'АВГУСТА', 'СЕНТЯБРЯ', 'ОКТЯБРЯ', 'НОЯБРЯ', 'ДЕКАБРЯ'];
+function reportV3() {
+  const DROP = ['removed', 'excluded', 'lost', 'ended'];
+  const all = db.contests, live = all.filter(c => !DROP.includes(c.status));
+  const ACT = { captcha: 'Робот или человек? / «я не бот» — открыть пост, «Участвовать», пройти проверку', manual: 'выполнить условие поста (комментарий, репост…)',
+    app_only: 'нажать «Участвовать» в приложении Telegram (в веб-версии не работает)', unknown: 'проверить вручную — бот не подтвердил', bot_reply: 'проверить вручную — бот не подтвердил', error: 'проверить вручную' };
+  const eff = c => c.status === 'captcha' && (!c.verified || (c.missing || []).length) ? 'need_sub' : c.status; // captcha only after ALL subscriptions
+  const act = live.filter(c => ACT[eff(c)]), wait = live.filter(c => eff(c) === 'need_sub'), go = live.filter(c => !ACT[eff(c)] && eff(c) !== 'need_sub');
+  const chans = c => { const r = (c.required && c.required.length ? c.required : c.channels).filter(x => !x.startsWith('+'));
+    const h = c.channels.length ? c.channels : r; if (!h.length) return '';
+    return h.length <= 2 ? h.map(x => '@' + x).join(', ') : `@${h[0]} + ${h.length - 1} канала`; };
+  const prize = c => c.post ? `[${c.title}](${c.post})` : c.title;
+  const line = c => { const d = /^\d\d\.\d\d/.test(c.day) ? c.day + (c.time ? ' ' + c.time : '') : 'без даты';
+    const tail = [chans(c), c.deliv].filter(Boolean).join(' · ');
+    const mark = c.susp ? ` ⚠️ ${c.susp}` : c.deliv ? '' : ' 🔸';
+    const miss = eff(c) === 'need_sub' && (c.missing || []).length ? ` ⏳ нет подписки: ${c.missing.join(', ')}` : '';
+    return `${CAT(c.title, c)} ${d} — ${prize(c)}${tail ? ' · ' + tail : ''}${mark}${miss}`; };
+  const removed = all.filter(c => c.status === 'removed').length, excl = all.filter(c => c.status === 'excluded').length;
+  const leftCh = new Set(all.filter(c => ['removed', 'excluded'].includes(c.status)).flatMap(c => c.channels.map(lc))).size;
+  const now = new Date(Date.now() + 3 * 3600e3); const upd = `${String(now.getUTCDate()).padStart(2, '0')}.${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+  const won = all.filter(c => c.status === 'won');
+  const head = [`🎁 ${o.title || 'МОИ РОЗЫГРЫШИ'} — обновлено ${upd}`, '━━━━━━━━━━━━━━━', `📊 Всего: ${live.length}`,
+    `   ✅ впереди — ${go.length}`, ...(wait.length ? [`   ⏳ не хватает подписки — ${wait.length}`] : []), `   ✋ нужно ваше действие — ${act.length}`,
+    won.length ? `🏆 Выигрыши: ${won.map(c => c.title).join(', ')}` : '🏆 Выигрышей пока нет',
+    `🧹 Убрано ${removed + excl} розыгрышей (${excl} — не по правилам, ${removed} — без поста о розыгрыше), отписка от ${leftCh} каналов`, '━━━━━━━━━━━━━━━'];
+  const out = [...head, ''];
+  if (act.length) {
+    out.push('✋ НУЖНО ВАШЕ ДЕЙСТВИЕ');
+    for (const k of Object.keys(ACT)) { const x = act.filter(c => eff(c) === k).sort((a, b) => sortKey(a) - sortKey(b)); if (!x.length) continue;
+      if (k === 'bot_reply' && act.some(c => eff(c) === 'unknown')) { x.forEach(c => out.push(line(c))); continue; }
+      out.push(`(${ACT[k]})`); x.forEach(c => out.push(line(c))); }
+    out.push('');
+  }
+  out.push('Обозначения: 📱 смартфоны · 🎮 игры/консоли · 🎧 аудио · 💻 техника/ПК · 💰 деньги/WB/Ozon · 🎁 прочее',
+    '🔸 доставка не указана · ⚠️ подозрение · ⏳ жду подписки · приз — ссылка на пост', '');
+  // weeks from today: 7-day buckets, then «без даты»
+  const t0 = today(); const rest = [...go, ...wait].sort((a, b) => sortKey(a) - sortKey(b));
+  const fmt = ts => { const d = new Date(ts * 1000); return [d.getUTCDate(), MON[d.getUTCMonth()]]; };
+  const blocks = []; let i = 0;
+  for (let w = 0; i < rest.length && w < 12; w++) {
+    const a = t0 + w * 7 * 86400, b = a + 6 * 86400;
+    const x = rest.filter(c => { const ts = dayTs(c.day); return ts && (w === 0 ? ts <= b : ts >= a && ts <= b); });
+    if (!x.length) continue; i += x.length;
+    const [da, ma] = fmt(a), [db_, mb] = fmt(b);
+    blocks.push([`📅 ${ma === mb ? `${da}–${db_} ${ma}` : `${da} ${ma} – ${db_} ${mb}`}`, ...x.map(line)]);
+  }
+  const nod = rest.filter(c => !dayTs(c.day)); if (nod.length) blocks.push(['📅 БЕЗ ДАТЫ', ...nod.map(line)]);
+  const msgs = [];
+  let cur = out.join('\n');
+  for (const bl of blocks) for (const part of [bl[0], ...bl.slice(1)]) {
+    const add = (part === bl[0] ? '\n' : '') + part + '\n';
+    if (cur.length + add.length > 3800) { msgs.push(cur.trim() + '\n\nПродолжение — в следующем сообщении 👇'); cur = ''; }
+    cur += (cur.endsWith('\n') || !cur ? '' : '\n') + add;
+  }
+  msgs.push(cur.trim());
+  const txt = msgs.join('\n=====\n');
+  if (o.out) { fs.writeFileSync(o.out, txt); console.log(`${o.out}: ${msgs.length} сообщ. (${msgs.map(m => m.length).join(', ')} симв.)`); } else console.log(txt);
+}
+
 function dueList() { const lim = today() + (+o.days || 0) * 86400; return db.contests.filter(c => dayTs(c.day) && dayTs(c.day) <= lim && !['won', 'lost', 'ended'].includes(c.status)); }
 
 (async () => {
   if (cmd === 'import') return importAll();
-  if (cmd === 'report') return report();
+  if (cmd === 'report') return o.captcha || o.v2 ? report() : reportV3();
   if (cmd === 'done') {
     const set = new Set(String(o._[1] || '').split(',').map(x => lc(x.replace('@', ''))));
     let n = 0; for (const c of db.contests) if (set.has(lc(c.organizer))) { c.status = 'ok'; c.note = o.note || 'выполнено владельцем'; n++; }
