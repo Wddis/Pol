@@ -1,0 +1,10 @@
+PASS size == e_shoff+shnum*64 217739936 vs 217739936
+PASS .dynamic at PT_DYNAMIC offset 
+PASS .eh_frame_hdr magic 011b033b 
+PASS eh_frame_hdr table: sorted, all FDE valid 627811 entries, bad=0
+PASS JNI_OnLoad starts with sub sp,sp,#imm 0xd100c3ff
+PASS JNI_OnLoad ends with ret at +208 0xd65f03c0
+PASS readelf without errors/warnings 
+PASS readelf sees .dynamic NEEDED libc.so 
+PASS nm -D lists JNI_OnLoad 
+9/9 passed
