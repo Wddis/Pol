@@ -37,4 +37,5 @@ for i, n in enumerate(range(int(a), int(b) + 1)):
             "allowStitch": True, "disclose": False, "aiGenerated": False, "autoAddMusic": False}}}},
         "delivery": {"mode": "at", "at": when, "timezone": "Europe/Moscow"}, "idempotencyKey": f"{K}-post"})
     p = r.get("post", r) if isinstance(r, dict) else r
+    if not (isinstance(p, dict) and p.get("id")): print("ERR", json.dumps(r, ensure_ascii=False)[:600], flush=True)
     print(nn, when, p.get("id") if isinstance(p, dict) else p, p.get("status") if isinstance(p, dict) else "", flush=True)
