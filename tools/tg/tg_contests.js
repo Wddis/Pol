@@ -3,7 +3,8 @@
 // usage: node tg_contests.js <cmd> --state contests_a2.json [...]
 //   import  --list list.txt [--scan scan.json] [--enter res.json,res2.json] [--join join.log,join2.log] [--times 06:28.txt]
 //           list = report text with lines «• приз: @каналы» under «🗓 ДД.ММ» (the 14:20 format) or «ДД.ММ [ЧЧ:ММ] — приз · …»
-//   report  [--title "МОИ РОЗЫГРЫШИ"] [--out report.txt]  — 06:28 style, messages split by ===== (send: tg_post.js)
+//   report  [--title "МОИ РОЗЫГРЫШИ"] [--captcha] [--out report.txt] — grouped by action, link to each post;
+//           --captcha = separate «я не бот» report. Messages split by ===== (send: tg_post.js)
 //   due     [--days 0]                                    — contests whose draw date has come (or comes in N days)
 //   results [--days 0] [--account 2]                      — look for the draw post; won / lost / unknown (pult, read-only)
 //   leave   [--account 2] [--yes]                         — unsubscribe from channels of LOST contests, except channels
@@ -70,27 +71,68 @@ function importAll() {
   console.log(`конкурсов ${db.contests.length}: ` + Object.entries(cnt).map(([k, v]) => `${ICON[k] || ''}${k} ${v}`).join(', '));
 }
 
+// Report v2 (owner 17.11): no icon mosaic. Contests are GROUPED by what to do; the status is written in words
+// in the section header with a short "what to do"; every line = date/time of the draw · prize · channel ·
+// clickable «перейти на пост» (the giveaway post itself). Nothing is cut. --captcha = separate "I'm not a bot" report.
+const SECTIONS = [
+  { st: ['captcha'], h: '🤖 ПОДТВЕРДИТЬ «Я НЕ БОТ»', how: 'Нажмите «перейти на пост» → под постом «Участвовать» → пройдите проверку «я не бот» → дождитесь «Вы участвуете».', link: 'перейти на пост', act: 1 },
+  { st: ['manual'], h: '✍️ ВЫПОЛНИТЬ УСЛОВИЕ ПОСТА', how: 'По условиям нужен комментарий, репост, лайк и т. п. — откройте пост и сделайте, что там написано.', link: 'перейти на пост', act: 1 },
+  { st: ['unknown', 'bot_reply', 'error'], h: '🔎 ПРОВЕРИТЬ ВРУЧНУЮ', how: 'Бот не ответил ясно, участвуем ли мы. Откройте пост, нажмите «Участвовать» и посмотрите ответ.', link: 'перейти на пост', act: 1, note: 1 },
+  { st: ['need_sub'], h: '⏳ ЖДЁТ ПОДПИСКИ НА КАНАЛЫ-ПАРТНЁРЫ', how: 'Telegram временно ограничил подписки — подпишу сам после снятия лимита и нажму «Участвовать». От вас ничего не нужно.', link: 'пост' },
+  { st: ['won'], h: '🏆 ВЫИГРЫШ', how: 'Напишите организатору, от каналов не отписывайтесь до получения приза.', link: 'пост с итогами', act: 1 },
+  { st: ['ok'], h: '✅ УЧАСТВУЮ — БОТ ПОДТВЕРДИЛ', how: 'Ничего делать не нужно. Не отписывайтесь от каналов до итогов.', link: 'пост' },
+  { st: ['sub_only'], h: '☑️ УЧАСТВУЮ ПО ПОДПИСКЕ', how: 'Условие — только подписка, она оформлена. Бот такие конкурсы не подтверждает — проверим по итогам.', link: 'пост' },
+  { st: ['no_post'], h: '📭 ПОДПИСАН, ПОСТ НЕ НАЙДЕН', how: 'На каналы подписан, но пост розыгрыша не нашёлся (закреп, старый пост или розыгрыш у партнёра). Загляните в канал при случае.', link: 'перейти в канал' },
+  { st: ['lost'], h: '✗ ИТОГИ: НАС НЕТ', how: 'Можно отписываться (tg_contests.js leave).', link: 'пост с итогами' },
+  { st: ['ended'], h: '⛔ РОЗЫГРЫШ УЖЕ ЗАВЕРШЁН', how: 'Участие невозможно — бот ответил «розыгрыш завершён».', link: 'пост' },
+];
+const sortKey = c => dayTs(c.day) ? dayTs(c.day) + (c.time ? +c.time.slice(0, 2) * 3600 + +c.time.slice(3) * 60 : 86399) : 9e12;
+function itemLine(c, sec) {
+  const date = /^\d\d\.\d\d/.test(c.day) ? `📅 ${c.day}${c.time ? ' ' + c.time : ''}${dayTs(c.day) === today() ? ' ❗ СЕГОДНЯ' : ''}` : '📅 без даты';
+  const url = c.post || (c.organizer ? `https://t.me/${c.organizer}` : '');
+  const chans = c.channels.length ? c.channels.map(x => '@' + x).join(' ') : `канал без ссылки — искать в архиве по названию`;
+  const link = url ? ` — [${c.post ? sec.link : 'перейти в канал'}](${url})` : '';
+  const why = sec.note && c.note ? `\n   ↳ ${c.note.replace(/\s+/g, ' ').slice(0, 110)}` : '';
+  return `• ${date} — ${c.title}${link}\n   каналы: ${chans}${why}`;
+}
+function pack(head, blocks, cont) {
+  const msgs = [head]; let cur = '';
+  for (const bl of blocks) for (const part of bl) {
+    if (cur && cur.length + part.length + 2 > 3800) { msgs.push(cur.trim() + `\n\n${cont} 👇`); cur = ''; }
+    cur += part + '\n';
+  }
+  if (cur.trim()) msgs.push(cur.trim()); return msgs;
+}
 function report() {
-  const cs = db.contests, n = s => cs.filter(c => [].concat(s).includes(c.status)).length;
-  const line = c => `${c.day && /^\d/.test(c.day) ? c.day + (c.time ? ' ' + c.time : '') + ' — ' : ''}${c.title}${c.organizer ? ' · @' + c.organizer : ''}${c.status === 'sub_only' ? ' (?)' : ''}`;
-  const sec = (h, st) => { const x = cs.filter(c => [].concat(st).includes(c.status)); return x.length ? `${h} (${x.length}):\n` + x.map(c => '• ' + line(c) + (c.status === 'manual' ? ' — ' + c.note : '')).join('\n') : ''; };
-  const act = n(['captcha', 'need_sub', 'manual', 'unknown', 'bot_reply', 'no_post']);
-  const head = [`🎁 ${o.title || 'МОИ РОЗЫГРЫШИ'} — обновлено ${new Date().toISOString().slice(8, 10)}.${new Date().toISOString().slice(5, 7)}`, '━━━━━━━━━━━━━━━',
-    `📊 Участвуем: ${n(['ok', 'sub_only', 'won'])} из ${cs.length} (подтверждено ботом: ${n(['ok', 'won'])}, только подписка (?): ${n('sub_only')})`, `⚠️ Нужно ваше действие: ${act}`,
-    `🏆 Выигрыши: ${n('won') ? cs.filter(c => c.status === 'won').map(c => c.title).join(', ') : 'пока нет'}`, `⏹ Уже завершены: ${n(['ended', 'lost'])}`, '━━━━━━━━━━━━━━━', '',
-    '⚠️ НУЖНО ВАШЕ ДЕЙСТВИЕ (с телефона)',
-    sec('Капча «Проверка на человечность» — открыть пост и нажать «Участвовать»', 'captcha'),
-    sec('Не хватает подписки (каналы-партнёры / приватные) — проверить условия', 'need_sub'),
-    sec('Условия поста: комментарий, репост и т. п.', 'manual'),
-    sec('Проверить вручную — бот не подтвердил участие', ['unknown', 'bot_reply']),
-    sec('Подписка оформлена, пост розыгрыша не найден — проверить в канале', 'no_post'),
-    '', 'Список розыгрышей — в следующем сообщении 👇'].filter(x => x !== '').join('\n').replace('С ТЕЛЕФОНА)\n', 'С ТЕЛЕФОНА)\n');
-  const weeks = [['17–23 НОЯБРЯ', d => /\.11/.test(d) && +d.slice(0, 2) <= 23], ['24–30 НОЯБРЯ', d => /\.11/.test(d) && +d.slice(0, 2) >= 24],
-    ['ДЕКАБРЬ', d => /\.12/.test(d)], ['БЕЗ ДАТЫ', d => !/^\d\d\.\d\d/.test(d)]];
-  const blocks = weeks.map(([h, f]) => { const x = cs.filter(c => f(c.day)); return x.length ? h + '\n' + x.map(c => `${ICON[c.status] || '❔'} ${line(c)}`).join('\n') : ''; }).filter(Boolean);
-  const msgs = [head]; let cur = `📅 КОНКУРСЫ (${cs.length}) · ✓ участвуем · (?) — участие = подписка, бот не подтверждает · 🧩 капча · ➕ нужна подписка · ✍️ условия поста · 🔍 пост не найден · ❔ проверить · ⏹ завершён\n`;
-  for (const bl of blocks) { if (cur.length + bl.length > 3900) { msgs.push(cur.trim() + '\n\nПродолжение — в следующем сообщении 👇'); cur = ''; } cur += '\n' + bl + '\n'; }
-  msgs.push(cur.trim());
+  const cs = db.contests, by = st => cs.filter(c => [].concat(st).includes(c.status)).sort((a, b) => sortKey(a) - sortKey(b));
+  const stamp = new Date(Date.now() + 3 * 3600e3).toISOString(); const upd = `${stamp.slice(8, 10)}.${stamp.slice(5, 7)} ${stamp.slice(11, 16)} МСК`;
+  const secs = o.captcha ? SECTIONS.filter(x => x.st.includes('captcha')) : SECTIONS;
+  const n = st => by(st).length;
+  let head;
+  if (o.captcha) {
+    const x = by('captcha');
+    head = [`🤖 ПОДТВЕРДИТЬ «Я НЕ БОТ» — обновлено ${upd}`, '━━━━━━━━━━━━━━━', `📊 Конкурсов с проверкой: ${x.length}`,
+      `⏰ Ближайший срок: ${x[0] ? x[0].day + (x[0].time ? ' ' + x[0].time : '') : '—'}`, '━━━━━━━━━━━━━━━', '',
+      'ЧТО ДЕЛАТЬ (с телефона, в приложении Telegram):', '1. Нажмите «перейти на пост» у конкурса', '2. Под постом нажмите «Участвовать»',
+      '3. Пройдите проверку «я не бот»', '4. Дождитесь надписи «Вы участвуете в розыгрыше»', '5. Кнопки «Буст», «Голосовать», «Забрать подарок» — НЕ нужны',
+      '', 'Сначала — те, у кого итоги раньше. Список — в следующем сообщении 👇'].join('\n');
+  } else {
+    head = [`🎁 ${o.title || 'МОИ РОЗЫГРЫШИ'} — обновлено ${upd}`, '━━━━━━━━━━━━━━━', `📊 Всего конкурсов: ${cs.length}`, '',
+      'НУЖНО ВАШЕ ДЕЙСТВИЕ:', ...SECTIONS.filter(x => x.act).map(x => `${x.h}: ${n(x.st)}`), '',
+      'ДЕЛАЮ САМ / НИЧЕГО НЕ НУЖНО:', ...SECTIONS.filter(x => !x.act).map(x => `${x.h}: ${n(x.st)}`), '━━━━━━━━━━━━━━━', '',
+      'КАК ЧИТАТЬ: конкурсы разбиты по разделам — в заголовке раздела написано, что с ними делать.',
+      'В каждой строке: 📅 дата и время итогов (МСК) — приз — ссылка на пост розыгрыша; ниже — каналы конкурса.',
+      'Внутри раздела — по дате итогов, сначала ближайшие.', '', 'Списки по разделам — в следующих сообщениях 👇'].join('\n');
+  }
+  // one line per giveaway post: contests that point to the same post are merged (titles joined, channels united)
+  const merge = list => { const out = [], seen = new Map();
+    for (const c of list) { const k = c.post || c.key; const m = seen.get(k);
+      if (m) { if (!m.title.includes(c.title)) m.title += ' / ' + c.title; m.channels = [...new Set([...m.channels, ...c.channels])]; if (!/^\d/.test(m.day) && /^\d/.test(c.day)) { m.day = c.day; m.time = c.time; } continue; }
+      const cp = { ...c, channels: [...c.channels] }; seen.set(k, cp); out.push(cp); }
+    return out.sort((a, b) => sortKey(a) - sortKey(b)); };
+  const blocks = secs.map(sec => { const x = merge(by(sec.st)); if (!x.length) return [];
+    return [`\n${sec.h} — ${x.length}\n${sec.how}\n`, ...x.map(c => itemLine(c, sec))]; }).filter(b => b.length);
+  const msgs = pack(head, blocks, 'Продолжение — в следующем сообщении');
   const txt = msgs.join('\n=====\n');
   if (o.out) { fs.writeFileSync(o.out, txt); console.log(`${o.out}: ${msgs.length} сообщ. (${msgs.map(m => m.length).join(', ')} симв.)`); } else console.log(txt);
 }

@@ -3,10 +3,20 @@
 const { chromium } = require('playwright');
 
 // runs in the page: install window.__tg once per tab (bump V when this code changes)
-const V = 2;
+const V = 3;
 function install(V) {
   if (window.__tg && window.__tg.v === V) return;
-  const M = rootScope.managers, api = (m, p) => M.apiManager.invokeApi(m, p);
+  const M = rootScope.managers, raw = (m, p) => M.apiManager.invokeApi(m, p);
+  // WRITE GUARD (17.11: a folder meant for account 2 was written into account 1): any call that changes something
+  // first checks that this tab is still the account the tool asked for (window.__tg.expect), else refuses.
+  const READ = /^(messages\.(get|search|check)|channels\.get|users\.get|contacts\.resolve|help\.|updates\.|account\.get)/;
+  const api = async (m, p) => {
+    if (!READ.test(m)) {
+      const want = window.__tg && window.__tg.expect; const me = await M.appUsersManager.getSelf();
+      if (!want || !me || String(me.id) !== String(want)) throw new Error(`СТОП: запись ${m} не в тот аккаунт (вкладка ${me && me.id}, нужен ${want})`);
+    }
+    return raw(m, p);
+  };
   const inputOf = c => c._ === 'channel' ? { _: 'inputPeerChannel', channel_id: c.id, access_hash: c.access_hash }
     : c._ === 'chat' ? { _: 'inputPeerChat', chat_id: c.id }
     : { _: 'inputPeerUser', user_id: c.id, access_hash: c.access_hash };
@@ -89,15 +99,18 @@ async function lock() {
   process.on('exit', free); return free;
 }
 
-async function withTg(fn, cdp = 'http://127.0.0.1:9222', account = 1) {
+let chain = Promise.resolve(); // in-process: one withTg at a time, the next starts only after the previous fully ended
+function withTg(fn, cdp, account) { const run = chain.then(() => withTgOnce(fn, cdp, account)); chain = run.catch(() => {}); return run; }
+async function withTgOnce(fn, cdp = 'http://127.0.0.1:9222', account = 1) {
   const unlock = await lock();
   const b = await chromium.connectOverCDP(cdp);
   let pg;
   try {
     pg = b.contexts()[0].pages().find(p => /web\.telegram\.org/.test(p.url()));
     if (!pg) throw new Error('нет вкладки web.telegram.org в пульте — поднимите пульт (docs/telegram.md)');
-    await ensureAccount(pg, account);
+    const me = await ensureAccount(pg, account);
     await pg.evaluate(install, V);
+    await pg.evaluate(id => { window.__tg.expect = id; }, String(me.id));
     return await fn(pg);
   } finally { if (pg && +account !== 1) await backToMain(pg); await b.close().catch(() => {}); unlock(); } // detaches only; the pult keeps running
 }
