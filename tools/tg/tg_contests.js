@@ -100,7 +100,8 @@ const sortKey = c => dayTs(c.day) ? dayTs(c.day) + (c.time ? +c.time.slice(0, 2)
 function itemLine(c, sec) {
   const date = /^\d\d\.\d\d/.test(c.day) ? `📅 ${c.day}${c.time ? ' ' + c.time : ''}${dayTs(c.day) === today() ? ' ❗ СЕГОДНЯ' : ''}` : '📅 без даты';
   const url = c.post || (c.organizer ? `https://t.me/${c.organizer}` : '');
-  const chans = c.channels.length ? c.channels.map(x => '@' + x).join(' ') : `канал без ссылки — искать в архиве по названию`;
+  const req = (c.required && c.required.length ? c.required : c.channels).map(x => x.startsWith('+') ? 'приватный канал (по приглашению)' : '@' + x);
+  const chans = req.length ? [...new Set(req)].join(' ') : `канал без ссылки — искать в архиве по названию`;
   const link = url ? ` — [${c.post ? sec.link : 'перейти в канал'}](${url})` : '';
   const why = sec.note && c.note ? `\n   ↳ ${c.note.replace(/\s+/g, ' ').slice(0, 110)}` : '';
   const miss = (c.missing || []).length && sec.st.includes('need_sub') ? `\n   ↳ не хватает подписки: ${c.missing.join(', ')}${c.status === 'captcha' ? ' (после подписки — капча «я не бот»)' : ''}` :
@@ -121,7 +122,13 @@ function report() {
   const cs = db.contests, by = st => cs.filter(c => [].concat(st).includes(eff(c))).sort((a, b) => sortKey(a) - sortKey(b));
   const stamp = new Date(Date.now() + 3 * 3600e3).toISOString(); const upd = `${stamp.slice(8, 10)}.${stamp.slice(5, 7)} ${stamp.slice(11, 16)} МСК`;
   const secs = o.captcha ? SECTIONS.filter(x => x.st.includes('captcha')) : SECTIONS;
-  const n = st => by(st).length;
+  // one line per giveaway post: contests that point to the same post are merged (titles joined, channels united)
+  const merge = list => { const out = [], seen = new Map();
+    for (const c of list) { const k = c.post || c.key; const m = seen.get(k);
+      if (m) { if (!m.title.includes(c.title)) m.title += ' / ' + c.title; m.channels = [...new Set([...m.channels, ...c.channels])]; if (!/^\d/.test(m.day) && /^\d/.test(c.day)) { m.day = c.day; m.time = c.time; } continue; }
+      const cp = { ...c, channels: [...c.channels] }; seen.set(k, cp); out.push(cp); }
+    return out.sort((a, b) => sortKey(a) - sortKey(b)); };
+  const n = st => merge(by(st)).length;
   let head;
   if (o.captcha) {
     const x = by('captcha');
@@ -132,19 +139,13 @@ function report() {
       '3. Пройдите проверку «я не бот»', '4. Дождитесь надписи «Вы участвуете в розыгрыше»', '5. Кнопки «Буст», «Голосовать», «Забрать подарок» — НЕ нужны',
       '', 'Сначала — те, у кого итоги раньше. Список — в следующем сообщении 👇'].join('\n');
   } else {
-    head = [`🎁 ${o.title || 'МОИ РОЗЫГРЫШИ'} — обновлено ${upd}`, '━━━━━━━━━━━━━━━', `📊 Всего конкурсов: ${cs.length}`, '',
+    head = [`🎁 ${o.title || 'МОИ РОЗЫГРЫШИ'} — обновлено ${upd}`, '━━━━━━━━━━━━━━━', `📊 Всего конкурсов: ${merge(cs.slice()).length} (одинаковые посты объединены)`, '',
       'НУЖНО ВАШЕ ДЕЙСТВИЕ:', ...SECTIONS.filter(x => x.act).map(x => `${x.h}: ${n(x.st)}`), '',
       'ДЕЛАЮ САМ / НИЧЕГО НЕ НУЖНО:', ...SECTIONS.filter(x => !x.act).map(x => `${x.h}: ${n(x.st)}`), '━━━━━━━━━━━━━━━', '',
       'КАК ЧИТАТЬ: конкурсы разбиты по разделам — в заголовке раздела написано, что с ними делать.',
       'В каждой строке: 📅 дата и время итогов (МСК) — приз — ссылка на пост розыгрыша; ниже — каналы конкурса.',
       'Внутри раздела — по дате итогов, сначала ближайшие.', '', 'Списки по разделам — в следующих сообщениях 👇'].join('\n');
   }
-  // one line per giveaway post: contests that point to the same post are merged (titles joined, channels united)
-  const merge = list => { const out = [], seen = new Map();
-    for (const c of list) { const k = c.post || c.key; const m = seen.get(k);
-      if (m) { if (!m.title.includes(c.title)) m.title += ' / ' + c.title; m.channels = [...new Set([...m.channels, ...c.channels])]; if (!/^\d/.test(m.day) && /^\d/.test(c.day)) { m.day = c.day; m.time = c.time; } continue; }
-      const cp = { ...c, channels: [...c.channels] }; seen.set(k, cp); out.push(cp); }
-    return out.sort((a, b) => sortKey(a) - sortKey(b)); };
   const blocks = secs.map(sec => { const x = merge(by(sec.st)); if (!x.length) return [];
     return [`\n${sec.h} — ${x.length}\n${sec.how}\n`, ...x.map(c => itemLine(c, sec))]; }).filter(b => b.length);
   const msgs = pack(head, blocks, 'Продолжение — в следующем сообщении');

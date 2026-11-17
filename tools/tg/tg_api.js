@@ -3,7 +3,7 @@
 const { chromium } = require('playwright');
 
 // runs in the page: install window.__tg once per tab (bump V when this code changes)
-const V = 3;
+const V = 4;
 function install(V) {
   if (window.__tg && window.__tg.v === V) return;
   const M = rootScope.managers, raw = (m, p) => M.apiManager.invokeApi(m, p);
@@ -32,8 +32,11 @@ function install(V) {
       ent = n < 0 ? await M.appChatsManager.getChat(id) : await M.appUsersManager.getUser(id);
       if (!ent || !ent.id) throw new Error('нет в кеше: ' + ref + ' — укажите @username');
     } else {
-      const r = await api('contacts.resolveUsername', { username: ref });
-      ent = (r.chats && r.chats[0]) || (r.users && r.users[0]);
+      // local cache first: contacts.resolveUsername has a small daily limit (17.11 Rembo: FLOOD_WAIT 77077 s ≈ 21 h)
+      try { const p = await M.appUsersManager.resolveUsername(ref);
+        if (p && p.id) ent = p._ === 'user' ? p : await M.appChatsManager.getChat(p.id); } catch (e) {}
+      if (!ent || !ent.id) { const r = await api('contacts.resolveUsername', { username: ref });
+        ent = (r.chats && r.chats[0]) || (r.users && r.users[0]); }
     }
     const o = { ent, peer: inputOf(ent), peerId: ent._ === 'user' ? ent.id : -ent.id,
       title: ent.title || [ent.first_name, ent.last_name].filter(Boolean).join(' '), username: uname(ent) };

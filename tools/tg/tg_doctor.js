@@ -32,6 +32,7 @@ const get = url => new Promise(r => http.get(url, res => { res.resume(); r(res.s
     if (!pg) { if (fix) { pg = await b.contexts()[0].newPage(); await pg.goto('https://web.telegram.org/k/'); ok(true, 'открыл вкладку Telegram'); } else return; }
     const alive = async () => pg.evaluate(() => ({ ready: !!(window.rootScope && rootScope.managers), text: (document.body && document.body.innerText || '').trim().length, n: +localStorage.number_of_accounts || 0 })).catch(() => ({ ready: false, text: 0, n: 0 }));
     let st = await alive();
+    for (let i = 0; i < 10 && (!st.ready || !st.text); i++) { await pg.waitForTimeout(2000); st = await alive(); } // right after an account switch the tab is still loading
     if (!st.ready || !st.text) {
       ok(false, `вкладка не отвечает (rootScope ${st.ready ? 'есть' : 'нет'}, текста ${st.text}) — «белый экран»`);
       if (fix) { await pg.goto('https://web.telegram.org/k/', { waitUntil: 'domcontentloaded' }).catch(() => {});

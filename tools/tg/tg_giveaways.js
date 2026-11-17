@@ -211,14 +211,19 @@ const d = t => t ? new Date(t * 1000 + 3 * 3600e3).toISOString().slice(0, 16).re
         const ch = { _: 'inputChannel', channel_id: c.ent.id, access_hash: c.ent.access_hash };
         let ok = was, err = '';
         if (!was) for (let a = 0; a < 3; a++) {
-          try { await T.api('channels.joinChannel', { channel: ch }); ok = true; break; }
+          try { await T.api('channels.joinChannel', { channel: ch });
+            // 17.11: a limited account gets "ok" but is NOT added — check for real
+            await sleep(2500);
+            try { await T.api('channels.getParticipant', { channel: ch, participant: { _: 'inputPeerSelf' } }); ok = true; }
+            catch (e2) { err = 'Telegram молча не принял подписку (ограничение аккаунта на подписки) — ' + (e2.type || e2.message); }
+            break; }
           catch (e) { const t = e.type || e.message || ''; const w = /FLOOD_WAIT_(\d+)/.exec(t);
             if (w && +w[1] <= 900) { log.push(`… FLOOD_WAIT ${w[1]} с`); await sleep((+w[1] + 2) * 1000); continue; }
             err = t; break; }
         }
         if (ok && archive) await T.api('folders.editPeerFolders', { folder_peers: [{ _: 'inputFolderPeer', peer: c.peer, folder_id: 1 }] }).catch(e => err = 'архив: ' + (e.type || e.message));
         log.push(`${ok ? (was ? '=' : '✓') : '✗'} ${c.title} @${c.username}${was ? ' (уже был)' : ''}${ok && archive ? ' → архив' : ''}${err ? ' ОШИБКА ' + err : ''}`);
-        if (err && /CHANNELS_TOO_MUCH|FLOOD|SPAM/i.test(err)) { log.push('СТОП: лимит Telegram — продолжить позже'); break; }
+        if (err && /CHANNELS_TOO_MUCH|FLOOD|SPAM|молча не принял/i.test(err)) { log.push('СТОП: лимит Telegram на подписки — продолжить позже (обычно через сутки)'); break; }
         await sleep(was ? 300 : pace * 1000 * (0.8 + Math.random() * 0.4)); // spread joins out: new accounts get limited fast
       }
       return log;
