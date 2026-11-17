@@ -61,7 +61,7 @@ function importAll() {
   }
   if (o.enter) for (const f of String(o.enter).split(',')) for (const r of JSON.parse(fs.readFileSync(f, 'utf8'))) {
     let st = r.status;
-    if (st === 'bot_reply' || st === 'unknown') st = /участник|registered|участвуете/i.test(r.note) ? 'ok' : /человечн|captcha|капч/i.test(r.note) ? 'captcha' : /not subscribed|не подписан|подпишит|необходимо подписаться|не соблюдены/i.test(r.note) ? 'need_sub' : st;
+    if (st === 'bot_reply' || st === 'unknown') st = /участник|registered|участвуете|participating|все условия выполнены/i.test(r.note) && !/^[^|]*(not subscribed|не подписан)/i.test(r.note) ? 'ok' : /человечн|captcha|капч/i.test(r.note) ? 'captcha' : /not subscribed|не подписан|подпишит|необходимо подписаться|не соблюдены/i.test(r.note) ? 'need_sub' : st;
     for (const c of byCh(r.ch)) if ((RANK[st] ?? 0) >= (RANK[c.status] ?? -1) || c.status === 'need_sub' || c.status === 'captcha') { c.status = st; c.note = (r.note || '').slice(0, 160); }
   }
   // sub_only is real only when every channel is joined
@@ -72,22 +72,23 @@ function importAll() {
 
 function report() {
   const cs = db.contests, n = s => cs.filter(c => [].concat(s).includes(c.status)).length;
-  const line = c => `${c.day && /^\d/.test(c.day) ? c.day + (c.time ? ' ' + c.time : '') + ' — ' : ''}${c.title}${c.organizer ? ' · @' + c.organizer : ''}`;
+  const line = c => `${c.day && /^\d/.test(c.day) ? c.day + (c.time ? ' ' + c.time : '') + ' — ' : ''}${c.title}${c.organizer ? ' · @' + c.organizer : ''}${c.status === 'sub_only' ? ' (?)' : ''}`;
   const sec = (h, st) => { const x = cs.filter(c => [].concat(st).includes(c.status)); return x.length ? `${h} (${x.length}):\n` + x.map(c => '• ' + line(c) + (c.status === 'manual' ? ' — ' + c.note : '')).join('\n') : ''; };
   const act = n(['captcha', 'need_sub', 'manual', 'unknown', 'bot_reply', 'no_post']);
   const head = [`🎁 ${o.title || 'МОИ РОЗЫГРЫШИ'} — обновлено ${new Date().toISOString().slice(8, 10)}.${new Date().toISOString().slice(5, 7)}`, '━━━━━━━━━━━━━━━',
-    `📊 Участвуем: ${n(['ok', 'sub_only', 'won'])} из ${cs.length}`, `⚠️ Нужно ваше действие: ${act}`,
+    `📊 Участвуем: ${n(['ok', 'sub_only', 'won'])} из ${cs.length} (подтверждено ботом: ${n(['ok', 'won'])}, только подписка (?): ${n('sub_only')})`, `⚠️ Нужно ваше действие: ${act}`,
     `🏆 Выигрыши: ${n('won') ? cs.filter(c => c.status === 'won').map(c => c.title).join(', ') : 'пока нет'}`, `⏹ Уже завершены: ${n(['ended', 'lost'])}`, '━━━━━━━━━━━━━━━', '',
     '⚠️ НУЖНО ВАШЕ ДЕЙСТВИЕ (с телефона)',
     sec('Капча «Проверка на человечность» — открыть пост и нажать «Участвовать»', 'captcha'),
     sec('Не хватает подписки (каналы-партнёры / приватные) — проверить условия', 'need_sub'),
     sec('Условия поста: комментарий, репост и т. п.', 'manual'),
-    sec('Проверить вручную (бот не подтвердил / пост не найден)', ['unknown', 'bot_reply', 'no_post']),
+    sec('Проверить вручную — бот не подтвердил участие', ['unknown', 'bot_reply']),
+    sec('Подписка оформлена, пост розыгрыша не найден — проверить в канале', 'no_post'),
     '', 'Список розыгрышей — в следующем сообщении 👇'].filter(x => x !== '').join('\n').replace('С ТЕЛЕФОНА)\n', 'С ТЕЛЕФОНА)\n');
   const weeks = [['17–23 НОЯБРЯ', d => /\.11/.test(d) && +d.slice(0, 2) <= 23], ['24–30 НОЯБРЯ', d => /\.11/.test(d) && +d.slice(0, 2) >= 24],
     ['ДЕКАБРЬ', d => /\.12/.test(d)], ['БЕЗ ДАТЫ', d => !/^\d\d\.\d\d/.test(d)]];
   const blocks = weeks.map(([h, f]) => { const x = cs.filter(c => f(c.day)); return x.length ? h + '\n' + x.map(c => `${ICON[c.status] || '❔'} ${line(c)}`).join('\n') : ''; }).filter(Boolean);
-  const msgs = [head]; let cur = `📅 КОНКУРСЫ (${cs.length}) · ✓ участвуем · 🧩 капча · ➕ подписка · ✍️ условия · ❔ проверить · ⏹ завершён\n`;
+  const msgs = [head]; let cur = `📅 КОНКУРСЫ (${cs.length}) · ✓ участвуем · (?) — участие = подписка, бот не подтверждает · 🧩 капча · ➕ нужна подписка · ✍️ условия поста · 🔍 пост не найден · ❔ проверить · ⏹ завершён\n`;
   for (const bl of blocks) { if (cur.length + bl.length > 3900) { msgs.push(cur.trim() + '\n\nПродолжение — в следующем сообщении 👇'); cur = ''; } cur += '\n' + bl + '\n'; }
   msgs.push(cur.trim());
   const txt = msgs.join('\n=====\n');
