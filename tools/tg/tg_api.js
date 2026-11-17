@@ -71,7 +71,26 @@ async function ensureAccount(pg, n = 1) {
 // switch the pult back to the main account (call after work on account 2)
 async function backToMain(pg) { if (tabAccount(pg) !== 1) await pg.goto(TG, { waitUntil: 'domcontentloaded' }).catch(() => {}); }
 
+// One tab = one worker. Two tools in the same tab broke each other (account switch mid-job, white screen),
+// so every tool takes a lock; a second one waits (TG_WAIT=minutes, default 0 = refuse) or says who holds it.
+const fs = require('fs');
+const LOCK = process.env.TG_LOCK || '/tmp/tg_pult.lock';
+function lockInfo() { try { const l = JSON.parse(fs.readFileSync(LOCK, 'utf8')); process.kill(l.pid, 0); return l; } catch (e) { return null; } }
+async function lock() {
+  const until = Date.now() + (+process.env.TG_WAIT || 0) * 60e3;
+  for (;;) {
+    const l = lockInfo();
+    if (!l || l.pid === process.pid) break;
+    if (Date.now() >= until) throw new Error(`пульт занят: pid ${l.pid} «${l.cmd}» с ${l.since} — дождитесь (TG_WAIT=30 node …) или проверьте tg_doctor.js`);
+    await new Promise(r => setTimeout(r, 5000));
+  }
+  fs.writeFileSync(LOCK, JSON.stringify({ pid: process.pid, cmd: process.argv.slice(1).map(a => a.split('/').pop()).join(' ').slice(0, 120), since: new Date().toISOString().slice(11, 19) + 'Z' }));
+  const free = () => { try { if ((lockInfo() || {}).pid === process.pid) fs.unlinkSync(LOCK); } catch (e) {} };
+  process.on('exit', free); return free;
+}
+
 async function withTg(fn, cdp = 'http://127.0.0.1:9222', account = 1) {
+  const unlock = await lock();
   const b = await chromium.connectOverCDP(cdp);
   let pg;
   try {
@@ -80,7 +99,7 @@ async function withTg(fn, cdp = 'http://127.0.0.1:9222', account = 1) {
     await ensureAccount(pg, account);
     await pg.evaluate(install, V);
     return await fn(pg);
-  } finally { if (pg && +account !== 1) await backToMain(pg); await b.close().catch(() => {}); } // detaches only; the pult keeps running
+  } finally { if (pg && +account !== 1) await backToMain(pg); await b.close().catch(() => {}); unlock(); } // detaches only; the pult keeps running
 }
 
 // argv helper: --key value / --flag
@@ -93,4 +112,4 @@ function opts(argv) {
   }
   return o;
 }
-module.exports = { withTg, opts, ensureAccount, backToMain, tabAccount };
+module.exports = { withTg, opts, ensureAccount, backToMain, tabAccount, lock, lockInfo };

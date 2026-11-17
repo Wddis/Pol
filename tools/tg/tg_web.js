@@ -13,7 +13,7 @@
 // Notes: opening a chat marks it read for the owner (as in a normal client). Never log/commit session files.
 const fs = require('fs');
 const { chromium } = require('playwright');
-const { ensureAccount, backToMain } = require('./tg_api');
+const { ensureAccount, backToMain, lock } = require('./tg_api');
 let args = process.argv.slice(2);
 let CDP = 'http://127.0.0.1:9222';
 if (args[0] && /^cdp:/.test(args[0])) { CDP = 'http://127.0.0.1:' + args.shift().slice(4); }
@@ -116,6 +116,7 @@ async function readMsgs(pg, n) {
 
 (async () => {
   if (!cmd) { console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(0, 13).join('\n')); return; }
+  const unlock = await lock();
   const b = await chromium.connectOverCDP(CDP);
   const pg = await tgPage(b);
   try {
@@ -165,5 +166,5 @@ async function readMsgs(pg, n) {
       console.log(last && last.out && last.text.includes(text.slice(0, 20)) ? `отправлено в «${title}»` : 'ВНИМАНИЕ: не вижу отправленного сообщения — проверьте shot');
     } else throw new Error('неизвестная команда ' + cmd);
   } catch (e) { console.error('ОШИБКА:', e.message); process.exitCode = 1; }
-  finally { if (ACCOUNT !== 1) await backToMain(pg); await b.close().catch(() => {}); } // only detaches from CDP, the pult browser keeps running
+  finally { if (ACCOUNT !== 1) await backToMain(pg); await b.close().catch(() => {}); unlock(); } // only detaches from CDP, the pult browser keeps running
 })();

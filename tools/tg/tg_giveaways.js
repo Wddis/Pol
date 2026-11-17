@@ -1,12 +1,15 @@
 // Giveaways: find the contest post in channels and show HOW to take part; join on the owner's command.
 // usage: node tg_giveaways.js scan <@ch,@ch2…|--file list.txt> [--days 30] [--json out.json] [--account 2]
 //        node tg_giveaways.js join <@ch…|t.me/+invite|--file f> [--archive] [--pace 6] [--yes] [--account 2]
+//        node tg_giveaways.js discover [--days 3] [--min-views 5000] [--state contests.json] [--q "розыгрыш,разыгрываем"]
 //        node tg_giveaways.js enter --scan scan.json [--only @a,@b] [--yes] [--account 2] [--out res.json]
 // scan  — per channel: the latest giveaway post (native Telegram giveaway or a post with "розыгрыш" + buttons):
 //         type, end date, required channels (native), buttons (url/bot/webapp/callback). Read-only.
 // enter — press "Участвовать" of each scanned giveaway: mini-app (t.me/<bot>/<app>?startapp=…) is opened like the
 //         client does (requestAppWebView) and read; inside, a plain "Участвовать" button is pressed; bot links
 //         (?start=…) start the bot and read its reply. Never: captchas, votes/boosts, "gifts", payments.
+// discover — NEW giveaways across all public channels (server-side global search), minus channels already in
+//         the contest base (--state); compact list sorted by views, with how to enter. Read-only.
 // join  — subscribe to channels (channels.joinChannel), paced against flood limits; --archive moves them to
 //         the Archive right away. Without --yes: dry run. Captchas/web apps are NOT solved: the owner does those.
 const fs = require('fs');
@@ -19,6 +22,32 @@ function refs() {
   for (const m of src.matchAll(/(?:t(?:elegram)?\.me\/(?:\+|joinchat\/)([A-Za-z0-9_-]{8,}))|(?:(?:t(?:elegram)?\.me\/(?!c\/|\+|joinchat)|@)([A-Za-z][A-Za-z0-9_]{3,31}))/g))
     out.push(m[1] ? '+' + m[1] : m[2].toLowerCase()); // '+hash' = private invite link
   return [...new Set(out)];
+}
+async function discover() {
+  const known = new Set(o.state && fs.existsSync(o.state) ? JSON.parse(fs.readFileSync(o.state, 'utf8')).contests.flatMap(c => c.channels.map(x => x.toLowerCase())) : []);
+  const qs = String(o.q || 'розыгрыш,разыгрываем,дарим').split(',');
+  const since = Math.floor(Date.now() / 1000) - (+o.days || 3) * 86400, minV = +(o['min-views'] || 3000);
+  await withTg(async pg => {
+    const found = await pg.evaluate(async ({ qs, since }) => { const T = window.__tg; const out = {};
+      for (const q of qs) { let rate = 0, peer = { _: 'inputPeerEmpty' }, id = 0;
+        for (let page = 0; page < 3; page++) {
+          const r = await T.api('messages.searchGlobal', { q, filter: { _: 'inputMessagesFilterEmpty' }, min_date: since, max_date: 0, offset_rate: rate, offset_peer: peer, offset_id: id, limit: 100, pFlags: { broadcasts_only: true } });
+          const chats = Object.fromEntries((r.chats || []).map(c => [c.id, c]));
+          for (const m of r.messages || []) { const c = chats[m.peer_id && m.peer_id.channel_id]; if (!c) continue;
+            const u = T.uname(c); const k = u || String(c.id); const t = T.text(m);
+            if (!/розыгрыш|разыгрыва|дарим|giveaway/i.test(t) || /итог|победител/i.test(t)) continue;
+            const btn = ((m.reply_markup && m.reply_markup.rows) || []).flatMap(r => r.buttons).map(b => (b.type || b).url || b.url || '').find(x => /t\.me/.test(x)) || '';
+            const how = m.media && /Giveaway/.test(m.media._) ? 'TG-розыгрыш' : btn ? 'кнопка ' + (btn.match(/t\.me\/(\w+)/) || [])[1] : 'текст';
+            if (!out[k] || out[k].views < (m.views || 0)) out[k] = { u, title: c.title, id: m.id, views: m.views || 0, date: m.date, how, text: t.slice(0, 110) }; }
+          if (!r.messages || r.messages.length < 100) break;
+          const last = r.messages[r.messages.length - 1]; rate = r.next_rate || last.date; id = last.id;
+          const lc = chats[last.peer_id.channel_id]; peer = lc ? T.inputOf(lc) : peer;
+          await new Promise(r => setTimeout(r, 400)); }
+      } return Object.values(out); }, { qs, since });
+    const list = found.filter(x => x.views >= minV && !known.has((x.u || '').toLowerCase())).sort((a, b) => b.views - a.views);
+    for (const x of list) console.log(`${d(x.date)} 👁${(x.views / 1000).toFixed(1)}k ${x.u ? 'https://t.me/' + x.u + '/' + x.id : x.title} [${x.how}]\n   ${x.title}: ${x.text.replace(/\n+/g, ' ⏎ ')}`);
+    console.log(`— новых: ${list.length} (всего найдено ${found.length}, уже в базе/мало просмотров отсеяно)`);
+  }, undefined, o.account || 1);
 }
 async function enter() {
   const scan = JSON.parse(fs.readFileSync(o.scan, 'utf8'));
@@ -85,6 +114,7 @@ const d = t => t ? new Date(t * 1000 + 3 * 3600e3).toISOString().slice(0, 16).re
 
 (async () => {
   if (cmd === 'enter') return enter();
+  if (cmd === 'discover') return discover();
   if (!['scan', 'join'].includes(cmd)) { console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(0, 9).join('\n')); return; }
   const list = refs(); if (!list.length) throw new Error('нет каналов');
   await withTg(async pg => {

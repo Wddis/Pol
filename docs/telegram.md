@@ -93,6 +93,25 @@ tg_giveaways.js enter --scan scan.json [--only a,b] --yes --out res.json  # «У
 Лимиты Telegram на новом аккаунте (17.11, Rembo): ~50 подписок подряд с паузой 4–7 с → FLOOD_WAIT ~49 мин.
 Дальше паузу 20 с и больше. `checkChatInvite` на публичный канал отвечает «уже подписан» даже без подписки — проверять флаг `left`.
 
+## Ускоренный цикл розыгрышей (17.11.2026)
+```
+D=tools/tg; ST=$S/contests_a2.json            # база конкурсов на аккаунт — только scratchpad
+node $D/tg_doctor.js --token-file $S/rb_token [--fix]     # 0. пульт жив? кто занял? белый экран → --fix
+node $D/tg_giveaways.js discover --days 3 --state $ST       # 1. новые розыгрыши (без уже известных)
+node $D/tg_giveaways.js scan  --file список.txt --json scan.json
+node $D/tg_giveaways.js join  --file список.txt --archive --pace 20 --yes
+node $D/tg_giveaways.js enter --scan scan.json --yes --out enter.json
+node $D/tg_contests.js import --state $ST --list список.txt --scan scan.json --join join.log --enter enter.json
+node $D/tg_contests.js report --state $ST --title "МОИ РОЗЫГРЫШИ" --out r.txt && node $D/tg_post.js me r.txt --yes
+node $D/tg_contests.js due     --state $ST                   # у каких сегодня итоги
+node $D/tg_contests.js results --state $ST                   # 🏆 / ✗ нас нет / … итогов ещё нет
+node $D/tg_contests.js leave   --state $ST [--yes]           # отписка от проигранных; общие каналы не трогает
+```
+- **Блокировка пульта** (`/tmp/tg_pult.lock`): одновременно работает один инструмент. Второй сразу пишет, кто занял;
+  `TG_WAIT=30 node …` — встать в очередь на 30 мин. Причина: 17.11 два процесса в одной вкладке → белый экран.
+- `tg_doctor.js --fix` чинит, только если пульт свободен: перезагружает вкладку, закрывает лишние вкладки, возвращает на аккаунт 1.
+- Отчёт `tg_contests.js report` — сразу в стиле 06:28 (см. выше).
+
 ## Опыт
 - Escape в Telegram Web открывает режим поиска, а не закрывает окна — инструмент возвращается к списку кнопкой «назад».
 - Окно подсказки «Appearance» после входа невидимо перекрывает клики — инструмент закрывает его сам.
