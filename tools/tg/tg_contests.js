@@ -1,10 +1,13 @@
 // Contest base per account: one JSON instead of hand-glued scan/join/enter logs; report in the 06:28 style;
 // results check and unsubscribe after the draw. State file lives in the scratchpad (has account data).
 // usage: node tg_contests.js <cmd> --state contests_a2.json [...]
-//   import  --list list.txt [--scan scan.json] [--enter res.json,res2.json] [--join join.log,join2.log] [--times 06:28.txt]
+//   import  --list list.txt [--req req.json] [--scan scan.json] [--enter res.json,res2.json] [--join join.log,join2.log] [--times 06:28.txt]
 //           list = report text with lines «• приз: @каналы» under «🗓 ДД.ММ» (the 14:20 format) or «ДД.ММ [ЧЧ:ММ] — приз · …»
 //   report  [--title "МОИ РОЗЫГРЫШИ"] [--captcha] [--out report.txt] — grouped by action, link to each post;
 //           --captcha = separate «я не бот» report. Messages split by ===== (send: tg_post.js)
+//   verify  [--account 2]                                 — check for real that the account is in EVERY required channel
+//           (contest channels + partners/private invites from the post, import --req). Saves `missing` per contest.
+//   done    @organizer,… [--note "…"]                     — mark contests as entered by the owner (e.g. captcha passed)
 //   due     [--days 0]                                    — contests whose draw date has come (or comes in N days)
 //   results [--days 0] [--account 2]                      — look for the draw post; won / lost / unknown (pult, read-only)
 //   leave   [--account 2] [--yes]                         — unsubscribe from channels of LOST contests, except channels
@@ -65,6 +68,13 @@ function importAll() {
     if (st === 'bot_reply' || st === 'unknown') st = /участник|registered|участвуете|participating|все условия выполнены/i.test(r.note) && !/^[^|]*(not subscribed|не подписан)/i.test(r.note) ? 'ok' : /человечн|captcha|капч/i.test(r.note) ? 'captcha' : /not subscribed|не подписан|подпишит|необходимо подписаться|не соблюдены/i.test(r.note) ? 'need_sub' : st;
     for (const c of byCh(r.ch)) if ((RANK[st] ?? 0) >= (RANK[c.status] ?? -1) || c.status === 'need_sub' || c.status === 'captcha') { c.status = st; c.note = (r.note || '').slice(0, 160); }
   }
+  if (o.req) for (const r of JSON.parse(fs.readFileSync(o.req, 'utf8'))) for (const c of byCh(r.ch)) {
+    const add = r.links.filter(l => !/startapp|[?&]start=|\/\d+$|bot\b/i.test(l)).map(l => {
+      const inv = /t(?:elegram)?\.me\/(?:\+|joinchat\/)([\w-]+)/.exec(l); if (inv) return '+' + inv[1];
+      const u = /(?:t(?:elegram)?\.me\/|@)([A-Za-z]\w{3,31})/.exec(l); return u ? u[1] : null; }).filter(Boolean);
+    c.required = [...new Set([...(c.required || c.channels), ...add].map(x => x.startsWith('+') ? x : x.toLowerCase()))];
+  }
+  for (const c of db.contests) if (!c.required) c.required = c.channels.map(lc);
   // sub_only is real only when every channel is joined
   for (const c of db.contests) if (c.status === 'sub_only' && c.joined && c.channels.some(ch => c.joined[lc(ch)] === false)) c.status = 'need_sub';
   save(); const cnt = {}; db.contests.forEach(c => cnt[c.status || '—'] = (cnt[c.status || '—'] || 0) + 1);
@@ -78,7 +88,7 @@ const SECTIONS = [
   { st: ['captcha'], h: '🤖 ПОДТВЕРДИТЬ «Я НЕ БОТ»', how: 'Нажмите «перейти на пост» → под постом «Участвовать» → пройдите проверку «я не бот» → дождитесь «Вы участвуете».', link: 'перейти на пост', act: 1 },
   { st: ['manual'], h: '✍️ ВЫПОЛНИТЬ УСЛОВИЕ ПОСТА', how: 'По условиям нужен комментарий, репост, лайк и т. п. — откройте пост и сделайте, что там написано.', link: 'перейти на пост', act: 1 },
   { st: ['unknown', 'bot_reply', 'error'], h: '🔎 ПРОВЕРИТЬ ВРУЧНУЮ', how: 'Бот не ответил ясно, участвуем ли мы. Откройте пост, нажмите «Участвовать» и посмотрите ответ.', link: 'перейти на пост', act: 1, note: 1 },
-  { st: ['need_sub'], h: '⏳ ЖДЁТ ПОДПИСКИ НА КАНАЛЫ-ПАРТНЁРЫ', how: 'Telegram временно ограничил подписки — подпишу сам после снятия лимита и нажму «Участвовать». От вас ничего не нужно.', link: 'пост' },
+  { st: ['need_sub'], h: '⏳ ЖДЁТ ПОДПИСКИ НА КАНАЛЫ', how: 'Подписан ещё не на все каналы конкурса (лимит Telegram) — подпишу сам. Капчу по этим конкурсам пришлю ТОЛЬКО после проверки всех подписок. Сейчас ничего не нажимайте.', link: 'пост' },
   { st: ['won'], h: '🏆 ВЫИГРЫШ', how: 'Напишите организатору, от каналов не отписывайтесь до получения приза.', link: 'пост с итогами', act: 1 },
   { st: ['ok'], h: '✅ УЧАСТВУЮ — БОТ ПОДТВЕРДИЛ', how: 'Ничего делать не нужно. Не отписывайтесь от каналов до итогов.', link: 'пост' },
   { st: ['sub_only'], h: '☑️ УЧАСТВУЮ ПО ПОДПИСКЕ', how: 'Условие — только подписка, она оформлена. Бот такие конкурсы не подтверждает — проверим по итогам.', link: 'пост' },
@@ -93,7 +103,9 @@ function itemLine(c, sec) {
   const chans = c.channels.length ? c.channels.map(x => '@' + x).join(' ') : `канал без ссылки — искать в архиве по названию`;
   const link = url ? ` — [${c.post ? sec.link : 'перейти в канал'}](${url})` : '';
   const why = sec.note && c.note ? `\n   ↳ ${c.note.replace(/\s+/g, ' ').slice(0, 110)}` : '';
-  return `• ${date} — ${c.title}${link}\n   каналы: ${chans}${why}`;
+  const miss = (c.missing || []).length && sec.st.includes('need_sub') ? `\n   ↳ не хватает подписки: ${c.missing.join(', ')}${c.status === 'captcha' ? ' (после подписки — капча «я не бот»)' : ''}` :
+    (sec.st.includes('need_sub') && c.status === 'captcha' && !c.verified ? '\n   ↳ подписки ещё не проверены (tg_contests.js verify)' : '');
+  return `• ${date} — ${c.title}${link}\n   каналы: ${chans}${why}${miss}`;
 }
 function pack(head, blocks, cont) {
   const msgs = [head]; let cur = '';
@@ -104,7 +116,9 @@ function pack(head, blocks, cont) {
   if (cur.trim()) msgs.push(cur.trim()); return msgs;
 }
 function report() {
-  const cs = db.contests, by = st => cs.filter(c => [].concat(st).includes(c.status)).sort((a, b) => sortKey(a) - sortKey(b));
+  // RULE: captcha shown ONLY when verify confirmed all required channels; else it waits with the missing list
+  const eff = c => c.status === 'captcha' && (!c.verified || (c.missing || []).length) ? 'need_sub' : c.status;
+  const cs = db.contests, by = st => cs.filter(c => [].concat(st).includes(eff(c))).sort((a, b) => sortKey(a) - sortKey(b));
   const stamp = new Date(Date.now() + 3 * 3600e3).toISOString(); const upd = `${stamp.slice(8, 10)}.${stamp.slice(5, 7)} ${stamp.slice(11, 16)} МСК`;
   const secs = o.captcha ? SECTIONS.filter(x => x.st.includes('captcha')) : SECTIONS;
   const n = st => by(st).length;
@@ -113,6 +127,7 @@ function report() {
     const x = by('captcha');
     head = [`🤖 ПОДТВЕРДИТЬ «Я НЕ БОТ» — обновлено ${upd}`, '━━━━━━━━━━━━━━━', `📊 Конкурсов с проверкой: ${x.length}`,
       `⏰ Ближайший срок: ${x[0] ? x[0].day + (x[0].time ? ' ' + x[0].time : '') : '—'}`, '━━━━━━━━━━━━━━━', '',
+      '✔️ Здесь только конкурсы, где проверено: аккаунт подписан на ВСЕ требуемые каналы.', '',
       'ЧТО ДЕЛАТЬ (с телефона, в приложении Telegram):', '1. Нажмите «перейти на пост» у конкурса', '2. Под постом нажмите «Участвовать»',
       '3. Пройдите проверку «я не бот»', '4. Дождитесь надписи «Вы участвуете в розыгрыше»', '5. Кнопки «Буст», «Голосовать», «Забрать подарок» — НЕ нужны',
       '', 'Сначала — те, у кого итоги раньше. Список — в следующем сообщении 👇'].join('\n');
@@ -142,6 +157,42 @@ function dueList() { const lim = today() + (+o.days || 0) * 86400; return db.con
 (async () => {
   if (cmd === 'import') return importAll();
   if (cmd === 'report') return report();
+  if (cmd === 'done') {
+    const set = new Set(String(o._[1] || '').split(',').map(x => lc(x.replace('@', ''))));
+    let n = 0; for (const c of db.contests) if (set.has(lc(c.organizer))) { c.status = 'ok'; c.note = o.note || 'выполнено владельцем'; n++; }
+    save(); console.log(`отмечено «участвую»: ${n}`); return;
+  }
+  if (cmd === 'verify') {
+    // RULE (owner 17.11): a captcha is sent to the owner ONLY after every required channel is confirmed joined
+    const todo = db.contests.filter(c => !['ended', 'lost', 'won'].includes(c.status) && (c.required || []).length);
+    const refs = [...new Set(todo.flatMap(c => c.required))];
+    const res = await withTg(pg => pg.evaluate(async refs => {
+      const T = window.__tg; const out = {}; const sleep = ms => new Promise(r => setTimeout(r, ms));
+      for (const r of refs) {
+        try {
+          if (r.startsWith('+')) {
+            const ci = await T.api('messages.checkChatInvite', { hash: r.slice(1) });
+            out[r] = { title: (ci.chat && ci.chat.title) || ci.title, ok: (ci._ === 'chatInviteAlready' || ci._ === 'chatInvitePeek') && !(ci.chat.pFlags && ci.chat.pFlags.left) };
+            await sleep(1500);
+          } else {
+            const c = await T.resolve(r); out[r] = { title: c.title, ok: c.ent._ !== 'channel' || !(c.ent.pFlags && c.ent.pFlags.left) };
+            await sleep(250);
+          }
+        } catch (e) { out[r] = { ok: false, err: e.type || e.message }; if (/FLOOD/.test(e.type || '')) await sleep(3000); }
+      }
+      return out; }, refs), undefined, o.account || 1);
+    const now = new Date().toISOString();
+    for (const c of todo) {
+      c.missing = c.required.filter(r => !(res[r] && res[r].ok)).map(r => r.startsWith('+') ? `приватный канал «${(res[r] && res[r].title) || r}»` + (res[r] && res[r].err ? ' (не проверен: ' + res[r].err + ')' : '') : '@' + r + (res[r] && res[r].err ? ' (' + res[r].err + ')' : ''));
+      c.verified = now;
+    }
+    save();
+    const cap = todo.filter(c => c.status === 'captcha');
+    console.log(`проверено каналов: ${refs.length}; не подписаны: ${refs.filter(r => !(res[r] && res[r].ok)).length}`);
+    console.log(`капча — можно отправлять владельцу: ${cap.filter(c => !c.missing.length).length}; ждут подписки: ${cap.filter(c => c.missing.length).length}`);
+    for (const c of cap.filter(c => c.missing.length)) console.log(`  ⏳ @${c.organizer}: нет ${c.missing.join(', ')}`);
+    return;
+  }
   if (cmd === 'due') { const d = dueList(); d.forEach(c => console.log(`${c.day} ${c.time} ${c.title} · @${c.organizer} [${c.status}]`)); console.log(`— ${d.length}`); return; }
   if (cmd === 'results') {
     const due = dueList().filter(c => c.organizer);
