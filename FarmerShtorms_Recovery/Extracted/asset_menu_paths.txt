@@ -1,0 +1,25 @@
+6farmershoot SDK/Gun Definition
+6farmershoot SDK/Gun Parameters
+8farmershoot SDK/Bomb Parameters
+:farmershoot SDK/Armor Definition
+:farmershoot SDK/Knife Parameters
+>farmershoot SDK/Grenade Definition
+>farmershoot SDK/Grenade Parameters
+>farmershoot SDK/ShotGun Parameters
+@farmershoot SDK/Create SkinTemplate
+Dfarmershoot SDK/Create SkinDefinition
+Hfarmershoot SDK/Create GlovesDefinition
+Nfarmershoot SDK/Arms/Gloves Lod Parameters
+Nfarmershoot SDK/Create WeaponLodParameters
+Pfarmershoot SDK/Create WeaponMeshDefinition
+Rfarmershoot SDK/Create WeaponSoundParameters
+Zfarmershoot SDK/Create WeaponAnimationParameters
+dfarmershoot SDK/Character/Custom Character Definition
+farmershoot SDK/Weapon Effects/Create Grenade Detonation Effect Definition
+farmershoot SDK/Weapon Effects/Create Grenade Detonation Screen Effect Definition
+ffarmershoot SDK/Character/Default Character Definition
+ffarmershoot SDK/Weapon Effects/Create Trace Definition
+lfarmershoot SDK/Character Effects/Create Blood Definition
+nfarmershoot SDK/Weapon Effects/Create GunShells Definition
+tfarmershoot SDK/Weapon Effects/Create Muzzle Flash Definition
+vfarmershoot SDK/Weapon Effects/Create Grenade Trail Definition

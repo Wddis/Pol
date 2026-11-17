@@ -1,0 +1,2 @@
+bfd plugin: Original/Test.so: file too short
+nm: Original/Test.so: file format not recognized
