@@ -1,0 +1,7 @@
+JNI_OnLoad	0x5ac3bf0	212
+JNI_OnUnload	0x5ac3f88	156
+UnitySendMessage	0x5a1f684	92
+UnitySwappy_version	0x5a997b4	12
+UnitySwappy_injectTracer	0x5a997c0	68
+UnityInitialize	0x5acb728	504
+UnityShutdown	0x5acb920	48
