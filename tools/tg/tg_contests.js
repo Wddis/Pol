@@ -89,7 +89,7 @@ const SECTIONS = [
   { st: ['manual'], h: '✍️ ВЫПОЛНИТЬ УСЛОВИЕ ПОСТА', how: 'По условиям нужен комментарий, репост, лайк и т. п. — откройте пост и сделайте, что там написано.', link: 'перейти на пост', act: 1 },
   { st: ['app_only'], h: '📱 НАЖАТЬ «УЧАСТВОВАТЬ» В ПРИЛОЖЕНИИ TELEGRAM', how: 'Бот RandomBeast не работает в веб-версии — откройте пост в приложении на телефоне и нажмите «Участвовать».', link: 'перейти на пост', act: 1, note: 1 },
   { st: ['unknown', 'bot_reply', 'error'], h: '🔎 ПРОВЕРИТЬ ВРУЧНУЮ', how: 'Бот не ответил ясно, участвуем ли мы. Откройте пост, нажмите «Участвовать» и посмотрите ответ.', link: 'перейти на пост', act: 1, note: 1 },
-  { st: ['need_sub'], h: '⏳ ЖДЁТ ПОДПИСКИ НА КАНАЛЫ', how: 'Подписан ещё не на все каналы конкурса (лимит Telegram) — подпишу сам. Капчу по этим конкурсам пришлю ТОЛЬКО после проверки всех подписок. Сейчас ничего не нажимайте.', link: 'пост' },
+  { st: ['need_sub'], h: '⏳ ЖДЁТ ПОДПИСКИ НА КАНАЛЫ', how: 'Аккаунт подписан не на все каналы конкурса — без них участие не засчитают. Недостающие каналы — в строке. Подпишу по вашей команде (у Rembo — после снятия лимита Telegram); капчу пришлю только после проверки подписок.', link: 'пост' },
   { st: ['won'], h: '🏆 ВЫИГРЫШ', how: 'Напишите организатору, от каналов не отписывайтесь до получения приза.', link: 'пост с итогами', act: 1 },
   { st: ['ok'], h: '✅ УЧАСТВУЮ — БОТ ПОДТВЕРДИЛ', how: 'Ничего делать не нужно. Не отписывайтесь от каналов до итогов.', link: 'пост' },
   { st: ['sub_only'], h: '☑️ УЧАСТВУЮ ПО ПОДПИСКЕ', how: 'Условие — только подписка, она оформлена. Бот такие конкурсы не подтверждает — проверим по итогам.', link: 'пост' },
@@ -122,7 +122,8 @@ function pack(head, blocks, cont) {
 function report() {
   // RULE: captcha shown ONLY when verify confirmed all required channels; else it waits with the missing list
   const eff = c => c.status === 'captcha' && (!c.verified || (c.missing || []).length) ? 'need_sub' : c.status;
-  const cs = db.contests, by = st => cs.filter(c => [].concat(st).includes(eff(c))).sort((a, b) => sortKey(a) - sortKey(b));
+  // 'removed' (e.g. no giveaway post — owner 17.11): unsubscribed and NOT shown in the report at all
+  const cs = db.contests.filter(c => c.status !== 'removed'), by = st => cs.filter(c => [].concat(st).includes(eff(c))).sort((a, b) => sortKey(a) - sortKey(b));
   const stamp = new Date(Date.now() + 3 * 3600e3).toISOString(); const upd = `${stamp.slice(8, 10)}.${stamp.slice(5, 7)} ${stamp.slice(11, 16)} МСК`;
   const secs = o.captcha ? SECTIONS.filter(x => x.st.includes('captcha')) : SECTIONS;
   // one line per giveaway post: contests that point to the same post are merged (titles joined, channels united)
@@ -227,7 +228,7 @@ function dueList() { const lim = today() + (+o.days || 0) * 86400; return db.con
     save(); return;
   }
   if (cmd === 'leave') {
-    const DROP = ['lost', 'ended', 'excluded'];
+    const DROP = ['lost', 'ended', 'excluded', 'removed'];
     const chOf = c => (c.required && c.required.length ? c.required : c.channels).filter(x => !x.startsWith('+')).map(lc);
     const active = new Set(db.contests.filter(c => !DROP.includes(c.status)).flatMap(chOf));
     const lost = db.contests.filter(c => DROP.includes(c.status));
@@ -237,7 +238,10 @@ function dueList() { const lim = today() + (+o.days || 0) * 86400; return db.con
     if (!o.yes) { console.log(`DRY RUN: отписка от ${go.length}: ${go.map(x => '@' + x).join(' ')}\nТолько по команде владельца: --yes`); return; }
     await withTg(async pg => {
       const log = await pg.evaluate(async go => { const T = window.__tg; const out = [];
-        for (const ch of go) { try { const c = await T.resolve(ch);
+        const own = await T.dialogs();
+        for (const ch of go) { try {
+          if (!own.has(ch)) { out.push('= @' + ch + ' (нет в списке чатов — не подписан)'); continue; }
+          const c = await T.resolve(ch);
           if (c.ent.pFlags && c.ent.pFlags.left) { out.push('= @' + ch + ' (не подписан)'); continue; }
           await T.api('channels.leaveChannel', { channel: { _: 'inputChannel', channel_id: c.ent.id, access_hash: c.ent.access_hash } }); out.push('✓ @' + ch + ' — отписался');
         } catch (e) { out.push(`✗ @${ch}: ${e.type || e.message}`); if (/FLOOD/.test(e.type || '')) break; }

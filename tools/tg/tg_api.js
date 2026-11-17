@@ -3,7 +3,7 @@
 const { chromium } = require('playwright');
 
 // runs in the page: install window.__tg once per tab (bump V when this code changes)
-const V = 4;
+const V = 5;
 function install(V) {
   if (window.__tg && window.__tg.v === V) return;
   const M = rootScope.managers, raw = (m, p) => M.apiManager.invokeApi(m, p);
@@ -22,6 +22,26 @@ function install(V) {
     : { _: 'inputPeerUser', user_id: c.id, access_hash: c.access_hash };
   const uname = e => e.username || (e.usernames || []).map(u => u.username).find(Boolean) || '';
   const cache = {};
+  // the account's own chat list (main + archive): username → chat, WITHOUT contacts.resolveUsername (daily limit).
+  // Being in this list = being subscribed, so it is also the most honest membership check.
+  let dlg = null;
+  async function dialogs() {
+    if (dlg) return dlg;
+    const map = new Map();
+    for (const folder_id of [0, 1]) {
+      let off = { date: 0, id: 0, peer: { _: 'inputPeerEmpty' } };
+      for (let page = 0; page < 30; page++) {
+        const d = await raw('messages.getDialogs', { folder_id, offset_date: off.date, offset_id: off.id, offset_peer: off.peer, limit: 100, hash: 0 });
+        const ents = [...(d.chats || []), ...(d.users || [])];
+        for (const c of d.chats || []) { if (c.pFlags && c.pFlags.left) continue; map.set('#' + c.id, c); for (const u of [c.username, ...(c.usernames || []).map(x => x.username)]) if (u) map.set(u.toLowerCase(), c); }
+        if (!d.dialogs || d.dialogs.length < 100) break;
+        const last = d.dialogs[d.dialogs.length - 1]; const lm = (d.messages || []).find(m => m.id === last.top_message);
+        const lid = last.peer.channel_id || last.peer.chat_id || last.peer.user_id; const le = ents.find(x => x.id === lid);
+        off = { date: lm ? lm.date : 0, id: last.top_message, peer: le ? inputOf(le) : { _: 'inputPeerEmpty' } };
+      }
+    }
+    return (dlg = map);
+  }
   // ref: @username | t.me/username | -100… / -id (channel) | id (user)
   async function resolve(ref) {
     ref = String(ref).trim().replace(/^https?:\/\/t\.me\//, '').replace(/^@/, '').replace(/\/.*$/, '');
@@ -32,8 +52,9 @@ function install(V) {
       ent = n < 0 ? await M.appChatsManager.getChat(id) : await M.appUsersManager.getUser(id);
       if (!ent || !ent.id) throw new Error('нет в кеше: ' + ref + ' — укажите @username');
     } else {
-      // local cache first: contacts.resolveUsername has a small daily limit (17.11 Rembo: FLOOD_WAIT 77077 s ≈ 21 h)
-      try { const p = await M.appUsersManager.resolveUsername(ref);
+      { const d = await dialogs(); const c = d.get(ref.toLowerCase()); if (c) ent = c; } // own chat list first
+      // local cache next: contacts.resolveUsername has a small daily limit (17.11 Rembo: FLOOD_WAIT 77077 s ≈ 21 h)
+      if (!ent) try { const p = await M.appUsersManager.resolveUsername(ref);
         if (p && p.id) ent = p._ === 'user' ? p : await M.appChatsManager.getChat(p.id); } catch (e) {}
       if (!ent || !ent.id) { const r = await api('contacts.resolveUsername', { username: ref });
         ent = (r.chats && r.chats[0]) || (r.users && r.users[0]); }
@@ -64,7 +85,7 @@ function install(V) {
       replies: m.replies ? m.replies.replies : 0, media: isVideo ? 'video' : media, grouped: m.grouped_id || '',
       text: t, links, url: uname ? `https://t.me/${uname}/${m.id}` : `https://t.me/c/${chId}/${m.id}` };
   }
-  window.__tg = { v: V, api, resolve, text, slim, M, uname, inputOf };
+  window.__tg = { v: V, api, resolve, text, slim, M, uname, inputOf, dialogs };
 }
 
 // Accounts: 1 = Sahalinov (MAIN, default), 2 = second account — only when the owner asks (--account 2).
@@ -75,8 +96,16 @@ async function ensureAccount(pg, n = 1) {
   n = +n || 1;
   if (tabAccount(pg) !== n) await pg.goto(n > 1 ? `${TG}?account=${n}` : TG, { waitUntil: 'domcontentloaded' });
   await pg.waitForFunction(() => window.rootScope && rootScope.managers, null, { timeout: 30000 });
-  const me = await pg.evaluate(async () => { const u = await rootScope.managers.appUsersManager.getSelf();
-    return u ? { id: u.id, name: [u.first_name, u.last_name].filter(Boolean).join(' '), username: u.username || '' } : null; });
+  // after a container restart the 2nd account's local data loads late: retry, then ask the server directly
+  let me = null;
+  for (let i = 0; i < 15 && !me; i++) {
+    me = await pg.evaluate(async () => {
+      const M = rootScope.managers; let u = await M.appUsersManager.getSelf().catch(() => null);
+      if (!u || !u.id) { const r = await M.apiManager.invokeApi('users.getUsers', { id: [{ _: 'inputUserSelf' }] }).catch(() => null); u = r && r[0]; }
+      return u && u.id ? { id: u.id, name: [u.first_name, u.last_name].filter(Boolean).join(' '), username: u.username || (u.usernames || []).map(x => x.username)[0] || '' } : null;
+    }).catch(() => null);
+    if (!me) await pg.waitForTimeout(2000);
+  }
   if (!me) throw new Error(`аккаунт ${n} не вошёл`);
   console.error(`[аккаунт ${n}: ${me.name} @${me.username || '—'} id ${me.id}]`);
   return me;
