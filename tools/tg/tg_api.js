@@ -54,15 +54,33 @@ function install(V) {
   window.__tg = { v: V, api, resolve, text, slim, M, uname, inputOf };
 }
 
-async function withTg(fn, cdp = 'http://127.0.0.1:9222') {
+// Accounts: 1 = Sahalinov (MAIN, default), 2 = second account — only when the owner asks (--account 2).
+// Telegram Web keeps both logged in; the tab shows one at a time (`/k/` = 1, `/k/?account=2` = 2).
+const TG = 'https://web.telegram.org/k/';
+const tabAccount = pg => +(new URL(pg.url()).searchParams.get('account') || 1);
+async function ensureAccount(pg, n = 1) {
+  n = +n || 1;
+  if (tabAccount(pg) !== n) await pg.goto(n > 1 ? `${TG}?account=${n}` : TG, { waitUntil: 'domcontentloaded' });
+  await pg.waitForFunction(() => window.rootScope && rootScope.managers, null, { timeout: 30000 });
+  const me = await pg.evaluate(async () => { const u = await rootScope.managers.appUsersManager.getSelf();
+    return u ? { id: u.id, name: [u.first_name, u.last_name].filter(Boolean).join(' '), username: u.username || '' } : null; });
+  if (!me) throw new Error(`аккаунт ${n} не вошёл`);
+  console.error(`[аккаунт ${n}: ${me.name} @${me.username || '—'} id ${me.id}]`);
+  return me;
+}
+// switch the pult back to the main account (call after work on account 2)
+async function backToMain(pg) { if (tabAccount(pg) !== 1) await pg.goto(TG, { waitUntil: 'domcontentloaded' }).catch(() => {}); }
+
+async function withTg(fn, cdp = 'http://127.0.0.1:9222', account = 1) {
   const b = await chromium.connectOverCDP(cdp);
+  let pg;
   try {
-    const pg = b.contexts()[0].pages().find(p => /web\.telegram\.org/.test(p.url()));
+    pg = b.contexts()[0].pages().find(p => /web\.telegram\.org/.test(p.url()));
     if (!pg) throw new Error('нет вкладки web.telegram.org в пульте — поднимите пульт (docs/telegram.md)');
-    await pg.waitForFunction(() => window.rootScope && rootScope.managers, null, { timeout: 30000 });
+    await ensureAccount(pg, account);
     await pg.evaluate(install, V);
     return await fn(pg);
-  } finally { await b.close().catch(() => {}); } // detaches only; the pult keeps running
+  } finally { if (pg && +account !== 1) await backToMain(pg); await b.close().catch(() => {}); } // detaches only; the pult keeps running
 }
 
 // argv helper: --key value / --flag
@@ -75,4 +93,4 @@ function opts(argv) {
   }
   return o;
 }
-module.exports = { withTg, opts };
+module.exports = { withTg, opts, ensureAccount, backToMain, tabAccount };

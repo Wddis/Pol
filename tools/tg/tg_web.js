@@ -1,7 +1,7 @@
 // Telegram Web (K) helper over the pult's CDP: the owner logs in through remote_browser.js (QR / phone),
 // this script then works in the same logged-in tab.
 // usage: node tg_web.js [cdp:9222] <command> [...]
-//   me                         — who is logged in
+//   me                         — which account the command works in
 //   chats [N=30] [--folder X]  — chat list: peer id, title, unread, last message
 //   read  <peer> [N=30]        — last N messages of a chat (peer = id | @username | title as in `chats`)
 //   search <text>              — global search box (chats, contacts, messages) — titles + peer ids
@@ -9,13 +9,17 @@
 //   shot  [out.png]            — screenshot of the Telegram tab
 //   session-save <file>        — dump login (localStorage) to a file — SCRATCHPAD ONLY, it is a full login
 //   session-restore <file>     — load it into the pult after a container restart (no QR again)
+// --account 2: work in the second account (ONLY when the owner asks); default = account 1 Sahalinov (main)
 // Notes: opening a chat marks it read for the owner (as in a normal client). Never log/commit session files.
 const fs = require('fs');
 const { chromium } = require('playwright');
+const { ensureAccount, backToMain } = require('./tg_api');
 let args = process.argv.slice(2);
 let CDP = 'http://127.0.0.1:9222';
 if (args[0] && /^cdp:/.test(args[0])) { CDP = 'http://127.0.0.1:' + args.shift().slice(4); }
 const yes = args.includes('--yes'); args = args.filter(a => a !== '--yes');
+// --account 2 = second account, only when the owner asks; default 1 = Sahalinov (main)
+let ACCOUNT = 1; { const i = args.indexOf('--account'); if (i >= 0) { ACCOUNT = +args[i + 1] || 1; args.splice(i, 2); } }
 const [cmd, ...rest] = args;
 const TG = 'https://web.telegram.org/k/';
 const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -115,6 +119,7 @@ async function readMsgs(pg, n) {
   const b = await chromium.connectOverCDP(CDP);
   const pg = await tgPage(b);
   try {
+    const me = cmd.startsWith('session-') ? null : await ensureAccount(pg, ACCOUNT);
     if (cmd === 'session-restore') {
       const data = JSON.parse(fs.readFileSync(rest[0], 'utf8'));
       if (!/web\.telegram\.org/.test(pg.url())) await pg.goto(TG, { waitUntil: 'domcontentloaded' });
@@ -128,8 +133,7 @@ async function readMsgs(pg, n) {
       const d = await pg.evaluate(() => Object.fromEntries(Object.entries(localStorage)));
       fs.writeFileSync(rest[0], JSON.stringify(d), { mode: 0o600 }); console.log(`сохранено ${Object.keys(d).length} ключей → ${rest[0]} (НЕ в репо)`);
     } else if (cmd === 'me') {
-      const u = await pg.evaluate(() => JSON.parse(localStorage.user_auth || '{}'));
-      console.log(`id ${u.id}, dc ${u.dcID}`);
+      console.log(`аккаунт ${ACCOUNT}: ${me.name} @${me.username || '—'} id ${me.id}`);
     } else if (cmd === 'chats') {
       const fi = rest.indexOf('--folder'); const folder = fi >= 0 ? rest[fi + 1] : null;
       const n = +(rest.find(x => /^\d+$/.test(x)) || 30);
@@ -161,5 +165,5 @@ async function readMsgs(pg, n) {
       console.log(last && last.out && last.text.includes(text.slice(0, 20)) ? `отправлено в «${title}»` : 'ВНИМАНИЕ: не вижу отправленного сообщения — проверьте shot');
     } else throw new Error('неизвестная команда ' + cmd);
   } catch (e) { console.error('ОШИБКА:', e.message); process.exitCode = 1; }
-  finally { await b.close().catch(() => {}); } // only detaches from CDP, the pult browser keeps running
+  finally { if (ACCOUNT !== 1) await backToMain(pg); await b.close().catch(() => {}); } // only detaches from CDP, the pult browser keeps running
 })();

@@ -92,4 +92,4 @@
 
 ## 6. Безопасность
 Cookies — только в scratchpad, не в репо. Токен бота не коммитить и не логировать. Пароли и капчи вводит только владелец
-(пульт `remote_browser.js`; Telegram через пульт — docs/telegram.md, файл входа только в scratchpad). Пушить только в ветку `ccr-afb88262-upss12`.
+(пульт `remote_browser.js`; Telegram через пульт — docs/telegram.md: основной аккаунт Sahalinov, второй — только по просьбе владельца (`--account 2`); файл входа только в scratchpad). Пушить только в ветку `ccr-afb88262-upss12`.

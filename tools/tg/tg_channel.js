@@ -17,7 +17,7 @@
 //   --chars N          text width (default 160; 0 = full text)  --json FILE  — dump the filtered set (scratchpad)
 const fs = require('fs');
 const { withTg, opts } = require('./tg_api');
-const o = opts(process.argv.slice(2));
+const o = opts(process.argv.slice(2)); // --account 2 = второй аккаунт, только по просьбе владельца
 const [cmd, target] = o._;
 const DAY = 86400, now = Math.floor(Date.now() / 1000);
 const since = o.since ? Date.parse(o.since) / 1000 : o.days ? now - o.days * DAY : 0;
@@ -122,5 +122,5 @@ const med = a => { const s = [...a].sort((x, y) => x - y); return s.length ? s[s
       p.forEach(x => console.log(line(x, multi)));
       console.log(`— ${p.length} из ${all.length} загруженных · ${((Date.now() - t0) / 1000).toFixed(1)} с`);
     }
-  });
+  }, undefined, o.account || 1);
 })().catch(e => { console.error('ОШИБКА:', e.message); process.exitCode = 1; });

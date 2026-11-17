@@ -8,7 +8,7 @@
 // --file: any text (e.g. the owner's "ОТПИСАТЬСЯ" list) — every @username and t.me/… link in it is taken.
 const fs = require('fs');
 const { withTg, opts } = require('./tg_api');
-const o = opts(process.argv.slice(2));
+const o = opts(process.argv.slice(2)); // --account 2 = второй аккаунт, только по просьбе владельца
 const [cmd, ...rest] = o._;
 
 function refsFrom() {
@@ -68,5 +68,5 @@ function refsFrom() {
     for (const b of res.bad) console.log(`✗ ${b}`);
     const verb = folder ? 'в архив' : 'из архива';
     console.log(o.yes ? `перенесено ${verb}: ${res.done}` : `DRY RUN: ${verb} ушло бы ${res.todo} (→). Только по команде владельца: добавьте --yes`);
-  });
+  }, undefined, o.account || 1);
 })().catch(e => { console.error('ОШИБКА:', e.message); process.exitCode = 1; });
