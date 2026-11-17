@@ -27,6 +27,8 @@
   Запуск: `ytenv/bin/python tools/yt/yt_upload.py cookies.txt meta.json`
   (youtube-up сейчас ломается на получении sessionToken — YouTube изменил Studio.)
 - `tg/tg_web.js` — Telegram Web через пульт: чаты, чтение, поиск, отправка (только по команде), сохранение входа (docs/telegram.md).
+- `tg/tg_channel.js` — быстрый анализ каналов: серверный поиск, фильтры, топ, статистика; ничего не сохраняет.
+- `tg/tg_archive.js` — перенос каналов в архив / из архива, только с `--yes` по команде владельца.
 - `yt/remote_browser.js` — пульт: владелец сам проходит «Подтверждение личности» с телефона (см. docs/publishing-methods.md).
   `yt/export_cookies.js` — сохранить cookies из браузера пульта после подтверждения (только в scratchpad).
 - `yt/studio_upload.js` — загрузка через веб-интерфейс Studio (Playwright, cookies.txt, обычный Chrome UA).
