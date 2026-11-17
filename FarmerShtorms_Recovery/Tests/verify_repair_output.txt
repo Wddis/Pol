@@ -1,0 +1,11 @@
+PASS T1 оригинальные байты сохранены (R = O[:P] + 1999×00 + O[P:])
+PASS T2 размер файла точно равен концу таблицы секций — 217739936 == 217738208+64*27
+PASS T3 все аллоцируемые секции совпадают с картой сегментов — 21 секций, расхождений 0
+PASS T4 DYNAMIC на месте и валиден — STRTAB=0x2240 SYMTAB=0x288 RELA=0x3660
+PASS T5 все FDE из .eh_frame_hdr совпадают с .eh_frame — 627811/627811
+PASS T6 readelf без ошибок
+PASS T7 nm -D читает экспорт — JNI_OnLoad, JNI_OnUnload, UnityInitialize, UnitySendMessage, UnityShutdown, UnitySwappy_injectTracer, UnitySwappy_version
+PASS T8 llvm-objdump: JNI_OnLoad (212 байт) = пролог sub sp … и ret — 5ac3bf0:      	sub	sp, sp, #0x30 … 5ac3cc0:      	ret
+PASS T9 указатели из релокаций на строки после точки вставки — отремонтированный: 171/84465 попадают точно на начало строки, оригинал (контроль): 2/84465
+
+ИТОГ: 9/9 PASS

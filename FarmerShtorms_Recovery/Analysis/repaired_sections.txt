@@ -1,0 +1,36 @@
+There are 27 section headers, starting at offset 0xcfa6be0:
+
+Section Headers:
+  [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            0000000000000000 000000 000000 00      0   0  0
+  [ 1] .note.gnu.build-id NOTE            0000000000000270 000270 000018 00   A  0   0  4
+  [ 2] .dynsym           DYNSYM          0000000000000288 000288 001c80 18   A  7   1  8
+  [ 3] .gnu.version      VERSYM          0000000000001f08 001f08 000260 02   A  2   0  2
+  [ 4] .gnu.version_d    VERDEF          0000000000002168 002168 000038 00   A  7   2  4
+  [ 5] .gnu.version_r    VERNEED         00000000000021a0 0021a0 000060 00   A  7   3  4
+  [ 6] .gnu.hash         GNU_HASH        0000000000002200 002200 000040 00   A  2   0  8
+  [ 7] .dynstr           STRTAB          0000000000002240 002240 00141b 00   A  0   0  1
+  [ 8] .rela.dyn         RELA            0000000000003660 003660 1a199a8 18   A  2   0  8
+  [ 9] .rela.plt         RELA            0000000001a1d008 1a1d008 001a28 18  AI  2  20  8
+  [10] .rodata           PROGBITS        0000000001a1ea40 1a1ea40 2162b0c 00 AMS  0   0 64
+  [11] .gcc_except_table PROGBITS        0000000003b8154c 3b8154c 28e4c4 00   A  0   0  4
+  [12] .eh_frame_hdr     PROGBITS        0000000003e0fa10 3e0fa10 4ca34c 00   A  0   0  4
+  [13] .eh_frame         PROGBITS        00000000042d9d60 42d9d60 14db708 00   A  0   0  8
+  [14] .text             PROGBITS        00000000057b9480 57b5480 6aa4340 00  AX  0   0 64
+  [15] .plt              PROGBITS        000000000c25d7c0 c2597c0 001190 00  AX  0   0 16
+  [16] .data.rel.ro      PROGBITS        000000000c262950 c25a950 6442c8 00  WA  0   0 16
+  [17] .init_array       INIT_ARRAY      000000000c8a6c18 c89ec18 001010 00  WA  0   0  8
+  [18] .dynamic          DYNAMIC         000000000c8a7c28 c89fc28 0001f0 10  WA  7   0  8
+  [19] .got              PROGBITS        000000000c8a7e18 c89fe18 0eb708 00  WA  0   0  8
+  [20] .got.plt          PROGBITS        000000000c993520 c98b520 0008d0 00  WA  0   0  8
+  [21] .relro_padding    NOBITS          000000000c993df0 c98bdf0 000210 00  WA  0   0  1
+  [22] .data             PROGBITS        000000000c997e00 c98be00 61ac58 00  WA  0   0 32
+  [23] .bss              NOBITS          000000000cfb2a80 cfa6a58 355138 00 WAo  0   0 64
+  [24] .shstrtab         STRTAB          0000000000000000 cfa6a58 000114 00      0   0  1
+  [25] .note.unity       NOTE            0000000000000000 cfa6b6c 00005c 00      0   0  1
+  [26] .gnu_debuglink    PROGBITS        0000000000000000 cfa6bc8 000014 00      0   0  4
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)

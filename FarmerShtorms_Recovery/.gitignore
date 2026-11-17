@@ -1,2 +1,4 @@
 Original/Test.so
 Extracted/all_strings_offsets.txt
+Repaired/Test_repaired.so
+Extracted/embedded_metadata_raw.bin
