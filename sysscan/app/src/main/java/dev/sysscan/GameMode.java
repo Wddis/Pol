@@ -67,7 +67,9 @@ public final class GameMode {
             "com.google.android.tts", "com.miui.weather2", "com.android.vending", "com.android.camera",
             "com.miui.gallery", "com.openai.chatgpt", "com.discord", "com.yandex.browser",
             "com.google.android.apps.youtube.creator", "com.tafayor.killall", "com.tafayor.rammonitor",
-            "com.zhiliaoapp.musically", "com.reddit.frontpage", "com.avito.android", "ru.ozon.app.android");
+            "com.zhiliaoapp.musically", "com.reddit.frontpage", "com.avito.android", "ru.ozon.app.android",
+            // по 2-му логу: после перезагрузки грузили CPU/ОЗУ во время игры
+            "com.google.android.gm", "com.google.android.syncadapters.calendar", "com.milink.service");
 
     private static final String OP = "RUN_ANY_IN_BACKGROUND";
     private static final String[] ANIM = {"window_animation_scale", "transition_animation_scale", "animator_duration_scale"};
@@ -248,6 +250,16 @@ public final class GameMode {
         r.append("ОЗУ свободно: ").append(before.memAvailMb).append(" → ").append(after.memAvailMb).append(" МБ\n");
         r.append("Swap занят: ").append(before.swapUsedMb).append(" → ").append(after.swapUsedMb).append(" МБ\n");
         return r.toString();
+    }
+
+    /** Перед каждым матчем: закрыть то, что успело подняться (синхронизации и т.п.). Ничего не меняет надолго. */
+    public static void preGame(Context c) {
+        if (!Shell.ready()) return;
+        Set<String> inst = new HashSet<>();
+        for (String l : Shell.sh("pm list packages").split("\n")) if (l.startsWith("package:")) inst.add(l.substring(8).trim());
+        StringBuilder cmd = new StringBuilder();
+        for (String p : STOP) if (!EXCLUDE.contains(p) && inst.contains(p)) cmd.append("am force-stop ").append(p).append("; ");
+        Shell.sh(cmd.append("am kill-all").toString());
     }
 
     // ---------------- ВЫКЛЮЧЕНИЕ ----------------

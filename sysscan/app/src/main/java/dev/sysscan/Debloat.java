@@ -34,6 +34,7 @@ public final class Debloat {
         LIST.put("com.miui.wmsvc", "WMService — фоновый сервис с интернетом и GPS");
         LIST.put("com.xiaomi.xmsfkeeper", "Логгер сервисов Xiaomi");
         LIST.put("com.miui.yellowpage", "Жёлтые страницы MIUI");
+        LIST.put("com.xiaomi.mi_connect_service", "MiConnect — связь с умным домом Mi Home (80 МБ во 2-м логе)");
         LIST.put("com.xiaomi.mipicks", "Магазин GetApps (реклама)");
         LIST.put("com.xiaomi.glgm", "Xiaomi Games");
         // телеметрия Qualcomm (постоянно висят в памяти)

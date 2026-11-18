@@ -163,10 +163,17 @@ public class MainActivity extends Activity {
         }
         if (!Shell.ready()) { toast("Сначала Shizuku: «Разрешить доступ»"); Shell.connect(true); return; }
         FpsService.report = "";
-        FpsService.start(this);
-        Intent i = getPackageManager().getLaunchIntentForPackage(GameMode.GAME);
-        if (i != null) startActivity(i); else toast("Standoff 2 не найден");
-        ui.postDelayed(this::refreshButtons, 300);
+        boolean on = GameMode.isOn(this);
+        setStatus(on ? "⏳ Закрываю фон перед игрой…" : "Запускаю монитор…");
+        new Thread(() -> {
+            if (on) GameMode.preGame(this); // после перезагрузки снова поднимаются синхронизации — гасим их перед матчем
+            ui.post(() -> {
+                FpsService.start(this);
+                Intent i = getPackageManager().getLaunchIntentForPackage(GameMode.GAME);
+                if (i != null) startActivity(i); else toast("Standoff 2 не найден");
+                ui.postDelayed(this::refreshButtons, 300);
+            });
+        }).start();
     }
 
     private Button btn(String t, android.view.View.OnClickListener l) {
