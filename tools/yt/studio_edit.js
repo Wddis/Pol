@@ -1,18 +1,25 @@
 // Edit title / description of ALREADY PUBLISHED videos in YouTube Studio (the pult browser, CDP), no re-upload.
 // usage: node studio_edit.js cdp:9222 edits.json
-// edits.json: [{"id": "VIDEO_ID", "title": "...", "description": "..."(optional), "shot": "/path/x.png"(optional)}]
+// edits.json: [{"id": "VIDEO_ID", "title": "...", "description": "..."(optional), "thumb": "/path/cover.jpg"(optional), "shot": "/path/x.png"(optional)}]
 // Only the given fields change. Prints EDITED <id> / FAIL <id> <reason>.
 const fs = require('fs'); const { chromium } = require('playwright');
 const [target, ef] = process.argv.slice(2);
 const CDP = target.startsWith('cdp:') ? target.slice(4) : null;
 if (!CDP) { console.error('use cdp:<port> (pult browser)'); process.exit(2); }
 const edits = JSON.parse(fs.readFileSync(ef, 'utf8'));
+async function setFiles(p, loc, file) {   // CDP file upload into the pult browser (same as studio_upload.js)
+  const h = await loc.elementHandle(); await h.evaluate(el => { window.__upTarget = el; });
+  const s = await p.context().newCDPSession(p);
+  const { result } = await s.send('Runtime.evaluate', { expression: 'window.__upTarget' });
+  await s.send('DOM.setFileInputFiles', { files: [require('path').resolve(file)], objectId: result.objectId }); await s.detach().catch(() => {});
+}
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 (async () => {
   const b = await chromium.connectOverCDP(`http://127.0.0.1:${CDP}`);
   const p = b.contexts().flatMap(c => c.pages()).find(x => /studio\.youtube\.com/.test(x.url()));
   if (!p) throw new Error('NO_STUDIO_TAB in the pult browser');
   p.setDefaultTimeout(60000);
+  p.on('dialog', d => d.accept().catch(() => {}));
   let fails = 0;
   for (const e of edits) {
     try {
@@ -28,6 +35,10 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
       if (e.description != null) {
         const d = p.locator('#description-textarea #textbox').first();
         await d.click(); await p.keyboard.press('Control+A'); await p.keyboard.press('Delete'); await d.fill(e.description);
+      }
+      if (e.thumb) {
+        const ti = p.locator('#file-loader, ytcp-thumbnails-compact-editor-uploader input[type="file"], input[type="file"][accept*="image"]').first();
+        await setFiles(p, ti, e.thumb); await p.waitForTimeout(5000);
       }
       const save = p.locator('ytcp-button#save, #save').first();
       await save.click();
