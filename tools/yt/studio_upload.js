@@ -40,6 +40,7 @@ const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
     p = await ctx.newPage();
   }
   p.setDefaultTimeout(60000);
+  p.on('dialog', d => d.accept().catch(() => {}));   // «leave page?» from an unfinished upload crashed the uploader (18.11)
   try {
     // m.channel: target channel id (needed for an editor account, otherwise /upload opens its own channel)
     const upUrl = m.channel ? `https://studio.youtube.com/channel/${m.channel}/videos/upload?d=ud` : 'https://www.youtube.com/upload';
