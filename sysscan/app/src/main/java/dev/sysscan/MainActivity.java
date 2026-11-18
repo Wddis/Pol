@@ -42,31 +42,17 @@ public class MainActivity extends Activity {
     private static final String GAME = "com.axlebolt.standoff2";
 
     private TextView status, out;
-    private IUserService svc;
-    private String compactLog = "", fullLog = "";
+    private Button modeBtn, fpsBtn;
+    private String compactLog = "", fullLog = "", modeReport = "";
     private final Handler ui = new Handler(Looper.getMainLooper());
-
-    private final Shizuku.UserServiceArgs args = new Shizuku.UserServiceArgs(
-            new ComponentName(BuildConfig.APPLICATION_ID, UserService.class.getName()))
-            .daemon(false).processNameSuffix("shell").debuggable(BuildConfig.DEBUG)
-            .version(BuildConfig.VERSION_CODE);
-
-    private final ServiceConnection conn = new ServiceConnection() {
-        @Override public void onServiceConnected(ComponentName n, IBinder b) {
-            if (b != null && b.pingBinder()) {
-                svc = IUserService.Stub.asInterface(b);
-                setStatus("✅ Shizuku подключён. Shell-сервис запущен. Жми «Анализ».");
-            }
-        }
-        @Override public void onServiceDisconnected(ComponentName n) { svc = null; }
-    };
+    private boolean busy;
 
     private final Shizuku.OnRequestPermissionResultListener permListener = (code, res) -> {
-        if (res == PackageManager.PERMISSION_GRANTED) bindSvc();
+        if (res == PackageManager.PERMISSION_GRANTED) Shell.connect(false);
         else setStatus("❌ Доступ Shizuku отклонён.");
     };
-    private final Shizuku.OnBinderReceivedListener binderListener = this::refreshShizuku;
-    private final Shizuku.OnBinderDeadListener deadListener = () -> { svc = null; setStatus("⚠️ Shizuku остановлен (перезагрузка/отключили отладку). Запусти его снова."); };
+    private final Shizuku.OnBinderReceivedListener binderListener = () -> Shell.connect(false);
+    private final Shizuku.OnBinderDeadListener deadListener = Shell::dead;
 
     @Override
     protected void onCreate(Bundle s) {
@@ -80,10 +66,24 @@ public class MainActivity extends Activity {
         status.setTextSize(15);
         root.addView(status);
 
-        root.addView(btn("1. Разрешить доступ (Shizuku)", v -> askShizuku()));
-        root.addView(btn("2. Анализ процессов / ядер / ОЗУ", v -> analyze()));
-        root.addView(btn("3. Скопировать лог", v -> copyLog()));
-        root.addView(btn("Сохранить полный лог в Загрузки и поделиться", v -> shareFull()));
+        root.addView(btn("Разрешить доступ (Shizuku)", v -> Shell.connect(true)));
+        modeBtn = btn("", v -> toggleMode());
+        modeBtn.setTextSize(18);
+        root.addView(modeBtn);
+        fpsBtn = btn("", v -> toggleFps());
+        root.addView(fpsBtn);
+        root.addView(btn("Скопировать отчёт (режим + FPS)", v -> copyText(modeReport + "\n" + FpsService.report, "отчёт")));
+        LinearLayout drow = new LinearLayout(this);
+        drow.addView(btn("🧹 Разовая чистка навсегда", v -> confirm("Разовая чистка", Debloat.preview(), () -> runBg("⏳ Удаляю мусор MIUI и проверяю…", () -> Debloat.run(this)))),
+                new LinearLayout.LayoutParams(0, -2, 2f));
+        drow.addView(btn("Вернуть удалённое", v -> confirm("Вернуть удалённое?", "Все пакеты из разовой чистки будут восстановлены.", () -> runBg("⏳ Восстанавливаю…", () -> Debloat.restore(this)))),
+                new LinearLayout.LayoutParams(0, -2, 1f));
+        root.addView(drow);
+        LinearLayout row = new LinearLayout(this);
+        row.addView(btn("Анализ", v -> analyze()), new LinearLayout.LayoutParams(0, -2, 1f));
+        row.addView(btn("Копир. лог", v -> copyLog()), new LinearLayout.LayoutParams(0, -2, 1f));
+        row.addView(btn("Сохранить", v -> shareFull()), new LinearLayout.LayoutParams(0, -2, 1f));
+        root.addView(row);
 
         ScrollView sv = new ScrollView(this);
         out = new TextView(this);
@@ -94,9 +94,18 @@ public class MainActivity extends Activity {
         root.addView(sv, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
         setContentView(root);
 
+        Shell.setListener(this::setStatus);
         Shizuku.addRequestPermissionResultListener(permListener);
         Shizuku.addBinderReceivedListenerSticky(binderListener);
         Shizuku.addBinderDeadListener(deadListener);
+        refreshButtons();
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        refreshButtons();
+        if (!FpsService.report.isEmpty() && !FpsService.running) out.setText(modeReport + "\n" + FpsService.report);
     }
 
     @Override
@@ -104,8 +113,60 @@ public class MainActivity extends Activity {
         Shizuku.removeRequestPermissionResultListener(permListener);
         Shizuku.removeBinderReceivedListener(binderListener);
         Shizuku.removeBinderDeadListener(deadListener);
-        try { if (svc != null) Shizuku.unbindUserService(args, conn, true); } catch (Throwable ignored) { }
+        Shell.setListener(null);
         super.onDestroy();
+    }
+
+    private void refreshButtons() {
+        boolean on = GameMode.isOn(this);
+        modeBtn.setText(on ? "🎮 Игровой режим: ВКЛЮЧЁН  (нажми — вернуть всё)" : "🎮 Игровой режим: ВЫКЛЮЧЕН  (нажми — включить)");
+        fpsBtn.setText(FpsService.running ? "⏹ Остановить FPS-монитор и получить отчёт" : "▶ FPS-монитор + запустить Standoff 2");
+    }
+
+    private void toggleMode() {
+        if (busy) return;
+        if (!Shell.ready()) { toast("Сначала Shizuku: «Разрешить доступ»"); Shell.connect(true); return; }
+        busy = true;
+        boolean on = GameMode.isOn(this);
+        setStatus(on ? "⏳ Возвращаю всё как было и проверяю…" : "⏳ Включаю игровой режим и проверяю…");
+        new Thread(() -> {
+            String r = on ? GameMode.disable(this) : GameMode.enable(this);
+            modeReport = r;
+            ui.post(() -> { busy = false; out.setText(r); refreshButtons(); status.setText(GameMode.isOn(this) ? "🎮 Режим включён" : "Режим выключен"); });
+        }).start();
+    }
+
+    private void confirm(String title, String msg, Runnable ok) {
+        if (!Shell.ready()) { toast("Сначала Shizuku: «Разрешить доступ»"); Shell.connect(true); return; }
+        new android.app.AlertDialog.Builder(this).setTitle(title).setMessage(msg)
+                .setPositiveButton("Выполнить", (d, w) -> ok.run()).setNegativeButton("Отмена", null).show();
+    }
+
+    private void runBg(String wait, java.util.concurrent.Callable<String> job) {
+        if (busy) return;
+        busy = true;
+        setStatus(wait);
+        new Thread(() -> {
+            String r;
+            try { r = job.call(); } catch (Throwable t) { r = "❌ " + t; }
+            modeReport = r;
+            String fr = r;
+            ui.post(() -> { busy = false; out.setText(fr); status.setText("Готово. Можно скопировать отчёт."); refreshButtons(); });
+        }).start();
+    }
+
+    private void toggleFps() {
+        if (FpsService.running) {
+            FpsService.stop(this);
+            ui.postDelayed(() -> { out.setText(modeReport + "\n" + FpsService.report); refreshButtons(); }, 600);
+            return;
+        }
+        if (!Shell.ready()) { toast("Сначала Shizuku: «Разрешить доступ»"); Shell.connect(true); return; }
+        FpsService.report = "";
+        FpsService.start(this);
+        Intent i = getPackageManager().getLaunchIntentForPackage(GameMode.GAME);
+        if (i != null) startActivity(i); else toast("Standoff 2 не найден");
+        ui.postDelayed(this::refreshButtons, 300);
     }
 
     private Button btn(String t, android.view.View.OnClickListener l) {
@@ -118,43 +179,7 @@ public class MainActivity extends Activity {
 
     private void setStatus(String t) { ui.post(() -> status.setText(t)); }
 
-    private void refreshShizuku() {
-        if (!Shizuku.pingBinder()) {
-            setStatus("⚠️ Shizuku не запущен. Установи Shizuku, включи «Беспроводная отладка» и нажми Start в Shizuku.\n"
-                    + "Без него Android 11 скрывает чужие процессы — увидишь только своё приложение.");
-            return;
-        }
-        if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindSvc();
-        else setStatus("Shizuku работает. Нажми «1. Разрешить доступ».");
-    }
-
-    private void askShizuku() {
-        try {
-            if (!Shizuku.pingBinder()) { refreshShizuku(); return; }
-            if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) bindSvc();
-            else Shizuku.requestPermission(REQ);
-        } catch (Throwable t) {
-            setStatus("Ошибка Shizuku: " + t);
-        }
-    }
-
-    private void bindSvc() {
-        try {
-            Shizuku.bindUserService(args, conn);
-            setStatus("Запускаю shell-сервис…");
-        } catch (Throwable t) {
-            setStatus("Ошибка запуска сервиса: " + t);
-        }
-    }
-
-    private String sh(String cmd) {
-        try {
-            if (svc != null) return svc.exec(cmd);
-        } catch (Throwable t) {
-            return "ERROR: " + t;
-        }
-        return UserService.run(cmd); // без Shizuku: права обычного приложения
-    }
+    private String sh(String cmd) { return Shell.sh(cmd); }
 
     // ===================== АНАЛИЗ =====================
 
@@ -178,7 +203,7 @@ public class MainActivity extends Activity {
 
     private void buildLogs() {
         String ts = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US).format(new Date());
-        boolean shell = svc != null;
+        boolean shell = Shell.ready();
 
         // Сравнение-доказательство: сколько процессов видно без shell-прав
         String localCount = UserService.run("ps -A -o PID | tail -n +2 | wc -l").trim();
@@ -284,10 +309,15 @@ public class MainActivity extends Activity {
 
     private void copyLog() {
         if (compactLog.isEmpty()) { toast("Сначала нажми «Анализ»"); return; }
+        copyText(compactLog, "лог");
+    }
+
+    private void copyText(String text, String what) {
+        if (text.trim().isEmpty()) { toast("Пока пусто"); return; }
         try {
             ClipboardManager cm = (ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
-            cm.setPrimaryClip(ClipData.newPlainText("sysscan", compactLog));
-            toast("Скопировано " + compactLog.length() / 1024 + " КБ. Вставь в чат.");
+            cm.setPrimaryClip(ClipData.newPlainText("sysscan", text));
+            toast("Скопирован " + what + " (" + Math.max(1, text.length() / 1024) + " КБ). Вставь в чат.");
         } catch (Throwable t) {
             toast("Буфер не принял (" + t.getClass().getSimpleName() + "). Используй «Сохранить и поделиться».");
         }

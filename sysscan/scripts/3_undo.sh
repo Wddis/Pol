@@ -1,6 +1,6 @@
 # SysScan: откат всех изменений. Запуск: ~/rish -c 'sh /sdcard/Download/3_undo.sh'
 for p in com.miui.msa.global com.miui.analytics com.mi.android.globalminusscreen \
-         com.miui.videoplayer com.xiaomi.discover com.miui.hybrid com.miui.hybrid.accessory \
+         com.miui.videoplayer com.miui.hybrid com.miui.hybrid.accessory \
          com.miui.yellowpage com.netflix.partner.activation com.google.android.projection.gearhead; do
   pm enable --user 0 $p
 done

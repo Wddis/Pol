@@ -2,13 +2,13 @@
 # Всё обратимо: 3_undo.sh
 echo "== 1. Отключаю рекламу/аналитику/неиспользуемое MIUI =="
 for p in com.miui.msa.global com.miui.analytics com.mi.android.globalminusscreen \
-         com.miui.videoplayer com.xiaomi.discover com.miui.hybrid com.miui.hybrid.accessory \
+         com.miui.videoplayer com.miui.hybrid com.miui.hybrid.accessory \
          com.miui.yellowpage com.netflix.partner.activation com.google.android.projection.gearhead; do
   echo "$p: $(pm disable-user --user 0 $p 2>&1)"
 done
 
 echo "== 2. Убираю из белого списка энергосбережения (им запрещено висеть в фоне) =="
-for p in com.miui.msa.global com.miui.analytics com.xiaomi.discover com.xiaomi.mipicks \
+for p in com.miui.msa.global com.miui.analytics com.xiaomi.mipicks \
          com.miui.weather2 ua.itaysonlab.vkx com.marcussacana.DirectPackageInstaller; do
   echo "$p: $(cmd deviceidle whitelist -$p 2>&1)"
 done
