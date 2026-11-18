@@ -51,8 +51,7 @@ def main():
     else:
         subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", wav48, "-ac", "1", "-ar", "16000", f"{tmp}/a16.wav"], check=True)
         W = transcribe(f"{tmp}/a16.wav", x.model); json.dump(W, open(cache, "w"), ensure_ascii=False)
-    w = wave.open(wav48); sr = w.getframerate(); n = w.getnframes()
-    a = np.frombuffer(w.readframes(n), np.int16).reshape(-1, 2).astype(np.float32)
+    w = wave.open(wav48); sr = w.getframerate(); n = w.getnframes(); w.close()
     hits = []
     for i, (s, e, t) in enumerate(W):
         k = norm(t)
@@ -69,14 +68,19 @@ def main():
     print(f"мат найден: {len(hits)}"); print("\n".join(lines))
     if x.report: open(x.report, "w").write("\n".join(lines) + "\n")
     if x.dry: return
-    g = np.ones(len(a), np.float32); r = int(sr * 0.006)
+    # low-memory (18.11: a 3.5 h file was OOM-killed when loaded whole): copy the wav, patch ONLY the muted spans in place
+    import shutil; shutil.copyfile(wav48, f"{tmp}/muted.wav")
+    hdr = os.path.getsize(wav48) - n * 4                               # 16-bit stereo -> 4 bytes per frame
+    mm = np.memmap(f"{tmp}/muted.wav", dtype=np.int16, mode="r+", offset=hdr, shape=(n, 2)); r = int(sr * 0.006)
     for m0, m1, _, _ in hits:
-        i0, i1 = int(m0 * sr), int(m1 * sr)
-        g[i0:i1] = 0
-        g[max(0, i0 - r):i0] = np.minimum(g[max(0, i0 - r):i0], np.linspace(1, 0, i0 - max(0, i0 - r)))
-        g[i1:i1 + r] = np.minimum(g[i1:i1 + r], np.linspace(0, 1, len(g[i1:i1 + r])))
-    out = (a * g[:, None]).clip(-32768, 32767).astype(np.int16)
-    wo = wave.open(f"{tmp}/muted.wav", "wb"); wo.setnchannels(2); wo.setsampwidth(2); wo.setframerate(sr); wo.writeframes(out.tobytes()); wo.close()
+        i0, i1 = max(0, int(m0 * sr) - r), min(n, int(m1 * sr) + r)
+        if i1 <= i0: continue
+        g = np.ones(i1 - i0, np.float32); a0, a1 = int(m0 * sr) - i0, int(m1 * sr) - i0
+        g[max(0, a0):max(0, a1)] = 0
+        if a0 > 0: g[:a0] = np.linspace(1, 0, a0)
+        if a1 < len(g): g[a1:] = np.linspace(0, 1, len(g) - a1)
+        mm[i0:i1] = (mm[i0:i1].astype(np.float32) * g[:, None]).astype(np.int16)
+    mm.flush(); del mm
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-i", x.inp, "-i", f"{tmp}/muted.wav", "-map", "0:v?", "-map", "1:a",
                     "-c:v", "copy", "-af", "alimiter=limit=0.841:attack=5:release=50:level=false", "-c:a", "aac", "-b:a", "192k", "-ar", "48000",
                     "-movflags", "+faststart", x.out], check=True)   # limiter: AAC re-encode overshoot (peak -0.5 dB seen 16.11)
