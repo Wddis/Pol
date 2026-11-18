@@ -19,7 +19,7 @@ for p in com.google.android.apps.maps com.google.android.youtube com.miui.weathe
          com.reddit.frontpage com.zhiliaoapp.musically com.linkedin.android tv.twitch.android.app \
          com.utorrent.client com.yandex.browser com.kiwibrowser.browser org.mozilla.firefox \
          com.lazycatsoftware.lmd com.guanyin.litv ru.ag.a24htv ru.rostel to.boosty.android \
-         com.suno.android cn.wps.moffice_eng com.logistic.sdek com.idamob.tinkoff.android \
+         com.suno.android cn.wps.moffice_eng \
          com.dualspace.multispace.android com.google.android.apps.youtube.creator; do
   cmd appops set $p RUN_ANY_IN_BACKGROUND ignore 2>/dev/null
   am set-standby-bucket $p restricted 2>/dev/null
