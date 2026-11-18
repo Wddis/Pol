@@ -1,0 +1,6 @@
+*.mp4
+!music/*
+*.wav
+*.segs/
+__pycache__/
+cookies*.txt
