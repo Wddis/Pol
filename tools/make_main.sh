@@ -28,8 +28,14 @@ cl.append((cur, B))
 BL = [[0, 0, 268, 108], [1610, 8, 302, 102]]
 import os
 mask = {"mask": {"file": W + "/mask.mkv", "x": 1630, "y": 90, "w": 290, "h": 900}} if os.environ.get("PROMO") == "1" else {}
+# BLUR_SCENES="a-b a-b" (VOD s): blur the WHOLE game picture except the webcam window (18+ scenes; owner 18.11: blur, don't cut)
+# webcam window of the layout: env BLUR_CAM="x,y" (top-left of the webcam window, it runs to the bottom-right corner)
+cx, cy = map(int, os.environ.get("BLUR_CAM", "1398,662").split(","))
+SC = []
+for r in os.environ.get("BLUR_SCENES", "").split():
+    a0, b0 = map(float, r.split("-")); SC += [[0, 0, 1920, cy, a0 - off, b0 - off], [0, cy, cx, 1080 - cy, a0 - off, b0 - off]]
 json.dump({"zoom": {"factor": 1.5, "anchor": [1, 1]}, "blur": BL, **mask,
-           "clips": [{"s": round(a - off, 2), "e": round(b - off, 2), "zoom": [], "blur": list(BL)} for a, b in cl if b - a > 1]}, open("plan.json", "w"))
+           "clips": [{"s": round(a - off, 2), "e": round(b - off, 2), "zoom": [], "blur": list(BL) + SC} for a, b in cl if b - a > 1]}, open("plan.json", "w"))
 print("plan:", len(cl), "clips,", round(sum(b - a for a, b in cl) / 60, 1), "min")
 P
 [ -n "$MP" ] && wait $MP

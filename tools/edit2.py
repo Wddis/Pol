@@ -31,7 +31,7 @@ def blur(inp, boxes=None, s=0.0, e=1e9):
             if t1 <= s or t0 >= e: continue
             en = f":enable='between(t,{max(0, t0 - s):.3f},{t1 - s:.3f})'"
         gen = en.replace(":enable", "enable") if en else ""                 # blur is computed ONLY while the box is shown
-        f += f"[{cur}]split[b{i}a][b{i}b];[b{i}b]crop={w}:{h}:{x}:{y},gblur=sigma=25{(':' + gen) if gen else ''}[b{i}c];[b{i}a][b{i}c]overlay={x}:{y}{en}[bl{i}];"
+        f += f"[{cur}]split[b{i}a][b{i}b];[b{i}b]crop={w}:{h}:{x}:{y},gblur=sigma={60 if w * h > 400000 else 25}{(':' + gen) if gen else ''}[b{i}c];[b{i}a][b{i}c]overlay={x}:{y}{en}[bl{i}];"
         cur = f"bl{i}"; i += 1
     return cur, f
 
