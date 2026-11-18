@@ -51,6 +51,15 @@ for c in plan["clips"]:
         if za > cur + 0.05: subs.append((cur, za, None, bl))
         subs.append((za, zb, (s + a - za, s + b - za, zf), bl)); cur = zb
     if e > cur + 0.05: subs.append((cur, e, None, bl))
+# split long plain pieces (one long clip = one ffmpeg on 2 of 4 cores, 18.11 GTA 6) → all jobs busy, ~2x faster
+CH = float(os.environ.get("EDIT2_CHUNK", 300))
+_s = []
+for a, b, z, bl in subs:
+    if z is None and b - a > CH * 1.5:
+        n = int((b - a) // CH); step = (b - a) / n
+        _s += [(a + k * step, a + (k + 1) * step if k < n - 1 else b, None, bl) for k in range(n)]
+    else: _s.append((a, b, z, bl))
+subs = _s
 
 def render(i_sub):
     i, (s, e, zw, bl) = i_sub
