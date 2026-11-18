@@ -15,6 +15,13 @@ public class LogicTest {
         assertEquals("default", GameMode.parseMode("No operations."));
     }
 
+    @Test public void emailsRedacted() throws Exception {
+        java.lang.reflect.Method m = MainActivity.class.getDeclaredMethod("redact", String.class);
+        m.setAccessible(true);
+        String r = (String) m.invoke(null, "'*sync*/gmail-ls/com.google/some.user38@gmail.com' ACQ=-2s");
+        assertEquals("'*sync*/gmail-ls/com.google/<email>' ACQ=-2s", r);
+    }
+
     @Test public void exclusionsNeverTouched() {
         String[] must = {"com.happproxy", "com.anthropic.claude", "com.axlebolt.standoff2",
                 "moe.shizuku.privileged.api", "org.telegram.messenger", "com.idamob.tinkoff.android"};

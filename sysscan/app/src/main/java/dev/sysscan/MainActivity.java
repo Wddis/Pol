@@ -285,7 +285,7 @@ public class MainActivity extends Activity {
         sec(c, "WAKELOCKS", head(sh("dumpsys power | grep -E 'PARTIAL_WAKE_LOCK|FULL_WAKE_LOCK|SCREEN_'"), 40));
         sec(c, "AUTOSTART-ish: deviceidle whitelist", head(sh("dumpsys deviceidle whitelist"), 80));
         c.append("=== END ===\n");
-        compactLog = c.toString();
+        compactLog = redact(c.toString());
 
         StringBuilder f = new StringBuilder(compactLog);
         sec(f, "RAW ps -A", psRaw);
@@ -294,7 +294,7 @@ public class MainActivity extends Activity {
         sec(f, "dumpsys jobscheduler (head)", head(sh("dumpsys jobscheduler"), 600));
         sec(f, "dumpsys alarm (head)", head(sh("dumpsys alarm"), 600));
         sec(f, "dumpsys batterystats --charged (head)", head(sh("dumpsys batterystats --charged"), 800));
-        fullLog = f.toString();
+        fullLog = redact(f.toString());
 
         StringBuilder scr = new StringBuilder();
         scr.append(shell ? "✅ Режим SHELL через Shizuku\n" : "⚠️ БЕЗ Shizuku — Android прячет чужие процессы\n");
@@ -316,7 +316,8 @@ public class MainActivity extends Activity {
 
     private void copyLog() {
         if (compactLog.isEmpty()) { toast("Сначала нажми «Анализ»"); return; }
-        copyText(compactLog, "лог");
+        String fps = FpsService.report;
+        copyText((fps.isEmpty() ? "" : fps + "\n") + compactLog, fps.isEmpty() ? "лог" : "FPS-отчёт + лог");
     }
 
     private void copyText(String text, String what) {
@@ -425,6 +426,11 @@ public class MainActivity extends Activity {
             }
         }
         return "?";
+    }
+
+    /** Почта аккаунтов попадает в имена синхронизаций — скрываем перед отправкой лога. */
+    private static String redact(String s) {
+        return s.replaceAll("[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\\.[A-Za-z]{2,}", "<email>");
     }
 
     private static String trim(String s, int n) { return s.length() > n ? s.substring(0, n) : s; }
