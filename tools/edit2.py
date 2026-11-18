@@ -64,6 +64,7 @@ subs = _s
 def render(i_sub):
     i, (s, e, zw, bl) = i_sub
     p = f"{tmp}/{i:04d}.mp4"
+    if os.path.exists(p) and os.path.getsize(p) > 0: return p        # resume after a container restart (18.11)
     lab, bf = blur("0:v", bl, s, e)
     mk = plan.get("mask"); extra = []
     if mk:                                                  # frame-accurate promo mask (tools/chat_promo_mask.py)
@@ -83,7 +84,8 @@ def render(i_sub):
     subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-ss", f"{s:.3f}", "-to", f"{e:.3f}", "-i", src] + extra + [
                     "-filter_complex", vf, "-map", "[v]", "-map", "0:a",
                     "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-g", "120", "-threads", str(max(1, 4 // jobs)),
-                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", p], check=True)
+                    "-c:a", "aac", "-b:a", "192k", "-ar", "48000", p + ".tmp.mp4"], check=True)
+    os.replace(p + ".tmp.mp4", p)                                   # only finished pieces get the final name
     return p
 
 with cf.ThreadPoolExecutor(jobs) as ex:
