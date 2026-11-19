@@ -220,30 +220,36 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
                 panel.setBackgroundColor(Color.argb(230, 14, 18, 14));
                 panel.setPadding(22, 22, 22, 22);
 
+                // шапка всегда видна; по тапу сворачивает/разворачивает тело
                 TextView title = new TextView(act);
-                title.setText("FarmerShoot v8 — INJECTED ✓");
-                title.setTextColor(Color.rgb(170, 255, 140)); title.setTextSize(16);
+                title.setText("FarmerShoot v8 ✓  (тап — свернуть)");
+                title.setTextColor(Color.rgb(170, 255, 140)); title.setTextSize(15);
+                title.setPadding(0, 0, 0, 8);
                 panel.addView(title);
+
+                LinearLayout body = new LinearLayout(act);
+                body.setOrientation(LinearLayout.VERTICAL);
+                panel.addView(body);
 
                 TextView status = new TextView(act);
                 status.setTextColor(Color.WHITE); status.setTextSize(11);
                 status.setText(sNativeOk ? "native OK" : "native нет");
-                panel.addView(status);
+                body.addView(status);
 
                 LinearLayout row = new LinearLayout(act);
                 Button bDump = new Button(act); bDump.setText("DUMP имена"); bDump.setOnClickListener(new OnDump(act));
                 Button bJump = new Button(act); bJump.setText("Прыжок ×3"); bJump.setOnClickListener(new OnJump(act));
                 Button bRest = new Button(act); bRest.setText("Откат"); bRest.setOnClickListener(new OnRestore(act));
                 row.addView(bDump); row.addView(bJump); row.addView(bRest);
-                panel.addView(row);
+                body.addView(row);
 
                 TextView list = new TextView(act);
                 list.setTextColor(Color.rgb(200, 220, 200)); list.setTextSize(9); list.setText("...");
                 ScrollView sv = new ScrollView(act); sv.addView(list);
-                panel.addView(sv, new LinearLayout.LayoutParams(900, 650));
+                body.addView(sv, new LinearLayout.LayoutParams(900, 620));
 
-                Button bHide = new Button(act); bHide.setText("спрятать"); bHide.setOnClickListener(new OnHide(panel));
-                panel.addView(bHide);
+                // свернуть/развернуть (НЕ закрывает окно — шапка остаётся)
+                title.setOnClickListener(new OnToggle(body, title));
 
                 boolean added = addViaWM(act, panel);
                 if (!added) {
@@ -326,8 +332,13 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
             Toast.makeText(act, ok ? "откат" : "—", Toast.LENGTH_SHORT).show();
         }
     }
-    static final class OnHide implements View.OnClickListener {
-        final View panel; OnHide(View p) { panel = p; }
-        @Override public void onClick(View v) { panel.setVisibility(View.GONE); }
+    // сворачивание тела окна (шапка остаётся, окно не исчезает насовсем)
+    static final class OnToggle implements View.OnClickListener {
+        final View body; final TextView title; OnToggle(View b, TextView t) { body = b; title = t; }
+        @Override public void onClick(View v) {
+            boolean show = body.getVisibility() != View.VISIBLE;
+            body.setVisibility(show ? View.VISIBLE : View.GONE);
+            title.setText(show ? "FarmerShoot v8 ✓  (тап — свернуть)" : "FarmerShoot v8 ✓  (тап — развернуть)");
+        }
     }
 }
