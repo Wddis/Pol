@@ -1,0 +1,52 @@
+=== REAL .dynamic @0xc8a05b4 ===
+  NEEDED       0x13ec
+  NEEDED       0x13fa
+  NEEDED       0x1402
+  NEEDED       0x140c
+  NEEDED       0x13ce
+  NEEDED       0x13db
+  NEEDED       0x13e4
+  SONAME       0x13b9
+  FLAGS        0x8
+  FLAGS_1      0x1
+  RELA         0x3660
+  RELASZ       0x1a199a8
+  RELAENT      0x18
+  RELACOUNT    0x116646
+  JMPREL       0x1a1d008
+  PLTRELSZ     0x1a28
+  PLTGOT       0xc993520
+  PLTREL       0x7
+  SYMTAB       0x288
+  SYMENT       0x18
+  STRTAB       0x2240
+  STRSZ        0x141b
+  GNU_HASH     0x2200
+  INIT_ARRAY   0xc8a6c18
+  INIT_ARRAYSZ 0x1010
+  VERSYM       0x1f08
+  VERDEF       0x2168
+  VERDEFNUM    0x2
+  VERNEED      0x21a0
+  VERNEEDNUM   0x3
+  NULL         0x0
+
+--- SONAME: libunity.so
+--- NEEDED: libandroid.so
+--- NEEDED: libz.so
+--- NEEDED: libEGL.so
+--- NEEDED: libmediandk.so
+--- NEEDED: libm.so
+--- NEEDED: libdl.so
+--- NEEDED: libc.so
+
+KEY OFFSETS (vaddr -> fileoff):
+  SYMTAB     vaddr=0x288 fileoff=0x288
+  STRTAB     vaddr=0x2240 fileoff=0x2240
+  GNU_HASH   vaddr=0x2200 fileoff=0x2200
+  RELA       vaddr=0x3660 fileoff=0x3660
+  JMPREL     vaddr=0x1a1d008 fileoff=0x1a1d008
+  PLTGOT     vaddr=0xc993520 fileoff=0xc98b520
+  INIT_ARRAY vaddr=0xc8a6c18 fileoff=0xc89ec18
+  VERSYM     vaddr=0x1f08 fileoff=0x1f08
+STRSZ=0x141b  RELASZ=0x1a199a8  RELACOUNT=1140294

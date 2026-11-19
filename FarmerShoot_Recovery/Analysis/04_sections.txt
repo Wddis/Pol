@@ -1,0 +1,75 @@
+There are 27 section headers, starting at offset 0xcfa6be0:
+readelf: Warning: Section 4 has an out of range sh_link value of 538976288
+readelf: Warning: Section 26 has an out of range sh_link value of 1702129253
+
+Section Headers:
+  [Nr] Name              Type             Address           Offset
+       Size              EntSize          Flags  Link  Info  Align
+readelf: Warning: [ 0]: Unexpected value (1) in info field.
+  [ 0] <no-strings>      NULL             0000000100000000  200000002
+       0000000100000000  0000001e00000001           0     1     18446744073709551615
+  [ 1] <no-strings>      NULL             0000000800000000  800000000
+       0000000000000000  0000000100000000           0     0     4294967296
+readelf: Warning: [ 2]: Unexpected value (8) in info field.
+  [ 2] <no-strings>      NULL             0000000000000000  00000000
+       0000000800000000  0000000000000000           0     8     0
+  [ 3] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+readelf: Warning: [ 4]: Unexpected value (808464432) in info field.
+  [ 4] <no-strings>      NULL             0000000000000000  2020202000000000
+       2020202020202020  0000000030303030          538976288   808464432     3472328296227680304
+readelf: Warning: Size of section 5 is larger than the entire file!
+  [ 5] <no-strings>      00000035: <unkn  0000000000000001  fffffbce00000034
+       00000001000003cb  0000000000000001 AXxILOGCxxxxxxxxop       0    24     450971565931
+readelf: Warning: [ 6]: Unexpected value (4294967295) in info field.
+  [ 6] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0   4294967295     0
+  [ 7] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     18446744069414584320
+  [ 8] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx       0     0     0
+  [ 9] <no-strings>      NULL             0000000000000000  ffffffff00000000
+       00000000000000fe  00000000000000fe           0     0     18446744069414584320
+readelf: Warning: [10]: Unexpected value (4294967295) in info field.
+  [10] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0   4294967295     0
+  [11] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     18446744069414584320
+readelf: Warning: [12]: Unexpected value (4) in info field.
+  [12] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     4     0
+  [13] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [14] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [15] <no-strings>      NOBITS           0000000000000000  00000000
+       0000000000000000  0000000000000000   W       0     0     0
+  [16] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [17] <no-strings>      NULL             0000000000000000  a00000000
+       0000000000000002  0000000000000000           0     0     0
+  [18] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [19] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [20] <no-strings>      NULL             0000000000000000  400000000000
+       0000000000000000  0000000000000000           0     0     0
+  [21] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [22] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000   x       0     0     0
+  [23] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000400000000000           0     0     0
+  [24] <no-strings>      NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [25] <no-strings>      NULL             0000000300000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+readelf: Warning: [26]: Unexpected value (1920409700) in info field.
+  [26] <no-strings>      NULL             0000000000000000  636d656d00000000
+       76657270203a7970  20666f20646e6520 xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx      1702129253   1920409700     8391157664929117289
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  D (mbind), p (processor specific)
+readelf: Error: no .dynamic section in the dynamic segment

@@ -1,0 +1,8 @@
+readelf: Warning: Section 4 has an out of range sh_link value of 538976288
+readelf: Warning: Section 26 has an out of range sh_link value of 1702129253
+readelf: Error: no .dynamic section in the dynamic segment
+
+Displaying notes found at file offset 0x00000270 with length 0x00000018:
+  Owner                Data size 	Description
+  GNU                  0x00000008	NT_GNU_BUILD_ID (unique build ID bitstring)
+    Build ID: 69815f2befe135c2

@@ -1,0 +1,20 @@
+=== SEGMENTS ===
+  PHDR         off=0x40 vaddr=0x40 filesz=0x230 memsz=0x230 flags=4
+  LOAD         off=0x0 vaddr=0x0 filesz=0x57b5468 memsz=0x57b5468 flags=4
+  LOAD         off=0x57b5480 vaddr=0x57b9480 filesz=0x6aa54d0 memsz=0x6aa54d0 flags=5
+  LOAD         off=0xc25a950 vaddr=0xc262950 filesz=0x7314a0 memsz=0x7316b0 flags=6
+  LOAD         off=0xc98be00 vaddr=0xc997e00 filesz=0x61ac58 memsz=0x96fdb8 flags=6
+  DYNAMIC      off=0xc89fc28 vaddr=0xc8a7c28 filesz=0x1f0 memsz=0x1f0 flags=6
+  GNU_RELRO    off=0xc25a950 vaddr=0xc262950 filesz=0x7314a0 memsz=0x7316b0 flags=4
+  GNU_EH_FRAME off=0x3e0fa10 vaddr=0x3e0fa10 filesz=0x4ca34c memsz=0x4ca34c flags=4
+  GNU_STACK    off=0x0 vaddr=0x0 filesz=0x0 memsz=0x0 flags=6
+  NOTE         off=0x270 vaddr=0x270 filesz=0x18 memsz=0x18 flags=4
+
+=== DYNAMIC ENTRIES ===
+  NULL         0x0 (0)
+
+=== SONAME / NEEDED ===
+
+=== dynsym/strtab file offsets ===
+  symtab off= None syment= 24
+  strtab off= None strsz= 0
