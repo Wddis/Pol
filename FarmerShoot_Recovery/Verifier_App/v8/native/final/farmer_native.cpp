@@ -584,11 +584,21 @@ static std::atomic<bool> g_freezeThread{false};
 static bool g_fFloat = false; static int g_fIv = 0; static float g_fFv = 0.f;
 static std::vector<uintptr_t> g_freezeAddrs;
 
+static uint64_t rd8(uintptr_t a, void*, bool* ok);   // fwd
+// глобалы офсет-калькулятора (используются и в freezeLoop)
+static std::vector<long long> g_path;
+static uintptr_t g_libBase = 0, g_libEnd = 0;
+static std::atomic<bool> g_pathFreeze{false};
+static bool g_pfFloat = false; static uint32_t g_pfBits = 0;
 static void freezeLoop() {
     for (;;) {
         if (g_freeze.load() && !g_freezeAddrs.empty()) {
             uint32_t bits; if (g_fFloat) memcpy(&bits, &g_fFv, 4); else memcpy(&bits, &g_fIv, 4);
             for (auto a : g_freezeAddrs) safeWrite32(a, bits);
+        }
+        if (g_pathFreeze.load() && !g_path.empty()) {       // удержание по пути (пере-резолв)
+            bool ok; uintptr_t a = fv8::resolve_path(g_libBase, g_path.data(), (int)g_path.size(), rd8, nullptr, &ok);
+            if (ok) safeWrite32(a, g_pfBits);
         }
         usleep(100000); // 100 мс
     }
@@ -608,6 +618,116 @@ Java_com_recovery_farmerv8_FarmerV8Module_nativeScanFreeze(JNIEnv* env, jclass, 
         g_freeze = false;
         return 0;
     }
+}
+
+// ======================= ОФСЕТ-КАЛЬКУЛЯТОР + POINTER-SCAN ===================
+// (глобалы объявлены выше, перед freezeLoop)
+static uint64_t rd8(uintptr_t a, void*, bool* ok) {
+    int fd = memRD(); unsigned char t[8];
+    if (fd >= 0 && pread(fd, t, 8, (off_t)a) == 8) { uint64_t v; memcpy(&v, t, 8); *ok = true; return v; }
+    *ok = false; return 0;
+}
+static void libRange() {
+    g_libBase = 0; g_libEnd = 0;
+    FILE* m = fopen("/proc/self/maps", "r"); char l[1024];
+    while (m && fgets(l, sizeof l, m)) {
+        if (strstr(l, "libunity.so")) { uint64_t s = 0, e = 0; if (sscanf(l, "%" SCNx64 "-%" SCNx64, &s, &e) == 2) { if (!g_libBase) g_libBase = (uintptr_t)s; g_libEnd = (uintptr_t)e; } }
+    }
+    if (m) fclose(m);
+}
+// снимок указателе-подобных слотов (значение попадает в замапленную память)
+static void buildSnapPtr(std::vector<fv8::PtrSlot>& out) {
+    out.clear();
+    uintptr_t mn = ~(uintptr_t)0, mx = 0;
+    FILE* m = fopen("/proc/self/maps", "r"); char l[1024];
+    std::vector<std::pair<uint64_t,uint64_t>> regs;
+    while (m && fgets(l, sizeof l, m)) {
+        uint64_t s = 0, e = 0; char perms[8] = {0};
+        if (sscanf(l, "%" SCNx64 "-%" SCNx64 " %7s", &s, &e, perms) != 3) continue;
+        if (perms[0] != 'r') continue;
+        if (e - s > (512ull << 20)) continue;
+        regs.push_back({ s, e }); if (s < mn) mn = s; if (e > mx) mx = e;
+    }
+    if (m) fclose(m);
+    int fd = memRD(); if (fd < 0) return;
+    std::vector<unsigned char> buf(1 << 20);
+    const size_t CAP = 2500000;
+    for (auto& r : regs) {
+        if (out.size() >= CAP) break;
+        for (uint64_t off = 0; off < r.second - r.first && out.size() < CAP; off += buf.size()) {
+            size_t want = (size_t)std::min<uint64_t>(buf.size(), r.second - r.first - off);
+            ssize_t rd = pread(fd, buf.data(), want, (off_t)(r.first + off));
+            if (rd < 8) continue;
+            for (ssize_t i = 0; i + 8 <= rd && out.size() < CAP; i += 8) {
+                uint64_t v; memcpy(&v, buf.data() + i, 8);
+                if (v >= mn && v < mx) out.push_back({ (uintptr_t)(r.first + off + i), v });
+            }
+        }
+    }
+}
+static std::string pathStr() {
+    std::string s = "[libunity"; char b[48];
+    for (size_t i = 0; i < g_path.size(); ++i) { snprintf(b, sizeof b, "%s0x%llx", i == 0 ? "+" : "]->+", (unsigned long long)g_path[i]); s += b; }
+    s += "]"; return s;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeFindPath(JNIEnv* env, jclass, jstring jdir) {
+    if (g_cand.empty()) return env->NewStringUTF("сначала найди адрес (инспектор до 1-2 адресов)");
+    uintptr_t target = g_cand[0];
+    libRange();
+    if (!g_libBase) return env->NewStringUTF("libunity.so не найдена в памяти");
+    std::vector<fv8::PtrSlot> snap; buildSnapPtr(snap);
+    fv8::PtrPath p = fv8::find_pointer_path(target, g_libBase, g_libEnd, snap, 0x400, 4, rd8, nullptr);
+    if (!p.found) { char b[96]; snprintf(b, sizeof b, "путь к 0x%llx не найден (слотов %zu). попробуй иной адрес", (unsigned long long)target, snap.size()); return env->NewStringUTF(b); }
+    g_path.assign(p.offs, p.offs + p.n);
+    // сохранить txt
+    const char* dir = env->GetStringUTFChars(jdir, nullptr);
+    std::string path = std::string(dir) + "/v8_pointer.txt";
+    env->ReleaseStringUTFChars(jdir, dir);
+    FILE* f = fopen(path.c_str(), "w");
+    if (f) { fprintf(f, "# FarmerShoot v8 — стабильный путь (не зависит от запуска/оружия)\n# libunity.so base = 0x%llx\n# target(найденный addr) = 0x%llx\nPATH %s\n", (unsigned long long)g_libBase, (unsigned long long)target, pathStr().c_str()); fclose(f); }
+    std::string r = "НАЙДЕН путь: " + pathStr() + "  → сохранён v8_pointer.txt";
+    return env->NewStringUTF(r.c_str());
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeCalcResolve(JNIEnv* env, jclass) {
+    if (g_path.empty()) return env->NewStringUTF("путь пуст (нажми ПАТРОНЫ или задай оффсеты)");
+    libRange(); bool ok; uintptr_t a = fv8::resolve_path(g_libBase, g_path.data(), (int)g_path.size(), rd8, nullptr, &ok);
+    if (!ok) return env->NewStringUTF("путь не разрешается (объект не активен?)");
+    int fd = memRD(); unsigned char t[4] = {0}; int iv = 0; float fv = 0; if (fd >= 0 && pread(fd, t, 4, (off_t)a) == 4) { memcpy(&iv, t, 4); memcpy(&fv, t, 4); }
+    char b[128]; snprintf(b, sizeof b, "%s\nadddr=0x%llx\n= %d | %.3f", pathStr().c_str(), (unsigned long long)a, iv, fv);
+    return env->NewStringUTF(b);
+}
+extern "C" JNIEXPORT jint JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeCalcWrite(JNIEnv* env, jclass, jstring jval, jboolean isFloat) {
+    if (g_path.empty()) return 0;
+    const char* v = env->GetStringUTFChars(jval, nullptr); int iv = atoi(v); float fv = (float)atof(v); env->ReleaseStringUTFChars(jval, v);
+    libRange(); bool ok; uintptr_t a = fv8::resolve_path(g_libBase, g_path.data(), (int)g_path.size(), rd8, nullptr, &ok);
+    if (!ok) return 0;
+    uint32_t bits; if (isFloat) memcpy(&bits, &fv, 4); else memcpy(&bits, &iv, 4);
+    return safeWrite32(a, bits) ? 1 : 0;
+}
+extern "C" JNIEXPORT jint JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeCalcFreeze(JNIEnv* env, jclass, jstring jval, jboolean isFloat, jboolean on) {
+    const char* v = env->GetStringUTFChars(jval, nullptr); int iv = atoi(v); float fv = (float)atof(v); env->ReleaseStringUTFChars(jval, v);
+    g_pfFloat = isFloat; if (isFloat) memcpy(&g_pfBits, &fv, 4); else memcpy(&g_pfBits, &iv, 4);
+    g_pathFreeze = on;
+    if (on && !g_freezeThread.exchange(true)) std::thread(freezeLoop).detach();
+    return g_path.empty() ? 0 : 1;
+}
+// задать путь вручную: CSV из hex-оффсетов, напр. "0x1234,0x18"
+extern "C" JNIEXPORT jint JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeCalcSet(JNIEnv* env, jclass, jstring jcsv) {
+    const char* csv = env->GetStringUTFChars(jcsv, nullptr);
+    g_path.clear(); std::string s(csv); env->ReleaseStringUTFChars(jcsv, csv);
+    size_t i = 0;
+    while (i < s.size()) {
+        size_t j = s.find(',', i); std::string tok = s.substr(i, j == std::string::npos ? std::string::npos : j - i);
+        if (!tok.empty()) g_path.push_back((long long)strtoll(tok.c_str(), nullptr, 0));
+        if (j == std::string::npos) break; i = j + 1;
+    }
+    return (jint)g_path.size();
 }
 
 // ---- ИНСПЕКТОР: JNI ----

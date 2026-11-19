@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstring>
 #include <vector>
+#include <algorithm>
 #include <cmath>
 
 namespace fv8 {
@@ -82,6 +83,68 @@ inline bool at_equals_i32(const unsigned char* at, int value) {
 }
 inline bool at_equals_f32(const unsigned char* at, float value, float eps) {
     float v; memcpy(&v, at, 4); return std::fabs(v - value) <= eps;
+}
+
+// ======================= ОФСЕТ-КАЛЬКУЛЯТОР + POINTER-SCAN ===================
+// Чтение 8 байт по адресу (в тесте — из буфера, в движке — pread /proc/self/mem).
+typedef uint64_t (*mem_rd)(uintptr_t addr, void* ctx, bool* ok);
+
+// Разрешить путь: base; (n-1) разыменований по offs[i]; финальный +offs[n-1].
+// resolve([o0,o1,...,ok]) = (*(…*(*(base+o0)+o1)… ) ) + ok
+inline uintptr_t resolve_path(uintptr_t base, const long long* offs, int n,
+                              mem_rd rd, void* ctx, bool* ok) {
+    *ok = true;
+    if (n <= 0) return base;
+    uintptr_t cur = base;
+    for (int i = 0; i < n - 1; ++i) {
+        bool o = false;
+        uint64_t v = rd(cur + (uintptr_t)offs[i], ctx, &o);
+        if (!o) { *ok = false; return 0; }
+        cur = (uintptr_t)v;
+    }
+    return cur + (uintptr_t)offs[n - 1];
+}
+
+struct PtrSlot { uintptr_t addr; uint64_t val; };
+struct PtrPath { bool found; int n; long long offs[8]; };
+
+// Обратный поиск стабильного пути из статической области (libunity) к target.
+// snap — слоты (addr, 8-байтовое значение) из памяти (будет отсортирован по val).
+inline PtrPath find_pointer_path(uintptr_t target, uintptr_t sBase, uintptr_t sEnd,
+                                 std::vector<PtrSlot>& snap, long long maxOff, int maxDepth,
+                                 mem_rd rd, void* ctx) {
+    PtrPath none; none.found = false; none.n = 0;
+    std::sort(snap.begin(), snap.end(), [](const PtrSlot& a, const PtrSlot& b){ return a.val < b.val; });
+
+    struct FN { uintptr_t D; std::vector<long long> suf; };
+    std::vector<FN> frontier; frontier.push_back({ target, {} });
+
+    for (int depth = 0; depth < maxDepth; ++depth) {
+        std::vector<FN> next;
+        for (auto& fn : frontier) {
+            uint64_t lo = (fn.D >= (uint64_t)maxOff) ? (fn.D - (uint64_t)maxOff) : 0;
+            PtrSlot key{ 0, lo };
+            auto it = std::lower_bound(snap.begin(), snap.end(), key,
+                        [](const PtrSlot& a, const PtrSlot& b){ return a.val < b.val; });
+            for (; it != snap.end() && it->val <= fn.D; ++it) {
+                long long off = (long long)(fn.D - it->val);
+                std::vector<long long> ns; ns.reserve(fn.suf.size() + 1);
+                ns.push_back(off); for (auto x : fn.suf) ns.push_back(x);
+                if (it->addr >= sBase && it->addr < sEnd) {
+                    long long path[8]; int n = 0;
+                    path[n++] = (long long)(it->addr - sBase);
+                    for (auto x : ns) if (n < 8) path[n++] = x;
+                    bool ok; uintptr_t r = resolve_path(sBase, path, n, rd, ctx, &ok);
+                    if (ok && r == target) { PtrPath p; p.found = true; p.n = n; for (int i = 0; i < n; ++i) p.offs[i] = path[i]; return p; }
+                } else if (next.size() < 200000 && (int)ns.size() < 7) {
+                    next.push_back({ it->addr, ns });
+                }
+            }
+        }
+        frontier.swap(next);
+        if (frontier.empty()) break;
+    }
+    return none;
 }
 
 } // namespace fv8

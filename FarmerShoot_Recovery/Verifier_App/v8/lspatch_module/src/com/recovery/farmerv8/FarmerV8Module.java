@@ -72,6 +72,12 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
     static native int nativeScanFirst();
     static native int nativeScanDir(int mode, boolean isFloat);   // 0 умен.,1 увел.,2 измен.,3 не изм.
     static native String nativeScanList();
+    // офсет-калькулятор + pointer-scan (кнопка «патроны»)
+    static native String nativeFindPath(String dir);
+    static native String nativeCalcResolve();
+    static native int nativeCalcWrite(String value, boolean isFloat);
+    static native int nativeCalcFreeze(String value, boolean isFloat, boolean on);
+    static native int nativeCalcSet(String csv);
 
     @Override public void initZygote(StartupParam sp) { try { sModulePath = sp.modulePath; } catch (Throwable ignore) {} }
 
@@ -423,7 +429,7 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
     static final class ScanUI {
         final Activity act; final StringBuilder val = new StringBuilder(); boolean isFloat = false;
         boolean frozen = false;
-        TextView disp, res, insp, inspLive; Button freezeBtn;
+        TextView disp, res, insp, inspLive, calc; Button freezeBtn;
         ScanUI(Activity a) { act = a; }
 
         void build(LinearLayout body) {
@@ -487,6 +493,20 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
             body.addView(inspLive);
             new Handler(Looper.getMainLooper()).postDelayed(new InspRefresh(this), 1200);
 
+            // ========== КАЛЬКУЛЯТОР ОФФСЕТОВ (стабильный адрес) ==========
+            TextView ct = new TextView(act);
+            ct.setText("СТАБИЛЬНЫЙ ОФФСЕТ (не зависит от оружия)");
+            ct.setTextColor(Color.rgb(255, 170, 90)); ct.setTextSize(13);
+            ct.setPadding(0, dp(act, 12), 0, dp(act, 4));
+            body.addView(ct);
+            body.addView(makeRow(act, new String[]{"🎯 ПАТРОНЫ (найти стаб. оффсет)"},
+                    new View.OnClickListener[]{ new DoFindPath(this) }));
+            body.addView(makeRow(act, new String[]{"ПОКАЗАТЬ", "ПАТЧ по пути", "❄ морозить путь"},
+                    new View.OnClickListener[]{ new DoCalcShow(this), new DoCalcPatch(this), new DoCalcFreeze(this) }));
+            calc = new TextView(act); calc.setTextColor(Color.rgb(255, 215, 170)); calc.setTextSize(10);
+            calc.setText("1) инспектором сведи к 1 адресу ammo\n2) ПАТРОНЫ → строит стабильный путь [libunity+..]\n3) впиши желаемое → ПАТЧ по пути / морозить путь");
+            body.addView(calc);
+
             refresh();
         }
         String value() { return val.length() == 0 ? "0" : val.toString(); }
@@ -542,6 +562,45 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
             int n; try { n = nativeScanPatch(val, s.isFloat); } catch (Throwable t) { s.res.setText("err: " + t); return; }
             if (n < 0) { s.res.setText("слишком много адресов (" + (-n) + ") — сначала УТОЧНИ до ≤50"); Toast.makeText(s.act, "сначала уточни", Toast.LENGTH_SHORT).show(); }
             else { s.res.setText("записал " + val + " → " + n + " адрес(ов). Если откатилось — жми ЗАМОРОЗИТЬ."); Toast.makeText(s.act, "записал " + val + " в " + n, Toast.LENGTH_SHORT).show(); }
+        }
+    }
+    static final class DoFindPath implements View.OnClickListener {
+        final ScanUI s; DoFindPath(ScanUI s) { this.s = s; }
+        @Override public void onClick(View v) {
+            if (!sNativeOk) { s.calc.setText("native нет"); return; }
+            s.calc.setText("ищу стабильный путь (пару секунд)...");
+            String dir = sDumpDir; if (dir == null) dir = s.act.getCacheDir().getAbsolutePath();
+            String r; try { r = nativeFindPath(dir); } catch (Throwable t) { r = "err: " + t; }
+            s.calc.setText(r);
+            Toast.makeText(s.act, r, Toast.LENGTH_LONG).show();
+        }
+    }
+    static final class DoCalcShow implements View.OnClickListener {
+        final ScanUI s; DoCalcShow(ScanUI s) { this.s = s; }
+        @Override public void onClick(View v) {
+            if (!sNativeOk) { s.calc.setText("native нет"); return; }
+            String r; try { r = nativeCalcResolve(); } catch (Throwable t) { r = "err: " + t; }
+            s.calc.setText(r);
+        }
+    }
+    static final class DoCalcPatch implements View.OnClickListener {
+        final ScanUI s; DoCalcPatch(ScanUI s) { this.s = s; }
+        @Override public void onClick(View v) {
+            if (!sNativeOk) { s.calc.setText("native нет"); return; }
+            String val = s.value(); int n;
+            try { n = nativeCalcWrite(val, s.isFloat); } catch (Throwable t) { s.calc.setText("err: " + t); return; }
+            s.calc.setText(n > 0 ? ("записал " + val + " по пути. Если откатывается — морозь путь.") : "путь не разрешился (найди ПАТРОНЫ/объект не активен)");
+            Toast.makeText(s.act, n > 0 ? ("патч " + val) : "нет пути", Toast.LENGTH_SHORT).show();
+        }
+    }
+    static final class DoCalcFreeze implements View.OnClickListener {
+        final ScanUI s; boolean on = false; DoCalcFreeze(ScanUI s) { this.s = s; }
+        @Override public void onClick(View v) {
+            if (!sNativeOk) { s.calc.setText("native нет"); return; }
+            on = !on; String val = s.value(); int n;
+            try { n = nativeCalcFreeze(val, s.isFloat, on); } catch (Throwable t) { s.calc.setText("err: " + t); return; }
+            s.calc.setText(on ? ("морожу " + val + " по пути (пере-резолв каждый тик)") : "заморозка пути выкл");
+            Toast.makeText(s.act, on ? ("морозка пути " + val) : "стоп", Toast.LENGTH_SHORT).show();
         }
     }
     static final class DoInspect implements View.OnClickListener {

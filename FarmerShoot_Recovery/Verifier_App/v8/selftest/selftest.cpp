@@ -1,12 +1,13 @@
 // ============================================================================
-// FarmerShoot v8 — САМОТЕСТ 3/3 для СКАНЕРА ПАМЯТИ.
-// Доказывает метод «найти значение -> уточнить по изменению -> пропатчить»
-// (как GameGuardian) БЕЗ символов/метадаты/расшифровки lib, используя ТЕ ЖЕ
-// функции движка из ../native/final/engine_logic.hpp.
+// FarmerShoot v8 — САМОТЕСТ 3/3 для ОФСЕТ-КАЛЬКУЛЯТОРА и POINTER-SCAN.
+// Доказывает: по статической базе (libunity) + цепочке оффсетов находим точный
+// адрес значения и меняем его; pointer-scan строит стабильный путь из найденного
+// адреса ammo. Используются ТЕ ЖЕ функции движка (engine_logic.hpp).
 //
-//   TEST 1/3  Поиск: в «куче» находим все адреса с текущим числом патронов (30).
-//   TEST 2/3  Уточнение: после выстрела (30->29) остаётся РОВНО один адрес ammo.
-//   TEST 3/3  Патч: по найденному адресу ставим ammo=999 и прыжок ×3, затем откат.
+//   TEST 1/3  resolve_path: [base+o0]->+o1 даёт точный адрес; читаем значение.
+//   TEST 2/3  find_pointer_path: из адреса ammo находим путь [libunity+off]->+off,
+//             который РАЗРЕШАЕТСЯ обратно в тот же адрес (валидация).
+//   TEST 3/3  правим значение по найденному пути: ammo 24 -> 999, читаем назад.
 //
 // Сборка/запуск: c++ -std=c++17 -I../native/final selftest.cpp -o selftest && ./selftest
 // ============================================================================
@@ -17,83 +18,93 @@
 #include <vector>
 
 static int g_fail = 0;
-#define CHECK(cond, msg) do { if (cond) printf("    [ok] %s\n", msg); \
-    else { printf("    [FAIL] %s\n", msg); g_fail++; } } while(0)
+#define CHECK(c, m) do { if (c) printf("    [ok] %s\n", m); else { printf("    [FAIL] %s\n", m); g_fail++; } } while(0)
+
+// ---- симулированная память процесса ----
+// Непрерывный буфер из 8-байтовых слов. Адрес слова i = BASE + 8*i.
+static const uintptr_t BASE = 0x7000000000ull;
+static std::vector<uint64_t> MEM;
+static uint64_t sim_read(uintptr_t addr, void* , bool* ok) {
+    if (addr < BASE || ((addr - BASE) % 8) != 0) { *ok = false; return 0; }
+    size_t i = (addr - BASE) / 8;
+    if (i >= MEM.size()) { *ok = false; return 0; }
+    *ok = true; return MEM[i];
+}
+static uintptr_t A(size_t wordIdx) { return BASE + 8 * wordIdx; }
 
 int main() {
-    printf("================ FarmerShoot v8 — SELF-TEST 3/3 (сканер) ================\n");
+    printf("================ FarmerShoot v8 — SELF-TEST 3/3 (офсеты) ================\n");
     printf("(проверяет engine_logic.hpp — тот же код, что в libfarmerv8.so)\n\n");
 
-    // «куча игры»: 4096 int, заполнены мусором; несколько «ложных» 30 (декои) и
-    // одна ячейка — настоящие патроны; отдельная ячейка — прыжок (float).
-    const size_t N = 4096;
-    std::vector<int32_t> heap(N);
-    for (size_t i = 0; i < N; i++) heap[i] = (int)(i * 2654435761u) & 0x3FFFFFFF; // псевдослучайно
-    // декои со значением 30 (другие объекты с таким же числом)
-    size_t decoys[] = { 100, 900, 2500, 3600 };
-    for (size_t d : decoys) heap[d] = 30;
-    // настоящая ячейка патронов
-    size_t ammoIdx = 1777; heap[ammoIdx] = 30;
-    // ячейка прыжка (float 8.0)
-    size_t jumpIdx = 2222; float jv = 8.0f; memcpy(&heap[jumpIdx], &jv, 4);
+    // Раскладка «памяти»:
+    //  [0..255]  — статическая область (как libunity data): sBase..sEnd
+    //  слот 10 (static) хранит указатель на «оружие» (объект)
+    //  объект начинается со слова 500; поле ammo (int) по смещению +0x18 от объекта
+    MEM.assign(4096, 0);
+    uintptr_t sBase = A(0), sEnd = A(256);
+    uintptr_t weaponObj = A(500);
+    long long AMMO_OFF = 0x18;                       // смещение поля ammo в объекте
+    uintptr_t ammoAddr = weaponObj + AMMO_OFF;       // точный адрес ammo
 
-    unsigned char* base = (unsigned char*)heap.data();
-    uintptr_t baseAddr = (uintptr_t)base;
-    size_t bytes = N * 4;
+    MEM[10] = (uint64_t)weaponObj;                   // static pointer -> weaponObj
+    // ammo лежит в младших 4 байтах слова (ammoAddr кратен 8 здесь: 500*8+0x18)
+    MEM[(ammoAddr - BASE) / 8] = 24;                 // патроны = 24
 
-    // ---------------- TEST 1/3 : поиск значения ----------------
-    printf("TEST 1/3 — поиск: ищем все адреса, где лежит 30 (текущие патроны)\n");
-    std::vector<uintptr_t> cand;
-    fv8::find_i32(base, bytes, baseAddr, 30, cand, 100000);
-    bool ammoFound = false;
-    for (auto a : cand) if (a == baseAddr + ammoIdx * 4) ammoFound = true;
-    printf("    кандидатов с значением 30: %zu (включая декои)\n", cand.size());
-    CHECK(cand.size() >= 5, "найдено несколько кандидатов (декои + настоящий)");
-    CHECK(ammoFound, "адрес настоящих патронов среди кандидатов");
-    bool t1 = cand.size() >= 5 && ammoFound;
+    // ---------------- TEST 1/3 : resolve_path ----------------
+    printf("TEST 1/3 — resolve_path: [libunity+0x50] -> +0x18 = адрес ammo\n");
+    long long staticOff = (long long)(A(10) - sBase); // 10*8 = 0x50
+    long long path[2] = { staticOff, AMMO_OFF };
+    bool ok = false;
+    uintptr_t r = fv8::resolve_path(sBase, path, 2, sim_read, nullptr, &ok);
+    CHECK(ok && r == ammoAddr, "путь [0x50, 0x18] разрешается в адрес ammo");
+    bool okr; int val = (int)(sim_read(r, nullptr, &okr) & 0xFFFFFFFF);
+    CHECK(okr && val == 24, "по адресу читается 24 (текущие патроны)");
+    bool t1 = ok && r == ammoAddr && val == 24;
     printf("  => %s\n\n", t1 ? "PASS" : "FAIL");
 
-    // ---------------- TEST 2/3 : уточнение после выстрела ----------------
-    printf("TEST 2/3 — уточнение: стреляем (30->29), оставляем изменившийся адрес\n");
-    heap[ammoIdx] = 29;                     // «выстрел»: уменьшилось только у ammo
-    std::vector<uintptr_t> refined;
-    for (auto a : cand)
-        if (fv8::at_equals_i32((const unsigned char*)a, 29)) refined.push_back(a);
-    printf("    после уточнения осталось: %zu\n", refined.size());
-    CHECK(refined.size() == 1, "остался РОВНО один адрес");
-    CHECK(!refined.empty() && refined[0] == baseAddr + ammoIdx * 4, "это адрес патронов");
-    bool t2 = refined.size() == 1 && refined[0] == baseAddr + ammoIdx * 4;
-    printf("  => %s  (адрес ammo = 0x%llx)\n\n", t2 ? "PASS" : "FAIL",
-           (unsigned long long)(t2 ? refined[0] : 0));
+    // ---------------- TEST 2/3 : pointer-scan ----------------
+    printf("TEST 2/3 — find_pointer_path: из адреса ammo строим стабильный путь\n");
+    // снимок слотов (addr,val) — как сделает движок из памяти
+    std::vector<fv8::PtrSlot> snap;
+    for (size_t i = 0; i < MEM.size(); ++i) snap.push_back({ A(i), MEM[i] });
+    fv8::PtrPath p = fv8::find_pointer_path(ammoAddr, sBase, sEnd, snap, 0x100, 4, sim_read, nullptr);
+    CHECK(p.found, "путь найден");
+    bool validates = false;
+    if (p.found) {
+        bool o; uintptr_t rr = fv8::resolve_path(sBase, p.offs, p.n, sim_read, nullptr, &o);
+        validates = o && rr == ammoAddr;
+        printf("    путь:");
+        for (int i = 0; i < p.n; ++i) printf(" %s0x%llx", i == 0 ? "[libunity+" : "+", (unsigned long long)p.offs[i]);
+        printf(" ]  -> 0x%llx\n", (unsigned long long)rr);
+    }
+    CHECK(validates, "найденный путь разрешается обратно в адрес ammo");
+    bool t2 = p.found && validates;
+    printf("  => %s\n\n", t2 ? "PASS" : "FAIL");
 
-    // ---------------- TEST 3/3 : патч по найденному адресу ----------------
-    printf("TEST 3/3 — патч: ammo=999 и прыжок ×3 по найденным адресам, затем откат\n");
+    // ---------------- TEST 3/3 : правка значения по пути ----------------
+    printf("TEST 3/3 — правка по пути: ammo 24 -> 999, читаем назад\n");
     bool t3 = false;
     if (t2) {
-        void* ammoAddr = (void*)refined[0];
-        fv8::write_field_i(ammoAddr, 0, 999);                 // патроны = 999
-        CHECK(fv8::read_field_i(ammoAddr, 0) == 999, "ammo записан = 999");
-
-        // прыжок: находим 8.0, ×3 -> 24.0
-        std::vector<uintptr_t> jc;
-        fv8::find_f32(base, bytes, baseAddr, 8.0f, 0.0001f, jc, 100000);
-        bool jok = false; void* jumpAddr = nullptr;
-        for (auto a : jc) if (a == baseAddr + jumpIdx * 4) { jok = true; jumpAddr = (void*)a; }
-        CHECK(jok, "адрес прыжка (float 8.0) найден");
-        float orig = fv8::read_field_f(jumpAddr, 0);
-        fv8::write_field_f(jumpAddr, 0, fv8::compute_target(orig, 3.0f));
-        CHECK(fv8::read_field_f(jumpAddr, 0) == 24.0f, "прыжок ×3: 8.0 -> 24.0");
-        fv8::write_field_f(jumpAddr, 0, orig);
-        CHECK(fv8::read_field_f(jumpAddr, 0) == 8.0f, "откат прыжка -> 8.0");
-
-        t3 = fv8::read_field_i(ammoAddr, 0) == 999 && jok;
+        bool o; uintptr_t a = fv8::resolve_path(sBase, p.offs, p.n, sim_read, nullptr, &o);
+        // «запись» в симулированную память
+        MEM[(a - BASE) / 8] = (MEM[(a - BASE) / 8] & 0xFFFFFFFF00000000ull) | (uint32_t)999;
+        bool o2; int nv = (int)(sim_read(a, nullptr, &o2) & 0xFFFFFFFF);
+        CHECK(o && o2 && nv == 999, "по стабильному пути значение стало 999");
+        // стабильность: путь не зависит от адреса объекта — «перезапуск»: двигаем объект
+        uintptr_t weapon2 = A(800);
+        MEM[10] = (uint64_t)weapon2;                         // новый объект (другое оружие/запуск)
+        MEM[(weapon2 + AMMO_OFF - BASE) / 8] = 7;            // патроны нового оружия = 7
+        bool o3; uintptr_t a2 = fv8::resolve_path(sBase, p.offs, p.n, sim_read, nullptr, &o3);
+        int nv2 = (int)(sim_read(a2, nullptr, &o3) & 0xFFFFFFFF);
+        CHECK(o3 && a2 == weapon2 + AMMO_OFF && nv2 == 7, "тот же путь нашёл ammo нового оружия (вне зависимости от оружия)");
+        t3 = (nv == 999) && (a2 == weapon2 + AMMO_OFF);
     }
     printf("  => %s\n\n", t3 ? "PASS" : "FAIL");
 
     int passed = (t1 ? 1 : 0) + (t2 ? 1 : 0) + (t3 ? 1 : 0);
     printf("=================== ИТОГ: %d/3 (провалов проверок: %d) ===================\n", passed, g_fail);
     printf("%s\n", (passed == 3 && g_fail == 0)
-        ? "БАЗА ДОКАЗАНА: поиск значения -> уточнение -> точный адрес -> патч. Без символов/метадаты/расшифровки lib."
+        ? "БАЗА ДОКАЗАНА: офсет-калькулятор + pointer-scan дают стабильный точечный адрес ammo и правят значение."
         : "ЕСТЬ ПРОВАЛ.");
     return (passed == 3 && g_fail == 0) ? 0 : 1;
 }
