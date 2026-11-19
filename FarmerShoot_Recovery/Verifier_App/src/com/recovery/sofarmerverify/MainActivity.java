@@ -21,7 +21,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         "UnityInitialize", "RadarView", "RadarMapView", "RadarConfiguration",
         "Balders.farmershoot.Game", "AimDispersionCurve"
     };
-    static final int FIND=0, CHECK=1, EXTRACT=2, INVENTORY=3, COMPARE=4;
+    static final int FIND=0, CHECK=1, EXTRACT=2, INVENTORY=3, COMPARE=4, EXTRACT_APK=5;
 
     // Якоря, найденные в НАШЕМ test.so: имя + оффсет в test.so (значение = имя)
     static final String[] CN = {"UnityInitialize","WeaponShop","RankedDefuse","GameStateMachine",
@@ -31,7 +31,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
     EditText pkgInput;
     TextView status, details;
     LinearLayout root;
-    Button findBtn, checkBtn, cmpBtn, extractBtn, invBtn;
+    Button findBtn, checkBtn, cmpBtn, extractBtn, invBtn, apkBtn;
     int pad;
 
     @Override protected void onCreate(Bundle b){
@@ -58,6 +58,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         cmpBtn     = btn("СВЕРИТЬ ВСЁ: test.so ↔ оригинал");
         invBtn     = btn("Инвентаризация файлов игры");
         extractBtn = btn("Извлечь libil2cpp.so + global-metadata.dat");
+        apkBtn     = btn("Извлечь APK игры (base + split с .so)");
 
         status = new TextView(this);
         status.setTextSize(24); status.setTypeface(null,Typeface.BOLD);
@@ -94,6 +95,9 @@ public class MainActivity extends Activity implements View.OnClickListener {
         } else if(v==extractBtn){
             if(p.isEmpty()){ set(null,"Сначала укажите/найдите пакет игры."); return; }
             start(EXTRACT,p);
+        } else if(v==apkBtn){
+            if(p.isEmpty()){ set(null,"Сначала укажите/найдите пакет игры."); return; }
+            start(EXTRACT_APK,p);
         }
     }
     void start(int mode,String pkg){ set(null,"Работаю… (до минуты)"); new Thread(new Task(this,mode,pkg)).start(); }
@@ -107,6 +111,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
             else if(mode==CHECK) a.runCheck(pkg);
             else if(mode==COMPARE) a.compareAll(pkg);
             else if(mode==INVENTORY) a.inventory(pkg);
+            else if(mode==EXTRACT_APK) a.extractApk(pkg);
             else a.extract(pkg);
         }catch(Throwable t){ a.set(Boolean.FALSE,"Сбой: "+t); } }
     }
@@ -266,6 +271,49 @@ public class MainActivity extends Activity implements View.OnClickListener {
     }
     static String printable(byte[] b){ StringBuilder s=new StringBuilder();
         for(int i=0;i<b.length;i++){ int c=b[i]&0xff; s.append((c>=32&&c<127)?(char)c:'.'); } return s.toString(); }
+
+    // ================= извлечение APK (мост к восстановлению) =================
+    void extractApk(String pkg){
+        ApplicationInfo ai=info(pkg); if(ai==null){ set(Boolean.FALSE,"Пакет не найден: "+pkg); return; }
+        File outDir=getExternalFilesDir(null);
+        StringBuilder sb=new StringBuilder("Извлечение APK в:\n"+outDir+"\n\n");
+        boolean any=false;
+        try{
+            List<String> apks=apks(ai);
+            for(int i=0;i<apks.size();i++){
+                String apk=apks.get(i); File src=new File(apk); String base=src.getName();
+                boolean isBase=apk.equals(ai.sourceDir);
+                boolean hasSo=false;
+                if(!isBase){
+                    try{ ZipFile zf=new ZipFile(apk); Enumeration<? extends ZipEntry> e=zf.entries();
+                        while(e.hasMoreElements()){ String n=e.nextElement().getName().toLowerCase();
+                            if(n.endsWith(".so")){ hasSo=true; break; } }
+                        zf.close();
+                    }catch(Throwable ig){}
+                }
+                if(isBase||hasSo){
+                    File o=new File(outDir, base.endsWith(".apk")?base:(base+".apk"));
+                    long n=copyFile(src,o); any=true;
+                    sb.append("✓ ").append(base).append("  ").append(human(n))
+                      .append(isBase?"  (base)":"  (split с .so)").append("\n");
+                } else {
+                    sb.append("· пропущен ").append(base).append(" (нет .so)\n");
+                }
+            }
+            sb.append("\nЗабрать через проводник/USB:\n").append(outDir)
+              .append("\nили: adb pull ").append(outDir).append("/")
+              .append("\n\nДальше: по этим APK можно вшить frida-gadget (objection, без root)\n")
+              .append("и снять расшифрованные libil2cpp.so + global-metadata.dat из памяти.");
+            set(any?Boolean.TRUE:Boolean.FALSE, sb.toString());
+        }catch(Throwable t){ set(Boolean.FALSE, sb+"\nОшибка: "+t); }
+    }
+    long copyFile(File src, File dst) throws IOException {
+        InputStream in=new BufferedInputStream(new FileInputStream(src),1<<16);
+        OutputStream o=new BufferedOutputStream(new FileOutputStream(dst),1<<16);
+        long tot=0; byte[] b=new byte[1<<16]; int r;
+        try{ while((r=in.read(b))>0){ o.write(b,0,r); tot+=r; } } finally { in.close(); o.close(); }
+        return tot;
+    }
 
     // ================= инвентаризация всех файлов игры =================
     void inventory(String pkg){
