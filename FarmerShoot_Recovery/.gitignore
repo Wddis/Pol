@@ -1,3 +1,6 @@
 Original/*.so
 Reconstructed/*.so
 Analysis/strings_full.txt
+Verifier_App/build/
+Verifier_App/debug.ks
+Verifier_App/*.apk
