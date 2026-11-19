@@ -5,3 +5,8 @@ __pycache__/
 # Vibe Hosting credentials
 .thevibehosting*
 data/
+
+# Farmer Shoot recovery: большие артефакты не версионируем
+FarmerShoot_Recovery/Original/
+FarmerShoot_Recovery/Extracted/
+FarmerShoot_Recovery/Reports/strings_full.txt
