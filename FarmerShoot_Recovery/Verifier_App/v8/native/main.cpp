@@ -83,6 +83,61 @@ void App::DoCheck() {
     }
 }
 
+// ---- PATCH: запись значений (прыжок ×3, патроны=999 …) ----------------------
+// Храним оригинал для отката и целевое значение для enforce.
+struct PatchRuntime { void* obj; int off; WType type; float orig; float target; bool valid; };
+static std::vector<PatchRuntime> g_patchRt;
+static bool g_patchActive = false;
+
+static float readFieldFloat(void* obj, int off, WType t) {
+    uintptr_t a = reinterpret_cast<uintptr_t>(obj) + off;
+    switch (t) { case WType::Int: return (float)*reinterpret_cast<int*>(a);
+                 case WType::Float: return *reinterpret_cast<float*>(a);
+                 case WType::Bool: return *reinterpret_cast<bool*>(a) ? 1.f : 0.f;
+                 default: return 0.f; }
+}
+static void writeFieldFloat(void* obj, int off, WType t, float v) {
+    uintptr_t a = reinterpret_cast<uintptr_t>(obj) + off;
+    switch (t) { case WType::Int: *reinterpret_cast<int*>(a) = (int)v; break;
+                 case WType::Float: *reinterpret_cast<float*>(a) = v; break;
+                 case WType::Bool: *reinterpret_cast<bool*>(a) = (v != 0.f); break;
+                 default: break; }
+}
+
+static void ApplyPatches() {
+    g_patchRt.clear();
+    for (const auto& p : kPatch) {
+        IL2CPP::Unity::il2cppClass* k = IL2CPP::Class::Find(p.cls);
+        if (!k) continue;
+        int off = IL2CPP::Class::Utils::GetFieldOffset(k, p.field);
+        if (off < 0) continue;
+        if (p.kind == WKind::InstanceField) {
+            void* inst = IL2CPP::Class::Utils::GetFirstInstance(k);  // см. overlay.md
+            if (!inst) continue;
+            float orig = readFieldFloat(inst, off, p.type);
+            float tgt  = (p.mul != 0.f) ? orig * p.mul : p.value;
+            writeFieldFloat(inst, off, p.type, tgt);
+            g_patchRt.push_back({inst, off, p.type, orig, tgt, true});
+        } else {
+            // статик: через резолвер (упрощённо читаем/пишем как void*)
+            void* cur = IL2CPP::Class::Utils::GetStaticField(k, p.field);
+            float orig; memcpy(&orig, &cur, sizeof(float));
+            float tgt = (p.mul != 0.f) ? orig * p.mul : p.value;
+            void* nv = nullptr; memcpy(&nv, &tgt, sizeof(float));
+            IL2CPP::Class::Utils::SetStaticField(k, p.field, nv);
+            g_patchRt.push_back({nullptr, 0, p.type, orig, tgt, true});
+        }
+    }
+    g_patchActive = true;
+}
+static void RestorePatches() {
+    for (auto& r : g_patchRt) if (r.valid && r.obj) writeFieldFloat(r.obj, r.off, r.type, r.orig);
+    g_patchActive = false;
+}
+static void EnforcePatches() {
+    for (auto& r : g_patchRt) if (r.valid && r.obj) writeFieldFloat(r.obj, r.off, r.type, r.target);
+}
+
 // ---- ImGui меню -------------------------------------------------------------
 void App::DrawMenu() {
     if (!g_menuOpen.load()) {
@@ -137,6 +192,24 @@ void App::DrawMenu() {
         ImGui::EndTable();
     }
 
+    // --- PATCH: кнопки записи значений ---
+    if (!kPatch.empty()) {
+        ImGui::Separator();
+        ImGui::TextDisabled("ПАТЧИ (запись):");
+        for (size_t i = 0; i < kPatch.size(); ++i) {
+            const auto& p = kPatch[i];
+            ImGui::PushID((int)i);
+            if (ImGui::Button(p.label ? p.label : p.field)) { ApplyPatches(); }
+            ImGui::PopID();
+            if ((i % 2) == 0 && i + 1 < kPatch.size()) ImGui::SameLine();
+        }
+        if (g_patchActive) {
+            ImGui::TextColored(ImVec4(0.4f, 1, 0.4f, 1), "патч активен");
+            ImGui::SameLine();
+            if (ImGui::Button("ОТКАТ")) RestorePatches();
+        }
+    }
+
     ImGui::Separator();
     ImGui::TextDisabled("resolve-by-name · live process · no hardcoded offsets");
     ImGui::End();
@@ -155,6 +228,7 @@ EGLBoolean App::h_EglSwapBuffers(EGLDisplay display, EGLSurface surface) {
     }
 
     if (g_autoRefresh.load()) App::DoCheck();   // авто-обновление значений каждый кадр
+    if (g_patchActive)        EnforcePatches(); // удержание патчей (прыжок ×3 и т.п.)
 
     ImGui_ImplOpenGL3_NewFrame();
     ImGui_ImplAndroid_NewFrame();

@@ -27,8 +27,9 @@ v1–v7 читали **файлы** установленной игры (ста�
 
 ## Вариант A — Frida (рекомендуется, запускается сегодня) · `frida/farmer_v8.js`
 Делает: **DUMP** (свежее дерево классов/полей в файл), **autoFind** (где лежат
-`ammo/health/…`), **WATCH** (следит и печатает изменения), **CHECK** (разовый
-снимок по команде — это и есть «кнопка Проверить» из консоли).
+`ammo/jump/health/…`), **AUTO-WATCH** (сам находит меняющиеся числа и печатает
+только изменения), **WATCH** (ручной список), **PATCH** (запись значений:
+абсолют или множитель ×3), **ENFORCE/RESTORE**.
 
 ```bash
 npm i frida-il2cpp-bridge frida-compile
@@ -41,17 +42,33 @@ objection patchapk -s your_game.apk        # вшить gadget
 #   установить пропатченный apk, запустить игру, затем:
 frida -U Gadget -l farmer_v8.compiled.js
 ```
-Дальше: откройте созданный `v8_dump.txt` / `v8_field_candidates.txt`
-(в `Android/data/<pkg>/files/`), выберите поля (напр. `Weapon.ammoInMag`),
-впишите в `CONFIG.watch` вверху скрипта, пересоберите — и увидите патроны в
-реальном времени с пометкой `CHANGED` при каждом выстреле.
 
-RPC как «кнопки»: в консоли Frida — `rpc.exports.dump()`, `.autofind()`, `.check()`.
+### Увидеть патроны БЕЗ знания имён полей (turn-key)
+`CONFIG.autoWatch` уже включён. Скрипт сам берёт классы оружия/движения/жизни
+(`Weaponry/Weapon/Ammo/Health/Movement/Jump…`) и следит за их числовыми полями.
+Зайдите в матч, **стреляйте** — в консоли всплывёт строка вида
+`~ <...Magazine>.ammo  30 -> 29  (Δ -1)`. Это и есть ваш счётчик патронов —
+теперь вы знаете его точное имя класса/поля.
+
+### Поменять значение и увидеть глазами (прыжок ×3)
+1. Из строк autoFind/auto-watch возьмите реальные `cls`+`field` для прыжка
+   (кандидаты по `jump/force/gravity/height`).
+2. Впишите в `CONFIG.patch`, напр.:
+   ```js
+   { cls: "<...PlayerMovement>", field: "jumpForce", kind: "instance", mul: 3, enforce: true, label: "Прыжок ×3" }
+   ```
+   `mul:3` — втрое выше; `mul:0.33` — втрое ниже; `value:999` — абсолют (ammo).
+3. В консоли Frida нажмите «кнопку»: `rpc.exports.patch()` → прыгните в игре,
+   увидите, что прыжок втрое выше. `rpc.exports.restore()` — вернуть как было.
+   `enforce:true` держит значение каждый кадр (если игра его пересчитывает).
+
+RPC-«кнопки»: `rpc.exports.dump() / .autofind() / .check() / .patch() / .restore() / .enforce(1|0)`.
 
 ## Вариант B — нативный ImGui-оверлей (настоящее «окно поверх») · `native/`
 `libfarmerv8.so` хукает `eglSwapBuffers` и рисует поверх игры окно с таблицей
-watch-полей, кнопкой **«ПРОВЕРИТЬ»** и авто-обновлением (меняющиеся значения —
-оранжевым, Δ — красным). Наш код: `main.cpp`, `main.h`, `WatchConfig.hpp`.
+watch-полей, кнопкой **«ПРОВЕРИТЬ»**, авто-обновлением (меняющиеся значения —
+оранжевым, Δ — красным) и **кнопками-патчами** («Прыжок ×3», «Патроны=999», «ОТКАТ»).
+Наш код: `main.cpp`, `main.h`, `WatchConfig.hpp` (списки `kWatch` и `kPatch`).
 
 ```bash
 cd native && NDK=/путь/к/android-ndk ./build.sh    # тянет ImGui/Resolver, ждёт libdobby.a

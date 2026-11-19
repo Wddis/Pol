@@ -27,3 +27,25 @@ static const std::vector<WatchItem> kWatch = {
     // { "Balders.Weapon",        "totalAmmo",  WKind::InstanceField, WType::Int,   "Всего"    },
     // { "Balders.Player.Health", "current",    WKind::InstanceField, WType::Float, "HP"       },
 };
+
+// ============================================================================
+// PATCH — запись значений (кнопки в оверлее). mul!=0 → умножить (прыжок ×3),
+// иначе поставить value. enforce=true → держать каждый кадр (если игра сбрасывает).
+// ============================================================================
+struct PatchItem {
+    const char* cls;
+    const char* field;
+    WKind       kind;
+    WType       type;
+    float       value;    // абсолютное значение (если mul==0)
+    float       mul;      // множитель (0 = не использовать)
+    bool        enforce;
+    const char* label;    // подпись кнопки
+};
+
+static const std::vector<PatchItem> kPatch = {
+    // ПРИМЕРЫ (подставьте реальные cls/field из v8_dump.txt / autofind):
+    // { "<...PlayerMovement>", "jumpForce", WKind::InstanceField, WType::Float, 0, 3.0f, true, "Прыжок ×3"  },
+    // { "<...Weaponry.Magazine>","ammo",    WKind::InstanceField, WType::Int,   999, 0,   true, "Патроны=999"},
+    // { "<...PlayerMovement>", "moveSpeed", WKind::InstanceField, WType::Float, 0, 2.0f, true, "Скорость ×2"},
+};
