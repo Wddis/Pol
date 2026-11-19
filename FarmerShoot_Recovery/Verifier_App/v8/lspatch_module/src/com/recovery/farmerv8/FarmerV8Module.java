@@ -60,6 +60,11 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
     static native String nativeDumpFiles(String dir);   // libunity.so + global-metadata.dat
     static native boolean nativePatchJump(float mul);
     static native boolean nativeRestore();
+    // сканер памяти (поиск адресов значений)
+    static native int nativeScanNew(String value, boolean isFloat);
+    static native int nativeScanRefine(String value, boolean isFloat);
+    static native String nativeScanSave(String dir, boolean isFloat);
+    static native int nativeScanPatch(String value, boolean isFloat);
 
     @Override public void initZygote(StartupParam sp) { try { sModulePath = sp.modulePath; } catch (Throwable ignore) {} }
 
@@ -248,6 +253,10 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
                 Button bFiles = new Button(act); bFiles.setText("СНЯТЬ ДАМП (файлы)"); bFiles.setOnClickListener(new OnDumpFiles(act, status));
                 body.addView(bFiles);
 
+                // СКАНЕР адресов (GameGuardian-метод: поиск -> уточнение)
+                ScanUI scan = new ScanUI(act);
+                scan.build(body);
+
                 TextView list = new TextView(act);
                 list.setTextColor(Color.rgb(200, 220, 200)); list.setTextSize(9); list.setText("...");
                 ScrollView sv = new ScrollView(act); sv.addView(list);
@@ -360,6 +369,93 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
             boolean show = body.getVisibility() != View.VISIBLE;
             body.setVisibility(show ? View.VISIBLE : View.GONE);
             title.setText(show ? "FarmerShoot v8 ✓  (тап — свернуть)" : "FarmerShoot v8 ✓  (тап — развернуть)");
+        }
+    }
+
+    // ===================== СКАНЕР адресов (UI) ==============================
+    static final class ScanUI {
+        final Activity act; final StringBuilder val = new StringBuilder(); boolean isFloat = false;
+        TextView disp, res;
+        ScanUI(Activity a) { act = a; }
+
+        void build(LinearLayout body) {
+            TextView t = new TextView(act); t.setText("СКАНЕР адресов (патроны/прыжок):");
+            t.setTextColor(Color.rgb(255, 205, 100)); body.addView(t);
+            disp = new TextView(act); disp.setTextColor(Color.WHITE); disp.setTextSize(14); body.addView(disp);
+            String[][] rows = { {"7","8","9"}, {"4","5","6"}, {"1","2","3"}, {"0",".","-"} };
+            for (String[] r : rows) {
+                LinearLayout row = new LinearLayout(act);
+                for (String k : r) { Button b = new Button(act); b.setText(k); b.setOnClickListener(new Key(this, k)); row.addView(b); }
+                body.addView(row);
+            }
+            LinearLayout r2 = new LinearLayout(act);
+            Button c = new Button(act); c.setText("C"); c.setOnClickListener(new Key(this, "C")); r2.addView(c);
+            Button tp = new Button(act); tp.setText("int/float"); tp.setOnClickListener(new TypeToggle(this)); r2.addView(tp);
+            body.addView(r2);
+            LinearLayout r3 = new LinearLayout(act);
+            Button s1 = new Button(act); s1.setText("ПОИСК"); s1.setOnClickListener(new DoScan(this, 0)); r3.addView(s1);
+            Button s2 = new Button(act); s2.setText("УТОЧНИТЬ"); s2.setOnClickListener(new DoScan(this, 1)); r3.addView(s2);
+            body.addView(r3);
+            LinearLayout r4 = new LinearLayout(act);
+            Button s3 = new Button(act); s3.setText("СОХР. txt"); s3.setOnClickListener(new DoSave(this)); r4.addView(s3);
+            Button s4 = new Button(act); s4.setText("ПАТЧ=знач"); s4.setOnClickListener(new DoPatch(this)); r4.addView(s4);
+            body.addView(r4);
+            res = new TextView(act); res.setTextColor(Color.rgb(200, 224, 200)); res.setTextSize(11);
+            res.setText("1) впиши текущее число (патроны) → ПОИСК\n2) выстрели, впиши новое → УТОЧНИТЬ (пока не останется мало)\n3) СОХР.txt → пришли файл");
+            body.addView(res);
+            refresh();
+        }
+        String value() { return val.length() == 0 ? "0" : val.toString(); }
+        void refresh() { if (disp != null) disp.setText("значение: " + value() + (isFloat ? "  [float]" : "  [int]")); }
+    }
+    static final class Key implements View.OnClickListener {
+        final ScanUI s; final String k; Key(ScanUI s, String k) { this.s = s; this.k = k; }
+        @Override public void onClick(View v) {
+            if ("C".equals(k)) s.val.setLength(0);
+            else s.val.append(k);
+            if (k.contains(".")) s.isFloat = true;
+            s.refresh();
+        }
+    }
+    static final class TypeToggle implements View.OnClickListener {
+        final ScanUI s; TypeToggle(ScanUI s) { this.s = s; }
+        @Override public void onClick(View v) { s.isFloat = !s.isFloat; s.refresh(); }
+    }
+    static final class DoScan implements View.OnClickListener {
+        final ScanUI s; final int mode; DoScan(ScanUI s, int m) { this.s = s; mode = m; }
+        @Override public void onClick(View v) {
+            if (!sNativeOk) { s.res.setText("native не загружен"); return; }
+            s.res.setText(mode == 0 ? "сканирую всю кучу..." : "уточняю...");
+            int n;
+            try { n = (mode == 0) ? nativeScanNew(s.value(), s.isFloat) : nativeScanRefine(s.value(), s.isFloat); }
+            catch (Throwable t) { s.res.setText("ошибка: " + t); return; }
+            String hint = n == 0 ? " — не найдено, проверь значение/тип"
+                        : n == 1 ? " — АДРЕС НАЙДЕН! жми СОХР.txt"
+                        : n <= 20 ? " — почти, измени значение в игре и УТОЧНИ"
+                        : " — много, измени значение в игре и УТОЧНИ";
+            s.res.setText("кандидатов: " + n + hint);
+        }
+    }
+    static final class DoSave implements View.OnClickListener {
+        final ScanUI s; DoSave(ScanUI s) { this.s = s; }
+        @Override public void onClick(View v) {
+            if (!sNativeOk) { s.res.setText("native нет"); return; }
+            String dir = sDumpDir;
+            if (dir == null) { try { File d = s.act.getExternalFilesDir(null); if (d != null) dir = d.getAbsolutePath(); } catch (Throwable ignore) {} }
+            if (dir == null) dir = s.act.getCacheDir().getAbsolutePath();
+            String r; try { r = nativeScanSave(dir, s.isFloat); } catch (Throwable t) { r = "err: " + t; }
+            s.res.setText(r);
+            Toast.makeText(s.act, r, Toast.LENGTH_LONG).show();
+        }
+    }
+    static final class DoPatch implements View.OnClickListener {
+        final ScanUI s; DoPatch(ScanUI s) { this.s = s; }
+        @Override public void onClick(View v) {
+            if (!sNativeOk) { s.res.setText("native нет"); return; }
+            int n; try { n = nativeScanPatch(s.value(), s.isFloat); } catch (Throwable t) { s.res.setText("err: " + t); return; }
+            if (n < 0) s.res.setText("слишком много адресов (" + (-n) + ") — сначала УТОЧНИ до ≤50");
+            else s.res.setText("записано значение в " + n + " адрес(ов)");
+            Toast.makeText(s.act, n < 0 ? "сначала уточни" : ("патч в " + n), Toast.LENGTH_SHORT).show();
         }
     }
 }

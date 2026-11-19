@@ -10,6 +10,7 @@
 #include <jni.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <cstdint>
 #include <cinttypes>
 #include <string>
@@ -22,6 +23,7 @@
 
 #include "And64InlineHook.hpp"
 #include "xdl.h"
+#include "engine_logic.hpp"   // общая логика (её же проверяет v8/selftest)
 #include "ImGUI/imgui.h"
 #include "ImGUI/imgui_impl_android.h"
 #include "ImGUI/imgui_impl_opengl3.h"
@@ -174,8 +176,8 @@ static void* findClass(const char* full) {
     return nullptr;
 }
 
-static float readF(void* obj, size_t off) { return obj ? *(float*)((char*)obj + off) : 0.f; }
-static void  writeF(void* obj, size_t off, float v) { if (obj) *(float*)((char*)obj + off) = v; }
+static float readF(void* obj, size_t off) { return fv8::read_field_f(obj, off); }
+static void  writeF(void* obj, size_t off, float v) { fv8::write_field_f(obj, off, v); }
 
 // ---- захват instance через хук .ctor ----
 typedef void* (*ctor_t)(void*, void*, void*, void*, void*, void*, void*, void*);
@@ -222,7 +224,7 @@ static void applyPatch() {
     void* k = findClass(kPatchClass); if (!k) return;
     void* f = il2cpp_class_get_field_from_name(k, kPatchField); if (!f) return;
     size_t off = il2cpp_field_get_offset(f);
-    if (!g_armed) { g_orig = readF(inst, off); g_target = g_orig * kPatchMul; g_armed = true; }
+    if (!g_armed) { g_orig = readF(inst, off); g_target = fv8::compute_target(g_orig, kPatchMul); g_armed = true; }
     writeF(inst, off, g_target);
 }
 
@@ -365,7 +367,7 @@ static bool dumpLibunity(const char* dir, std::string& msg) {
 static bool dumpMetadata(const char* dir, std::string& msg) {
     int fd = open("/proc/self/mem", O_RDONLY); if (fd < 0) { msg = "mem?"; return false; }
     FILE* m = fopen("/proc/self/maps", "r"); if (!m) { close(fd); msg = "maps?"; return false; }
-    const uint32_t MAGIC = 0xFAB11BAFu;
+    const uint32_t MAGIC = fv8::METADATA_MAGIC;
     char line[1024];
     std::vector<char> buf;
     uint64_t foundAddr = 0, foundEnd = 0;
@@ -387,13 +389,8 @@ static bool dumpMetadata(const char* dir, std::string& msg) {
                     uint32_t hdr[80];
                     ssize_t h = pread(fd, hdr, sizeof hdr, (off_t)addr);
                     if (h < 16) continue;
-                    if (hdr[1] == 0 || hdr[1] > 100) continue;   // version sanity (24/27/29/31...)
-                    uint64_t maxEnd = 0;
-                    for (int k = 2; k + 1 < (int)(h / 4); k += 2) {
-                        uint64_t o = hdr[k], ln = hdr[k + 1];
-                        if (o < (256ull << 20) && ln < (256ull << 20)) { uint64_t end = o + ln; if (end > maxEnd) maxEnd = end; }
-                    }
-                    if (maxEnd < 0x1000 || maxEnd > (256ull << 20)) maxEnd = (48ull << 20);
+                    if (!fv8::version_sane(hdr[1])) continue;    // version sanity (24/27/29/31...)
+                    uint64_t maxEnd = fv8::estimate_metadata_size(hdr, (size_t)(h / 4));
                     foundAddr = addr; foundEnd = maxEnd; break;
                 }
             }
@@ -428,6 +425,102 @@ Java_com_recovery_farmerv8_FarmerV8Module_nativeDumpFiles(JNIEnv* env, jclass, j
     std::string r = std::string(a ? "✓ " : "✗ ") + m1 + "\n" + (b ? "✓ " : "✗ ") + m2;
     LOG("dumpFiles: %s", r.c_str());
     return env->NewStringUTF(r.c_str());
+}
+
+// ======================= СКАНЕР ПАМЯТИ (GameGuardian-style) =================
+// Находит адреса значений (ammo/jump) без символов/метадаты: поиск -> уточнение.
+static std::vector<uintptr_t> g_cand;
+static int g_memRD = -1, g_memRW = -1;
+static int memRD() { if (g_memRD < 0) g_memRD = open("/proc/self/mem", O_RDONLY); return g_memRD; }
+static int memRW() { if (g_memRW < 0) g_memRW = open("/proc/self/mem", O_RDWR);  return g_memRW; }
+
+static void scanNew(bool isFloat, int iv, float fv) {
+    g_cand.clear();
+    int fd = memRD(); if (fd < 0) return;
+    FILE* m = fopen("/proc/self/maps", "r"); if (!m) return;
+    char line[1024];
+    std::vector<unsigned char> buf(1 << 20);
+    const size_t CAP = 2000000;
+    while (fgets(line, sizeof line, m) && g_cand.size() < CAP) {
+        uint64_t s = 0, e = 0; char perms[8] = {0};
+        if (sscanf(line, "%" SCNx64 "-%" SCNx64 " %7s", &s, &e, perms) != 3) continue;
+        if (perms[0] != 'r' || perms[1] != 'w') continue;          // только rw (куча/аноним)
+        uint64_t sz = e - s; if (sz > (512ull << 20)) continue;
+        for (uint64_t off = 0; off < sz && g_cand.size() < CAP; off += buf.size()) {
+            size_t want = (size_t)std::min<uint64_t>(buf.size(), sz - off);
+            ssize_t rd = pread(fd, buf.data(), want, (off_t)(s + off));
+            if (rd <= 4) continue;
+            if (isFloat) fv8::find_f32(buf.data(), rd, (uintptr_t)(s + off), fv, 0.01f, g_cand, CAP);
+            else         fv8::find_i32(buf.data(), rd, (uintptr_t)(s + off), iv, g_cand, CAP);
+        }
+    }
+    fclose(m);
+}
+static void scanRefine(bool isFloat, int iv, float fv) {
+    int fd = memRD(); if (fd < 0) return;
+    std::vector<uintptr_t> keep; unsigned char t[4];
+    for (auto a : g_cand) {
+        if (pread(fd, t, 4, (off_t)a) == 4) {
+            bool ok = isFloat ? fv8::at_equals_f32(t, fv, 0.01f) : fv8::at_equals_i32(t, iv);
+            if (ok) keep.push_back(a);
+        }
+    }
+    g_cand.swap(keep);
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeScanNew(JNIEnv* env, jclass, jstring jval, jboolean isFloat) {
+    const char* v = env->GetStringUTFChars(jval, nullptr);
+    scanNew(isFloat, atoi(v), (float)atof(v));
+    env->ReleaseStringUTFChars(jval, v);
+    return (jint)g_cand.size();
+}
+extern "C" JNIEXPORT jint JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeScanRefine(JNIEnv* env, jclass, jstring jval, jboolean isFloat) {
+    const char* v = env->GetStringUTFChars(jval, nullptr);
+    scanRefine(isFloat, atoi(v), (float)atof(v));
+    env->ReleaseStringUTFChars(jval, v);
+    return (jint)g_cand.size();
+}
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeScanSave(JNIEnv* env, jclass, jstring jdir, jboolean isFloat) {
+    const char* dir = env->GetStringUTFChars(jdir, nullptr);
+    std::string path = std::string(dir) + "/v8_addresses.txt";
+    env->ReleaseStringUTFChars(jdir, dir);
+    FILE* f = fopen(path.c_str(), "w");
+    if (!f) return env->NewStringUTF("не удалось создать файл");
+    // база libunity.so для относительных адресов (чтобы адрес был стабильнее)
+    uintptr_t uniBase = 0; { FILE* m = fopen("/proc/self/maps", "r"); char l[1024];
+        while (m && fgets(l, sizeof l, m)) { if (strstr(l, "libunity.so")) { sscanf(l, "%" SCNx64, (uint64_t*)&uniBase); break; } } if (m) fclose(m); }
+    int fd = memRD();
+    fprintf(f, "# FarmerShoot v8 — найденные адреса (%s)\n# libunity.so base = 0x%llx\n# кандидатов: %zu\n\n",
+            isFloat ? "float" : "int", (unsigned long long)uniBase, g_cand.size());
+    size_t lim = g_cand.size() < 200 ? g_cand.size() : 200;
+    for (size_t i = 0; i < lim; ++i) {
+        uintptr_t a = g_cand[i]; unsigned char t[4] = {0}; if (fd >= 0) pread(fd, t, 4, (off_t)a);
+        char val[32];
+        if (isFloat) { float fv; memcpy(&fv, t, 4); snprintf(val, sizeof val, "%.4f", fv); }
+        else         { int iv;   memcpy(&iv, t, 4); snprintf(val, sizeof val, "%d", iv); }
+        long rel = uniBase ? (long)(a - uniBase) : 0;
+        fprintf(f, "ADDR 0x%llx  REL_unity 0x%lx  VALUE %s\n", (unsigned long long)a, rel, val);
+    }
+    fclose(f);
+    char msg[256]; snprintf(msg, sizeof msg, "сохранено %zu адресов -> %s", lim, path.c_str());
+    LOG("%s", msg); return env->NewStringUTF(msg);
+}
+// Записать значение во все текущие кандидаты (если их немного) — для проверки «на глаз».
+extern "C" JNIEXPORT jint JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeScanPatch(JNIEnv* env, jclass, jstring jval, jboolean isFloat) {
+    const char* v = env->GetStringUTFChars(jval, nullptr);
+    int iv = atoi(v); float fv = (float)atof(v);
+    env->ReleaseStringUTFChars(jval, v);
+    if (g_cand.empty() || g_cand.size() > 50) return -(jint)g_cand.size(); // слишком много — сначала уточните
+    int fd = memRW(); if (fd < 0) return 0; int n = 0;
+    for (auto a : g_cand) {
+        if (isFloat) { if (pwrite(fd, &fv, 4, (off_t)a) == 4) n++; }
+        else         { if (pwrite(fd, &iv, 4, (off_t)a) == 4) n++; }
+    }
+    return n;
 }
 
 extern "C" JNIEXPORT jboolean JNICALL

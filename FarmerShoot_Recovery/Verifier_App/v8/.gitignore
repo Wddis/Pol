@@ -14,3 +14,5 @@ lspatch_module/libs/arm64-v8a/*.so
 native/final/deps/
 native/final/*.o
 *.o
+selftest/selftest
+selftest/selftest_asan
