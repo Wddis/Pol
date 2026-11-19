@@ -750,6 +750,44 @@ Java_com_recovery_farmerv8_FarmerV8Module_nativeScanList(JNIEnv* env, jclass) {
     return env->NewStringUTF(s.c_str());
 }
 
+// Снять libunity.so ИЗ ПАМЯТИ (а не с диска): реконструируем образ из её
+// маппингов. Даёт бинарник для анализа (string-xref il2cpp api / Il2CppDumper),
+// даже если на диске файл «скрыт».
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeDumpUnityMem(JNIEnv* env, jclass, jstring jdir) {
+    libRange();
+    if (!g_libBase || g_libEnd <= g_libBase) return env->NewStringUTF("libunity.so не найдена в памяти");
+    const char* dir = env->GetStringUTFChars(jdir, nullptr);
+    std::string path = std::string(dir) + "/libunity_mem.so";
+    env->ReleaseStringUTFChars(jdir, dir);
+    uint64_t total = g_libEnd - g_libBase;
+    if (total > (400ull << 20)) total = (400ull << 20);
+    FILE* f = fopen(path.c_str(), "wb"); if (!f) return env->NewStringUTF("не создать файл");
+    if (ftruncate(fileno(f), (off_t)total) != 0) { /* ignore */ }
+    int fd = memRD(); if (fd < 0) { fclose(f); return env->NewStringUTF("нет доступа к памяти"); }
+    FILE* m = fopen("/proc/self/maps", "r"); char line[1024];
+    std::vector<unsigned char> buf(1 << 20); uint64_t written = 0;
+    while (m && fgets(line, sizeof line, m)) {
+        if (!strstr(line, "libunity.so")) continue;
+        uint64_t s = 0, e = 0; char perms[8] = {0};
+        if (sscanf(line, "%" SCNx64 "-%" SCNx64 " %7s", &s, &e, perms) != 3) continue;
+        if (perms[0] != 'r' || s < g_libBase) continue;
+        uint64_t segOff = s - g_libBase; if (segOff >= total) continue;
+        uint64_t segLen = e - s; if (segOff + segLen > total) segLen = total - segOff;
+        fseek(f, (long)segOff, SEEK_SET);
+        for (uint64_t o = 0; o < segLen; o += buf.size()) {
+            size_t want = (size_t)std::min<uint64_t>(buf.size(), segLen - o);
+            ssize_t rd = pread(fd, buf.data(), want, (off_t)(s + o));
+            if (rd <= 0) break;
+            fwrite(buf.data(), 1, rd, f); written += rd;
+        }
+    }
+    if (m) fclose(m);
+    fclose(f);
+    char b[256]; snprintf(b, sizeof b, "libunity_mem.so: %llu МБ (base 0x%llx) -> %s", (unsigned long long)(written >> 20), (unsigned long long)g_libBase, path.c_str());
+    LOG("%s", b); return env->NewStringUTF(b);
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_recovery_farmerv8_FarmerV8Module_nativePatchJump(JNIEnv*, jclass, jfloat) {
     return (kPatchClass[0] && g_armed) ? JNI_TRUE : JNI_FALSE;

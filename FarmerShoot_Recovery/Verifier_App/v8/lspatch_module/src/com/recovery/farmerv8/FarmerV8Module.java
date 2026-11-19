@@ -60,6 +60,7 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
     static native String nativeInfo();
     static native boolean nativeDumpTo(String path);
     static native String nativeDumpFiles(String dir);   // libunity.so + global-metadata.dat
+    static native String nativeDumpUnityMem(String dir); // libunity.so из ПАМЯТИ (для анализа оффсетов)
     static native boolean nativePatchJump(float mul);
     static native boolean nativeRestore();
     // сканер памяти (поиск адресов значений)
@@ -275,6 +276,8 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
 
                 card.addView(makeRow(act, new String[]{"DUMP имена", "ДАМП файлы"},
                         new View.OnClickListener[]{ new OnDump(act), new OnDumpFiles(act, status) }));
+                card.addView(makeRow(act, new String[]{"🧠 ДАМП libunity (память) → пришли мне"},
+                        new View.OnClickListener[]{ new OnDumpUnityMem(act, status) }));
 
                 ScanUI scan = new ScanUI(act);
                 scan.build(card);
@@ -396,6 +399,18 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
         }
     }
     // снятие файлов для Il2CppDumper в files-папку
+    static final class OnDumpUnityMem implements View.OnClickListener {
+        final Activity act; final TextView status; OnDumpUnityMem(Activity a, TextView s) { act = a; status = s; }
+        @Override public void onClick(View v) {
+            String dir = sDumpDir;
+            if (dir == null) { try { File d = act.getExternalFilesDir(null); if (d != null) dir = d.getAbsolutePath(); } catch (Throwable ignore) {} }
+            if (dir == null) dir = act.getCacheDir().getAbsolutePath();
+            status.setText("снимаю libunity из памяти (может быть большим)...");
+            String r; try { r = sNativeOk ? nativeDumpUnityMem(dir) : "native нет"; } catch (Throwable t) { r = "err: " + t; }
+            status.setText(r);
+            Toast.makeText(act, r, Toast.LENGTH_LONG).show();
+        }
+    }
     static final class OnDumpFiles implements View.OnClickListener {
         final Activity act; final TextView status; OnDumpFiles(Activity a, TextView s) { act = a; status = s; }
         @Override public void onClick(View v) {

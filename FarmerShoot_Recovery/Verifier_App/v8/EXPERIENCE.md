@@ -121,6 +121,32 @@ selftest/        — selftest.cpp (3/3) + RESULT.txt
 EXPERIENCE.md    — этот журнал
 ```
 
+## Исследование инструментов (searchcode + github) — найденный no-root метод
+Проверены: Il2CppDumper/Inspector/Cpp2IL (нужна метадата), UnityResolve.hpp и
+frida-il2cpp-bridge (нужны экспорты il2cpp_*), Il2CppMemoryDumper/Zygisk (нужен
+root), frida-find-il2cpp-api (сигнатуры/строки).
+
+Ключевые факты:
+- frida-il2cpp-bridge умеет игры с ВЫРЕЗАННЫМИ/обфусцированными экспортами через
+  `Il2Cpp.$config.exports` (ручные оффсеты или `Memory.scanSync`-сигнатуры) и
+  `$config.moduleName = "libunity.so"`.
+- il2cpp-API находят БЕЗ экспортов по **строкам-ошибкам + xref** (техника
+  find_il2cpp_api2): строки не вырезаются (нужны в рантайме), ссылка на них ведёт
+  к GOT-слоту с адресом функции. Якоря: `"InternalArray__"`,
+  `"Script error (%s): %s.\n"`, `"...ScriptableObject.CreateInstance..."`,
+  `"Unsupported enum type '%s'..."`, `"Failed to call function %s of class %s\n"`.
+- Проблема: эти оффсеты специфичны для КОНКРЕТНОЙ сборки libunity → нужен сам
+  бинарник. На диске он «скрыт», но мы in-process → снимаем **из памяти**
+  (FINAL13: `nativeDumpUnityMem` → libunity_mem.so).
+
+План no-root (текущий):
+1. FINAL13 снимает libunity_mem.so из памяти → пользователь присылает.
+2. Здесь: найти il2cpp-API оффсеты по string-xref (или SoFixer+Il2CppDumper, если
+   метадату удастся восстановить) → получить оффсет поля ammo.
+3. Вшить оффсеты в модуль (резолв классов/полей по имени) → патч ammo.
+Оговорки: online-шутер может считать патроны на сервере (клиентом не обойти);
+метадата/строки могут быть доп. зашифрованы.
+
 ## Честная граница
 Это инструмент для СВОЕЙ игры офлайн/dev. Репак LSPatch меняет подпись →
 онлайн-анти-чит/Play Integrity могут не пустить.
