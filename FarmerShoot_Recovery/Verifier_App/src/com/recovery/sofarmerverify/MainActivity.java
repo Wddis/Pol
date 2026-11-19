@@ -21,7 +21,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         "UnityInitialize", "RadarView", "RadarMapView", "RadarConfiguration",
         "Balders.farmershoot.Game", "AimDispersionCurve"
     };
-    static final int FIND=0, CHECK=1, EXTRACT=2, INVENTORY=3, COMPARE=4, EXTRACT_APK=5;
+    static final int FIND=0, CHECK=1, EXTRACT=2, INVENTORY=3, COMPARE=4, EXTRACT_APK=5, SHOW_BOOT=6;
 
     // Якоря, найденные в НАШЕМ test.so: имя + оффсет в test.so (значение = имя)
     static final String[] CN = {"UnityInitialize","WeaponShop","RankedDefuse","GameStateMachine",
@@ -31,7 +31,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
     EditText pkgInput;
     TextView status, details;
     LinearLayout root;
-    Button findBtn, checkBtn, cmpBtn, extractBtn, invBtn, apkBtn;
+    Button findBtn, checkBtn, cmpBtn, extractBtn, invBtn, apkBtn, bootBtn;
     int pad;
 
     @Override protected void onCreate(Bundle b){
@@ -56,6 +56,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         findBtn    = btn("Авто-поиск игры (по Build-ID)");
         checkBtn   = btn("Проверить оффсеты (найти в оригинале)");
         cmpBtn     = btn("СВЕРИТЬ ВСЁ: test.so ↔ оригинал");
+        bootBtn    = btn("Показать boot.config (скопировать в чат)");
         invBtn     = btn("Инвентаризация файлов игры");
         extractBtn = btn("Извлечь libil2cpp.so + global-metadata.dat");
         apkBtn     = btn("Извлечь APK игры (base + split с .so)");
@@ -89,6 +90,9 @@ public class MainActivity extends Activity implements View.OnClickListener {
         } else if(v==cmpBtn){
             if(p.isEmpty()){ set(null,"Сначала укажите/найдите пакет игры."); return; }
             start(COMPARE,p);
+        } else if(v==bootBtn){
+            if(p.isEmpty()){ set(null,"Сначала укажите/найдите пакет игры."); return; }
+            start(SHOW_BOOT,p);
         } else if(v==invBtn){
             if(p.isEmpty()){ set(null,"Сначала укажите/найдите пакет игры."); return; }
             start(INVENTORY,p);
@@ -111,6 +115,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
             else if(mode==CHECK) a.runCheck(pkg);
             else if(mode==COMPARE) a.compareAll(pkg);
             else if(mode==INVENTORY) a.inventory(pkg);
+            else if(mode==SHOW_BOOT) a.showBoot(pkg);
             else if(mode==EXTRACT_APK) a.extractApk(pkg);
             else a.extract(pkg);
         }catch(Throwable t){ a.set(Boolean.FALSE,"Сбой: "+t); } }
@@ -271,6 +276,22 @@ public class MainActivity extends Activity implements View.OnClickListener {
     }
     static String printable(byte[] b){ StringBuilder s=new StringBuilder();
         for(int i=0;i<b.length;i++){ int c=b[i]&0xff; s.append((c>=32&&c<127)?(char)c:'.'); } return s.toString(); }
+
+    // ================= показать boot.config =================
+    void showBoot(String pkg){
+        ApplicationInfo ai=info(pkg); if(ai==null){ set(Boolean.FALSE,"Пакет не найден: "+pkg); return; }
+        Src s=locateAsset(ai,"boot.config");
+        if(s==null){ set(Boolean.FALSE,"boot.config не найден в APK "+pkg); return; }
+        try{
+            int len=(int)Math.min(s.size>0?s.size:4096, 65536);
+            byte[] b=readAt(s,0,len);
+            String text = b==null? "(пусто)" : new String(b,"UTF-8");
+            try{ File out=new File(getExternalFilesDir(null),"boot.config");
+                FileOutputStream fo=new FileOutputStream(out); if(b!=null) fo.write(b); fo.close(); }catch(Throwable ig){}
+            set(null, "boot.config ("+s.size+" байт):\n--------------------\n"+text
+                +"\n--------------------\nВыдели текст выше и пришли в чат.\nКопия: "+new File(getExternalFilesDir(null),"boot.config"));
+        }catch(Throwable t){ set(Boolean.FALSE,"Ошибка чтения boot.config: "+t); }
+    }
 
     // ================= извлечение APK (мост к восстановлению) =================
     void extractApk(String pkg){
