@@ -8,3 +8,6 @@ native/build/
 node_modules/
 v8_dump.txt
 v8_field_candidates.txt
+lspatch_module/build/
+lspatch_module/libs/arm64-v8a/*.so
+*.ks
