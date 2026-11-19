@@ -1,0 +1,10 @@
+# сборочные артефакты и вендоренные зависимости (как в прежних версиях — не храним)
+native/third_party/
+native/build/
+*.so
+*.a
+*.apk
+*.compiled.js
+node_modules/
+v8_dump.txt
+v8_field_candidates.txt
