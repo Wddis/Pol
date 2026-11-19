@@ -57,6 +57,7 @@ static std::atomic<bool> g_patchArmed{false};
 
 // список классов/полей для экрана (строим один раз)
 static std::vector<std::string> g_browse;
+static std::atomic<bool> g_browseReady{false};
 
 static bool nameMatches(const char* n) {
     if (!n) return false;
@@ -113,6 +114,7 @@ static void setupTargets() {
             if (g_browse.size() >= 400) break;
         }
     }
+    g_browseReady = true;
     LOG("browse classes: %zu", g_browse.size());
 
     // патч: захват instance через .ctor и расчёт цели
@@ -250,4 +252,56 @@ Java_com_recovery_farmerv8_FarmerV8Module_nativeRestore(JNIEnv*, jclass) {
     void* inst = g_patchInstance.load();
     if (k && off >= 0 && inst && g_patchArmed.load()) { writeF(inst, off, 1, g_patchOrig); g_patchArmed = false; return JNI_TRUE; }
     return JNI_FALSE;
+}
+
+// Статус + первые N найденных классов/полей — для Java-оверлея (видно и на Vulkan).
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeInfo(JNIEnv* env, jclass) {
+    std::string s;
+    char h[128];
+    snprintf(h, sizeof h, "il2cpp: %s\noverlay(GL): %s\nклассов (ammo/jump/health): %d\n",
+             g_il2cppReady.load() ? "READY" : "waiting...",
+             g_renderInit.load() ? "ON" : "нет (Vulkan? данные ниже всё равно живые)",
+             (int)g_browse.size());
+    s = h;
+    if (g_browseReady.load()) {
+        s += "— живые классы/поля (имена для патча): —\n";
+        int n = 0;
+        for (auto& line : g_browse) { s += line; s += "\n"; if (++n >= 40) { s += "...(полный список в DUMP-файле)\n"; break; } }
+    } else {
+        s += "(ждём il2cpp, список появится через пару секунд)\n";
+    }
+    return env->NewStringUTF(s.c_str());
+}
+
+// Полный дамп ВСЕХ классов/полей в файл (чтобы точно получить реальные имена).
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeDumpTo(JNIEnv* env, jclass, jstring jpath) {
+    if (!g_il2cppReady.load()) return JNI_FALSE;
+    const char* path = env->GetStringUTFChars(jpath, nullptr);
+    FILE* f = fopen(path, "w");
+    env->ReleaseStringUTFChars(jpath, path);
+    if (!f) return JNI_FALSE;
+    size_t nAsm = 0;
+    Unity::il2cppAssembly** asms = IL2CPP::Domain::GetAssemblies(&nAsm);
+    fprintf(f, "# FarmerShoot v8 LIVE dump — assemblies: %zu\n\n", nAsm);
+    for (size_t i = 0; i < nAsm; ++i) {
+        Unity::il2cppAssembly* a = asms[i];
+        if (!a || !a->m_pImage) continue;
+        std::vector<Unity::il2cppClass*> classes;
+        IL2CPP::Class::FetchClasses(&classes, a->m_pImage->m_pNameNoExt, nullptr);
+        fprintf(f, "=== %s (classes: %zu) ===\n", a->m_pImage->m_pName ? a->m_pImage->m_pName : "?", classes.size());
+        for (auto* k : classes) {
+            if (!k) continue;
+            std::vector<Unity::il2cppFieldInfo*> fields;
+            IL2CPP::Class::FetchFields(k, &fields);
+            fprintf(f, "  %s.%s {", k->m_pNamespace ? k->m_pNamespace : "", k->m_pName ? k->m_pName : "?");
+            for (auto* fl : fields) if (fl) fprintf(f, " %s@0x%x", fl->m_pName, (unsigned)fl->m_iOffset);
+            fprintf(f, " }\n");
+        }
+        fprintf(f, "\n");
+    }
+    fclose(f);
+    LOG("dump written: ok");
+    return JNI_TRUE;
 }
