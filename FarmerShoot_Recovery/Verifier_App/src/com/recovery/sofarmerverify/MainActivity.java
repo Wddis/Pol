@@ -21,12 +21,17 @@ public class MainActivity extends Activity implements View.OnClickListener {
         "UnityInitialize", "RadarView", "RadarMapView", "RadarConfiguration",
         "Balders.farmershoot.Game", "AimDispersionCurve"
     };
-    static final int FIND=0, CHECK=1, EXTRACT=2, INVENTORY=3;
+    static final int FIND=0, CHECK=1, EXTRACT=2, INVENTORY=3, COMPARE=4;
+
+    // Якоря, найденные в НАШЕМ test.so: имя + оффсет в test.so (значение = имя)
+    static final String[] CN = {"UnityInitialize","WeaponShop","RankedDefuse","GameStateMachine",
+        "RadarView","RadarMapView","RadarConfiguration","HitParameters","ShooterId","AimDispersionCurve"};
+    static final long[]   CO = {8855,27422552,27568339,27568478,46402888,46404335,47093719,47266316,47266330,47274569};
 
     EditText pkgInput;
     TextView status, details;
     LinearLayout root;
-    Button findBtn, checkBtn, extractBtn, invBtn;
+    Button findBtn, checkBtn, cmpBtn, extractBtn, invBtn;
     int pad;
 
     @Override protected void onCreate(Bundle b){
@@ -50,6 +55,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
 
         findBtn    = btn("Авто-поиск игры (по Build-ID)");
         checkBtn   = btn("Проверить оффсеты (найти в оригинале)");
+        cmpBtn     = btn("СВЕРИТЬ ВСЁ: test.so ↔ оригинал");
         invBtn     = btn("Инвентаризация файлов игры");
         extractBtn = btn("Извлечь libil2cpp.so + global-metadata.dat");
 
@@ -79,6 +85,9 @@ public class MainActivity extends Activity implements View.OnClickListener {
         else if(v==checkBtn){
             if(p.isEmpty()){ set(null,"Введите имя пакета или нажмите авто-поиск."); return; }
             start(CHECK,p);
+        } else if(v==cmpBtn){
+            if(p.isEmpty()){ set(null,"Сначала укажите/найдите пакет игры."); return; }
+            start(COMPARE,p);
         } else if(v==invBtn){
             if(p.isEmpty()){ set(null,"Сначала укажите/найдите пакет игры."); return; }
             start(INVENTORY,p);
@@ -96,6 +105,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         public void run(){ try{
             if(mode==FIND) a.autoFind();
             else if(mode==CHECK) a.runCheck(pkg);
+            else if(mode==COMPARE) a.compareAll(pkg);
             else if(mode==INVENTORY) a.inventory(pkg);
             else a.extract(pkg);
         }catch(Throwable t){ a.set(Boolean.FALSE,"Сбой: "+t); } }
@@ -183,6 +193,79 @@ public class MainActivity extends Activity implements View.OnClickListener {
             }
         }catch(Throwable t){ set(Boolean.FALSE,"Ошибка: "+t); }
     }
+
+    // ================= ПОЛНАЯ СВЕРКА: test.so ↔ оригинал =================
+    void compareAll(String pkg){
+        ApplicationInfo ai=info(pkg); if(ai==null){ set(Boolean.FALSE,"Пакет не найден: "+pkg); return; }
+        Src so=locateSo(ai,"libunity.so");
+        if(so==null){ set(Boolean.FALSE,"libunity.so(arm64) не найден в "+pkg); return; }
+        StringBuilder sb=new StringBuilder();
+        try{
+            sb.append("Пакет: ").append(pkg).append("\nИсточник: ").append(so.desc).append("\n\n");
+            // Build-ID
+            byte[] bid=readAt(so,OFF_BUILDID,8); String gBid=bid==null?"(нет)":hex(bid);
+            boolean okBid=gBid.equalsIgnoreCase(EXPECT_BUILDID);
+            sb.append("Build-ID @0x280\n  test.so  : ").append(EXPECT_BUILDID)
+              .append("\n  оригинал : ").append(gBid).append(okBid?"  ✓":"  ✗").append("\n\n");
+
+            long[] real=scan(so, CN);               // реальные оффсеты значений в оригинале (1 проход)
+            int[] lens=new int[CN.length];
+            for(int i=0;i<CN.length;i++) lens[i]=CN[i].length();
+            byte[][] atTest=captureAll(so, CO, lens);// что лежит в оригинале ПО оффсету из test.so
+
+            int confirmed=0, noShift=0;
+            sb.append("ЯКОРЬ  |  test.so(оффсет=значение)  |  оригинал@тот_же_оффсет  |  реальный оффсет (Δ)\n");
+            sb.append("----------------------------------------------------------------\n");
+            for(int i=0;i<CN.length;i++){
+                String val=CN[i]; long t=CO[i]; long r=real[i];
+                String at=atTest[i]==null?"(нет)":printable(atTest[i]);
+                boolean here=val.equals(at); if(here) noShift++;
+                sb.append(val).append("\n");
+                sb.append("  test.so  @").append(t).append(" = \"").append(val).append("\"\n");
+                sb.append("  оригинал @").append(t).append(" = \"").append(at).append("\"")
+                  .append(here?"  ✓ без сдвига":"  ✗ сдвиг").append("\n");
+                if(r>=0){ confirmed++; long d=r-t;
+                    sb.append("  найдено  @").append(r).append(" = \"").append(val).append("\"  (Δ=")
+                      .append(d>=0?"+":"").append(d).append(")\n"); }
+                else sb.append("  найдено  : значение не найдено в оригинале\n");
+                sb.append("\n");
+            }
+            sb.append("ИТОГ: значений подтверждено ").append(confirmed).append("/").append(CN.length)
+              .append(", совпали без сдвига ").append(noShift).append(", Build-ID ").append(okBid?"✓":"✗").append("\n");
+            if(okBid && confirmed>=CN.length-1){
+                sb.append("ВЫВОД: значения ПОДЛИННЫ и присутствуют в оригинале; в test.so они по СМЕЩЁННЫМ адресам.");
+                set(Boolean.TRUE, sb.toString());
+            } else {
+                sb.append("ВЫВОД: совпадений недостаточно — вероятно, другая игра/версия.");
+                set(Boolean.FALSE, sb.toString());
+            }
+            try{ File out=new File(getExternalFilesDir(null),"compare.txt");
+                FileOutputStream fo=new FileOutputStream(out); fo.write(sb.toString().getBytes("UTF-8")); fo.close();
+            }catch(Throwable ig){}
+        }catch(Throwable t){ set(Boolean.FALSE,"Ошибка сверки: "+t); }
+    }
+
+    // читает окна по заданным оффсетам за один последовательный проход
+    byte[][] captureAll(Src s, long[] offs, int[] lens) throws IOException {
+        int n=offs.length; int[] ord=new int[n];
+        for(int i=0;i<n;i++) ord[i]=i;
+        for(int a=0;a<n;a++) for(int b=a+1;b<n;b++)
+            if(offs[ord[b]]<offs[ord[a]]){ int tmp=ord[a]; ord[a]=ord[b]; ord[b]=tmp; }
+        byte[][] res=new byte[n][];
+        InputStream in=s.open();
+        try{ long pos=0;
+            for(int k=0;k<n;k++){ int i=ord[k]; long target=offs[i]; int len=lens[i];
+                if(target<pos){ res[i]=null; continue; }
+                long need=target-pos;
+                while(need>0){ long sk=in.skip(need); if(sk<=0){ if(in.read()<0) return res; need--; pos++; } else { need-=sk; pos+=sk; } }
+                byte[] b=new byte[len]; int g=0; while(g<len){ int rr=in.read(b,g,len-g); if(rr<0) break; g+=rr; } pos+=g;
+                res[i]= (g==len)? b : null;
+            }
+        } finally { in.close(); }
+        return res;
+    }
+    static String printable(byte[] b){ StringBuilder s=new StringBuilder();
+        for(int i=0;i<b.length;i++){ int c=b[i]&0xff; s.append((c>=32&&c<127)?(char)c:'.'); } return s.toString(); }
 
     // ================= инвентаризация всех файлов игры =================
     void inventory(String pkg){
