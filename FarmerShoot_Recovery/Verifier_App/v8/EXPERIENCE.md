@@ -75,6 +75,20 @@ LSPatch встраивает модуль-apk в игру
    (ammo) и `kPatchClass/kPatchField` (+`kPatchMul`=3 для прыжка).
 3. Пересобрать `.so` и модуль → патрон/прыжок работают на живой игре.
 
+## Находка на реальной игре (com.farmar.shoot2)
+Список загруженных `.so` НЕ содержит `libil2cpp.so`. Есть `libunity.so` (тот самый
+208 МБ из recovery), `libmain.so`, + плагины (fmod, phonon, vivox, sodium, enet,
+crashlytics). Вывод: **il2cpp статически вшит в `libunity.so`**, а экспорты
+`il2cpp_*` из `.dynsym` вырезаны (recovery это подтверждал).
+- Фикс FINAL6: пробуем резолв не только по `.dynsym` (`xdl_sym`), но и по
+  `.symtab`/`.gnu_debugdata` (`xdl_dsym`) по `libunity.so`/`libmain.so`.
+- Если и `.symtab` пуст → символов нет вовсе. Тогда путь один:
+  **оффлайн Il2CppDumper** по `libunity.so` + `global-metadata.dat` → получить
+  оффсеты классов/полей → читать/писать по `base(libunity.so)+offset` в рантайме
+  (экспорты для этого не нужны). Блокер: `global-metadata.dat` у этой игры в
+  читаемом виде не найден (вероятно шифрован/подгружается в память) — её надо
+  снять дампом памяти, тогда Il2CppDumper даст полную карту.
+
 ## Честная граница
 Это инструмент для СВОЕЙ игры офлайн/dev. Репак LSPatch меняет подпись →
 онлайн-анти-чит/Play Integrity могут не пустить.

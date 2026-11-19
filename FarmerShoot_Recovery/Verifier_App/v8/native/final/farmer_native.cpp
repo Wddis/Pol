@@ -75,9 +75,16 @@ static int modCb(struct dl_phdr_info* info, size_t, void*) {
     return 0;
 }
 
+// символ из .dynsym (xdl_sym) ИЛИ из .symtab/.gnu_debugdata (xdl_dsym)
+static void* sym2(void* h, const char* name) {
+    void* s = xdl_sym(h, name, nullptr);
+    if (!s) s = xdl_dsym(h, name, nullptr);
+    return s;
+}
+
 // Резолвим все нужные функции из конкретного хендла. true если ключевые найдены.
 static bool bindFrom(void* h) {
-    #define R(f) *(void**)(&f) = xdl_sym(h, #f, nullptr);
+    #define R(f) *(void**)(&f) = sym2(h, #f);
     R(il2cpp_domain_get); R(il2cpp_domain_get_assemblies); R(il2cpp_assembly_get_image);
     R(il2cpp_image_get_class_count); R(il2cpp_image_get_class); R(il2cpp_class_from_name);
     R(il2cpp_class_get_name); R(il2cpp_class_get_namespace); R(il2cpp_class_get_fields);
@@ -105,23 +112,22 @@ static bool resolveIl2cpp() {
     }
 
     const char* probe = "il2cpp_domain_get";
-    void* hit = nullptr; std::string hitName;
+    void* hit = nullptr; std::string hitName; const char* hitVia = "";
     int anyIl2 = 0;
     for (auto& name : cand) {
         void* h = xdl_open(name.c_str(), XDL_DEFAULT);
         if (!h) continue;
-        void* s = xdl_sym(h, probe, nullptr);
-        if (!s) s = xdl_sym(h, "il2cpp_init", nullptr);  // лib присутствует, но domain_get вырезан?
-        if (s) { anyIl2++;
-            void* dg = xdl_sym(h, probe, nullptr);
-            if (dg) { hit = h; hitName = name; break; }
-        }
+        void* dyn = xdl_sym(h, probe, nullptr);
+        void* dbg = dyn ? nullptr : xdl_dsym(h, probe, nullptr);
+        if (dyn || dbg) { anyIl2++; hit = h; hitName = name; hitVia = dyn ? "dynsym" : "symtab"; break; }
+        // либа есть, но имя вырезано? отметим присутствие il2cpp_init в любом виде
+        if (sym2(h, "il2cpp_init")) anyIl2++;
         xdl_close(h);
     }
 
     if (hit && bindFrom(hit)) {
         g_lib = baseName(hitName.c_str());
-        g_diag = "il2cpp в " + g_lib;
+        g_diag = "il2cpp в " + g_lib + " (" + hitVia + ")";
         return true;
     }
 
