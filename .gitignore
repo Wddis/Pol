@@ -5,3 +5,7 @@ __pycache__/
 # Vibe Hosting credentials
 .thevibehosting*
 data/
+FarmerShoot_Recovery/Original/*.so
+FarmerShoot_Recovery/Original/SHA256SUMS
+FarmerShoot_Recovery/Extracted/*
+!FarmerShoot_Recovery/Extracted/.gitkeep
