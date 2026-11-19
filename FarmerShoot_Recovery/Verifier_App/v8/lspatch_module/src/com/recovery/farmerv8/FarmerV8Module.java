@@ -67,6 +67,7 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
     static native int nativeScanRefine(String value, boolean isFloat);
     static native String nativeScanSave(String dir, boolean isFloat);
     static native int nativeScanPatch(String value, boolean isFloat);
+    static native int nativeScanFreeze(String value, boolean isFloat, boolean on);
 
     @Override public void initZygote(StartupParam sp) { try { sModulePath = sp.modulePath; } catch (Throwable ignore) {} }
 
@@ -417,7 +418,8 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
     // ===================== СКАНЕР адресов (UI) ==============================
     static final class ScanUI {
         final Activity act; final StringBuilder val = new StringBuilder(); boolean isFloat = false;
-        TextView disp, res;
+        boolean frozen = false;
+        TextView disp, res; Button freezeBtn;
         ScanUI(Activity a) { act = a; }
 
         void build(LinearLayout body) {
@@ -453,6 +455,10 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
                     new View.OnClickListener[]{ new DoScan(this, 0), new DoScan(this, 1) }));
             body.addView(makeRow(act, new String[]{"СОХРАНИТЬ txt", "ПАТЧ = значение"},
                     new View.OnClickListener[]{ new DoSave(this), new DoPatch(this) }));
+            // заморозка: непрерывно держит значение (если игра его перезаписывает)
+            LinearLayout fr = makeRow(act, new String[]{"❄ ЗАМОРОЗИТЬ значение"}, new View.OnClickListener[]{ new DoFreeze(this) });
+            freezeBtn = (Button) fr.getChildAt(0);
+            body.addView(fr);
 
             res = new TextView(act); res.setTextColor(Color.rgb(200, 224, 200)); res.setTextSize(11);
             res.setPadding(0, dp(act, 6), 0, 0);
@@ -509,10 +515,22 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
         final ScanUI s; DoPatch(ScanUI s) { this.s = s; }
         @Override public void onClick(View v) {
             if (!sNativeOk) { s.res.setText("native нет"); return; }
-            int n; try { n = nativeScanPatch(s.value(), s.isFloat); } catch (Throwable t) { s.res.setText("err: " + t); return; }
-            if (n < 0) s.res.setText("слишком много адресов (" + (-n) + ") — сначала УТОЧНИ до ≤50");
-            else s.res.setText("записано значение в " + n + " адрес(ов)");
-            Toast.makeText(s.act, n < 0 ? "сначала уточни" : ("патч в " + n), Toast.LENGTH_SHORT).show();
+            String val = s.value();
+            int n; try { n = nativeScanPatch(val, s.isFloat); } catch (Throwable t) { s.res.setText("err: " + t); return; }
+            if (n < 0) { s.res.setText("слишком много адресов (" + (-n) + ") — сначала УТОЧНИ до ≤50"); Toast.makeText(s.act, "сначала уточни", Toast.LENGTH_SHORT).show(); }
+            else { s.res.setText("записал " + val + " → " + n + " адрес(ов). Если откатилось — жми ЗАМОРОЗИТЬ."); Toast.makeText(s.act, "записал " + val + " в " + n, Toast.LENGTH_SHORT).show(); }
+        }
+    }
+    static final class DoFreeze implements View.OnClickListener {
+        final ScanUI s; DoFreeze(ScanUI s) { this.s = s; }
+        @Override public void onClick(View v) {
+            if (!sNativeOk) { s.res.setText("native нет"); return; }
+            s.frozen = !s.frozen;
+            String val = s.value();
+            int n; try { n = nativeScanFreeze(val, s.isFloat, s.frozen); } catch (Throwable t) { s.res.setText("err: " + t); return; }
+            if (s.freezeBtn != null) s.freezeBtn.setText(s.frozen ? "❄ ЗАМОРОЖЕНО (стоп)" : "❄ ЗАМОРОЗИТЬ значение");
+            s.res.setText(s.frozen ? ("держу " + val + " в " + n + " адрес(ах) непрерывно") : "заморозка выключена");
+            Toast.makeText(s.act, s.frozen ? ("заморозка " + val) : "стоп", Toast.LENGTH_SHORT).show();
         }
     }
 }

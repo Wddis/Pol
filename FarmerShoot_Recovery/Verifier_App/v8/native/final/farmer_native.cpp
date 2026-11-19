@@ -523,6 +523,41 @@ Java_com_recovery_farmerv8_FarmerV8Module_nativeScanPatch(JNIEnv* env, jclass, j
     return n;
 }
 
+// --- FREEZE: непрерывно пишем значение (если игра перезаписывает каждый кадр) ---
+static std::atomic<bool> g_freeze{false};
+static std::atomic<bool> g_freezeThread{false};
+static bool g_fFloat = false; static int g_fIv = 0; static float g_fFv = 0.f;
+static std::vector<uintptr_t> g_freezeAddrs;
+
+static void freezeLoop() {
+    for (;;) {
+        if (g_freeze.load() && !g_freezeAddrs.empty()) {
+            int fd = memRW();
+            if (fd >= 0) for (auto a : g_freezeAddrs) {
+                if (g_fFloat) pwrite(fd, &g_fFv, 4, (off_t)a);
+                else          pwrite(fd, &g_fIv, 4, (off_t)a);
+            }
+        }
+        usleep(120000); // 120 мс
+    }
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeScanFreeze(JNIEnv* env, jclass, jstring jval, jboolean isFloat, jboolean on) {
+    const char* v = env->GetStringUTFChars(jval, nullptr);
+    g_fIv = atoi(v); g_fFv = (float)atof(v); g_fFloat = isFloat;
+    env->ReleaseStringUTFChars(jval, v);
+    if (on) {
+        g_freezeAddrs = g_cand;                 // снимок текущих адресов
+        g_freeze = true;
+        if (!g_freezeThread.exchange(true)) std::thread(freezeLoop).detach();
+        return (jint)g_freezeAddrs.size();
+    } else {
+        g_freeze = false;
+        return 0;
+    }
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_recovery_farmerv8_FarmerV8Module_nativePatchJump(JNIEnv*, jclass, jfloat) {
     return (kPatchClass[0] && g_armed) ? JNI_TRUE : JNI_FALSE;
