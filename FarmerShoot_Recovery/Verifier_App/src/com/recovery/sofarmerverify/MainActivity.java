@@ -31,7 +31,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
     EditText pkgInput;
     TextView status, details;
     LinearLayout root;
-    Button findBtn, checkBtn, cmpBtn, extractBtn, invBtn, apkBtn, bootBtn;
+    Button findBtn, checkBtn, cmpBtn, extractBtn, invBtn, apkBtn, bootBtn, labBtn;
     int pad;
 
     @Override protected void onCreate(Bundle b){
@@ -47,6 +47,11 @@ public class MainActivity extends Activity implements View.OnClickListener {
         tv("Farmer SO Verifier v2", 22, true, 0);
         tv("Находит якоря в libunity.so УСТАНОВЛЕННОЙ игры и показывает их НАСТОЯЩИЕ оффсеты. "
           +"Build-ID эталон: "+EXPECT_BUILDID+". Без root.", 14, false, pad);
+
+        labBtn = new Button(this);
+        labBtn.setText("★ ПАТЧ-ЛАБА: оффсет+значение на глаз (без root)");
+        labBtn.setOnClickListener(this);
+        root.addView(labBtn);
 
         pkgInput = new EditText(this);
         pkgInput.setHint("имя пакета игры, напр. com.balders.farmershoot");
@@ -82,6 +87,7 @@ public class MainActivity extends Activity implements View.OnClickListener {
         root.addView(b); return b; }
 
     public void onClick(View v){
+        if(v==labBtn){ patchLab(); return; }
         String p=pkgInput.getText().toString().trim();
         if(v==findBtn){ start(FIND,p); }
         else if(v==checkBtn){
@@ -105,6 +111,33 @@ public class MainActivity extends Activity implements View.OnClickListener {
         }
     }
     void start(int mode,String pkg){ set(null,"Работаю… (до минуты)"); new Thread(new Task(this,mode,pkg)).start(); }
+
+    // ===== ПАТЧ-ЛАБА: наглядно патчим значение по оффсету в СВОЁМ процессе (без root) =====
+    void patchLab(){
+        if(!PatchLab.loaded){ set(Boolean.FALSE,"libprobe.so не загрузилась (нужен arm64-процесс)."); return; }
+        try{
+            PatchLab pl=new PatchLab();
+            long addr=pl.valueAddr();
+            int before=pl.probe();
+            int target=0xDEADBEEF;
+            pl.patch(addr, target);          // запись 4 байт по адресу = база либы + оффсет
+            int after=pl.probe();
+            boolean ok=(before==PatchLab.ORIGINAL) && (after==target);
+            StringBuilder sb=new StringBuilder();
+            sb.append("libprobe.so загружена в наш процесс.\n\n");
+            sb.append("g_val:\n");
+            sb.append("  оффсет в либе : 0x").append(Long.toHexString(PatchLab.VADDR_OFFSET)).append("\n");
+            sb.append("  адрес в RAM   : 0x").append(Long.toHexString(addr)).append("\n\n");
+            sb.append(String.format("ДО патча    : 0x%08X   (вернула probe())\n", before));
+            sb.append("→ пишем 4 байта по этому оффсету (своя память, без root)\n");
+            sb.append(String.format("ПОСЛЕ патча : 0x%08X   (вернула probe())\n\n", after));
+            sb.append(ok ? "✓ Значение по оффсету реально изменилось — исполняемый код теперь\n"
+                          +"  возвращает ДРУГОЕ. Твоя идея РАБОТАЕТ на практике, без root."
+                        : "✗ Неожиданно: before=0x"+Integer.toHexString(before)
+                          +" after=0x"+Integer.toHexString(after));
+            set(ok?Boolean.TRUE:Boolean.FALSE, sb.toString());
+        }catch(Throwable t){ set(Boolean.FALSE,"Ошибка патч-лабы: "+t); }
+    }
 
     // ---- ВСЕ вспомогательные классы static (нестатические внутренние ломают d8 8.2.2) ----
     static final class Task implements Runnable {
