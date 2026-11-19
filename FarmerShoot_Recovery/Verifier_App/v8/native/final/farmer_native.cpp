@@ -56,6 +56,9 @@ static void*  (*il2cpp_thread_attach)(void*) = nullptr;
 static std::atomic<bool> g_ready{false};
 static std::atomic<bool> g_renderInit{false};
 static std::vector<std::string> g_browse;
+static std::vector<std::string> g_mods;     // загруженные .so (диагностика)
+static std::string g_diag = "скан...";       // что нашли/не нашли
+static std::string g_lib;                    // имя либы с il2cpp
 static int g_w = 0, g_h = 0;
 
 static EGLBoolean (*o_eglSwapBuffers)(EGLDisplay, EGLSurface) = nullptr;
@@ -64,10 +67,17 @@ static std::atomic<void*> g_patchInst{nullptr};
 static std::atomic<void*> g_watchInst{nullptr};
 static bool g_armed = false; static float g_orig = 0.f, g_target = 0.f;
 
-static bool resolveIl2cpp() {
-    void* h = xdl_open("libil2cpp.so", XDL_DEFAULT);
-    if (!h) { LOG("xdl_open(libil2cpp.so) = null"); return false; }
-    #define R(f) *(void**)(&f) = xdl_sym(h, #f, nullptr); if (!f) { LOG("sym miss: %s", #f); }
+static const char* baseName(const char* p) {
+    const char* s = strrchr(p, '/'); return s ? s + 1 : p;
+}
+static int modCb(struct dl_phdr_info* info, size_t, void*) {
+    if (info->dlpi_name && info->dlpi_name[0]) g_mods.emplace_back(info->dlpi_name);
+    return 0;
+}
+
+// Резолвим все нужные функции из конкретного хендла. true если ключевые найдены.
+static bool bindFrom(void* h) {
+    #define R(f) *(void**)(&f) = xdl_sym(h, #f, nullptr);
     R(il2cpp_domain_get); R(il2cpp_domain_get_assemblies); R(il2cpp_assembly_get_image);
     R(il2cpp_image_get_class_count); R(il2cpp_image_get_class); R(il2cpp_class_from_name);
     R(il2cpp_class_get_name); R(il2cpp_class_get_namespace); R(il2cpp_class_get_fields);
@@ -75,10 +85,59 @@ static bool resolveIl2cpp() {
     R(il2cpp_field_static_get_value); R(il2cpp_field_static_set_value);
     R(il2cpp_class_get_method_from_name); R(il2cpp_thread_attach);
     #undef R
-    xdl_close(h);
-    bool ok = il2cpp_domain_get && il2cpp_domain_get_assemblies && il2cpp_image_get_class_count
-           && il2cpp_image_get_class && il2cpp_class_get_fields && il2cpp_field_get_offset;
-    return ok;
+    return il2cpp_domain_get && il2cpp_domain_get_assemblies && il2cpp_image_get_class_count
+        && il2cpp_image_get_class && il2cpp_class_get_fields && il2cpp_field_get_offset;
+}
+
+// Перебираем ВСЕ загруженные .so и ищем ту, что экспортирует il2cpp_*.
+static bool resolveIl2cpp() {
+    g_mods.clear();
+    xdl_iterate_phdr(modCb, nullptr, XDL_FULL_PATHNAME);
+
+    // кандидаты: явные имена + всё, где basename похож на движок/игру
+    std::vector<std::string> cand = { "libil2cpp.so", "libunity.so", "libmain.so",
+                                      "libGameAssembly.so", "libmono.so", "libgame.so" };
+    for (auto& m : g_mods) {
+        const char* b = baseName(m.c_str());
+        if (strstr(b, "il2cpp") || strstr(b, "unity") || strstr(b, "assembly") ||
+            strstr(b, "game") || strstr(b, "Game") || strstr(b, "main") || strstr(b, "il2"))
+            cand.push_back(m);
+    }
+
+    const char* probe = "il2cpp_domain_get";
+    void* hit = nullptr; std::string hitName;
+    int anyIl2 = 0;
+    for (auto& name : cand) {
+        void* h = xdl_open(name.c_str(), XDL_DEFAULT);
+        if (!h) continue;
+        void* s = xdl_sym(h, probe, nullptr);
+        if (!s) s = xdl_sym(h, "il2cpp_init", nullptr);  // лib присутствует, но domain_get вырезан?
+        if (s) { anyIl2++;
+            void* dg = xdl_sym(h, probe, nullptr);
+            if (dg) { hit = h; hitName = name; break; }
+        }
+        xdl_close(h);
+    }
+
+    if (hit && bindFrom(hit)) {
+        g_lib = baseName(hitName.c_str());
+        g_diag = "il2cpp в " + g_lib;
+        return true;
+    }
+
+    // не нашли — соберём диагностику для экрана
+    std::string eng;
+    int n = 0;
+    for (auto& m : g_mods) {
+        const char* b = baseName(m.c_str());
+        if (strstr(b, "il2cpp") || strstr(b, "unity") || strstr(b, "assembly") || strstr(b, "mono") || strstr(b, "game")) {
+            if (n++ < 10) { eng += b; eng += " "; }
+        }
+    }
+    g_diag = "il2cpp_* НЕ найден. либ: " + std::to_string(g_mods.size()) +
+             (anyIl2 ? " (либ есть, экспорты урезаны)" : "") +
+             "\nдвиж/игра: " + (eng.empty() ? "нет похожих имён" : eng);
+    return false;
 }
 
 static bool nameMatch(const char* n) {
@@ -164,6 +223,7 @@ static void drawOverlay() {
     ImGui::SetNextWindowBgAlpha(0.85f);
     ImGui::Begin("FarmerShoot v8 (native)");
     ImGui::TextColored(ImVec4(0.6f,1,0.5f,1), "il2cpp: %s", g_ready.load() ? "READY" : "...");
+    ImGui::TextWrapped("%s", g_diag.c_str());
     if (kWatchClass[0]) {
         void* inst = g_watchInst.load();
         void* k = findClass(kWatchClass);
@@ -200,7 +260,7 @@ static void worker() {
     A64HookFunction((void*)&eglSwapBuffers, (void*)h_egl, (void**)&o_eglSwapBuffers);
     LOG("egl hooked");
     // ждём libil2cpp и резолвим через xDL
-    for (int i = 0; i < 120 && !g_ready.load(); ++i) {
+    for (int i = 0; i < 600 && !g_ready.load(); ++i) {
         if (resolveIl2cpp()) {
             if (il2cpp_thread_attach && il2cpp_domain_get) il2cpp_thread_attach(il2cpp_domain_get());
             buildBrowse();
@@ -219,9 +279,10 @@ __attribute__((constructor)) static void entry() { std::thread(worker).detach();
 // ---- JNI ----
 extern "C" JNIEXPORT jstring JNICALL
 Java_com_recovery_farmerv8_FarmerV8Module_nativeInfo(JNIEnv* env, jclass) {
-    std::string s; char h[160];
-    snprintf(h, sizeof h, "il2cpp: %s\noverlay(GL): %s\nклассов (ammo/jump/health): %d\n",
-             g_ready.load() ? "READY" : "waiting(xdl)...",
+    std::string s; char h[320];
+    snprintf(h, sizeof h, "il2cpp: %s\n%s\noverlay(GL): %s\nклассов: %d\n",
+             g_ready.load() ? ("READY в " + g_lib).c_str() : "waiting(xdl)...",
+             g_diag.c_str(),
              g_renderInit.load() ? "ON" : "нет",
              (int)g_browse.size());
     s = h;
@@ -233,10 +294,15 @@ Java_com_recovery_farmerv8_FarmerV8Module_nativeInfo(JNIEnv* env, jclass) {
 }
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_recovery_farmerv8_FarmerV8Module_nativeDumpTo(JNIEnv* env, jclass, jstring jp) {
-    if (!g_ready.load()) return JNI_FALSE;
     const char* path = env->GetStringUTFChars(jp, nullptr);
     FILE* f = fopen(path, "w"); env->ReleaseStringUTFChars(jp, path);
     if (!f) return JNI_FALSE;
+    if (g_mods.empty()) xdl_iterate_phdr(modCb, nullptr, XDL_FULL_PATHNAME);
+    // всегда пишем список загруженных .so и диагностику
+    fprintf(f, "# FarmerShoot v8 diag\n# %s\n# modules: %zu\n", g_diag.c_str(), g_mods.size());
+    for (auto& m : g_mods) fprintf(f, "LIB %s\n", m.c_str());
+    fprintf(f, "\n");
+    if (!g_ready.load()) { fclose(f); LOG("dump: modules only"); return JNI_TRUE; }
     size_t n = 0; void** asms = il2cpp_domain_get_assemblies(il2cpp_domain_get(), &n);
     fprintf(f, "# FarmerShoot v8 LIVE dump — assemblies: %zu\n\n", n);
     for (size_t i = 0; i < n; ++i) {
