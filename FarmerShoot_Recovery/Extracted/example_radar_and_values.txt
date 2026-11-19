@@ -1,0 +1,60 @@
+# Примеры уцелевших оффсетов и значений
+# (файл: оригинал libunity_farmershoot_balders_v3_PROTOBUF_TEST.so)
+
+## ТИП 1 — инженерные оффсеты→значения ELF (реальные, пригодны для загрузки)
+  Export  UnityInitialize    vaddr=0x05acb728  (значение: адрес функции движка)
+  Export  UnitySendMessage   vaddr=0x05a1f684
+  Dynamic RELA               offset=0x3660     значение RELASZ=27367848 байт
+  Dynamic SYMTAB             offset=0x288      STRTAB offset=0x2240  STRSZ=0x141b
+  Reloc  #0                  целевой offset=0xc262950 -> addend(значение)=0x5e9285c
+  Reloc  #570163 (середина)  offset=0xc7f06a0  -> addend=0x7671790
+  .dynamic восстановлен      offset=0xc8a05b4  vaddr=0xc8a85b4
+
+## ТИП 2 — уцелевшие ИМЕНА игры: offset(в файле) : значение(строка)
+### Подсистема Radar (кластер типов, ~46.37-46.40 МБ):
+  offset 28510939   : RadarRender.dll
+  offset 44302441   : Radar
+  offset 46371190   : RadarClickable
+  offset 46371532   : radarButton
+  offset 46371627   : radar
+  offset 46372312   : RadarButton
+  offset 46402888   : RadarView
+  offset 46403193   : radarPlaceholder
+  offset 46403383   : RadarDrawer
+  offset 46403430   : Radar.Zones
+  offset 46403770   : RadarIndicatorView
+  offset 46403824   : Radar.RadarIndicator
+  offset 46404015   : Radar.CurrentLocation
+  offset 46404335   : RadarMapView
+  offset 46843134   : radarMap
+  offset 46843227   : radarMapsSwitcher
+  offset 46849578   : RadarControlFullMapView
+  offset 46849607   : RadarControlView
+  offset 46849660   : RadarFullMiniMapView
+  offset 46849681   : RadarMapControlView
+  offset 46849798   : RadarMapsSwitcherView
+  offset 46849833   : radarMiniMap
+  offset 46849847   : radarFullMiniMap
+  offset 46849873   : RadarMiniMapView
+  offset 46858841   : RadarCastPointOffsets
+  offset 47093719   : RadarConfiguration
+  offset 47521219   : RadarControlSettings
+  offset 47521240   : RadarMapControlSettings
+  offset 47524491   : RadarMin
+  offset 47524500   : RadarMax
+  offset 47771603   : RadarSprite
+  offset 47937113   : RadarRender
+  offset 47937212   : RadarRenderConfiguration
+  offset 47937566   : RadarRenderContext
+  offset 47937672   : RadarRenderData
+  offset 48412033   : RadarControlsCustomization
+  offset 48412537   : RadarButtonControlsCustomization
+  offset 48650033   : RadarRadarButtonRadarComponentSnaps
+  offset 48650071   : RadarPositionMarkerRadarPresenter.U
+  offset 48650121   : RadarPresenter.UpdateViewRadeon
+  offset 48998023   : RadarConfigurationdefuseRenderConfi
+  offset 49059940   : radarMapProviderradiusradius
+
+### Модули-сборки Radar:
+  offset 28510939   : RadarRender.dll
+  offset 47937157   : RadarRender.dll
