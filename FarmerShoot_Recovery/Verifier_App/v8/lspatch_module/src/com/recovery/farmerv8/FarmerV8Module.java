@@ -1,6 +1,7 @@
 package com.recovery.farmerv8;
 
 import android.app.Activity;
+import android.content.Context;
 import android.graphics.Color;
 import android.os.Handler;
 import android.os.Looper;
@@ -28,71 +29,88 @@ import de.robv.android.xposed.XposedHelpers;
 import de.robv.android.xposed.callbacks.XC_LoadPackage;
 
 /**
- * FarmerShoot v8 — LSPatch / Xposed модуль.
+ * FarmerShoot v8 — LSPatch / Xposed модуль (финал).
  *
- * Что делает внутри процесса игры:
- *   1) Показывает тост «v8 загружен» — доказательство, что инъекция прошла.
- *   2) Добавляет маленькую панель-окно прямо в активити игры (без root и без
- *      overlay-разрешения — мы уже внутри процесса).
- *   3) Пытается подгрузить нативный движок libfarmerv8.so (IL2CPP-резолвер +
- *      ImGui-оверлей + патчи ammo/jump). Если он вшит в модуль — грузит и
- *      запускает; если нет — панель всё равно видна (proof инъекции).
+ * Надёжная инициализация внутри процесса игры:
+ *   - фоновый поток ждёт Application-контекст (ActivityThread.currentApplication);
+ *   - находит apk самого модуля (в кэше игры) и грузит нативный движок
+ *     libfarmerv8.so — он рисует ImGui-оверлей ПРЯМО на GL-поверхности игры
+ *     (видно поверх Unity всегда) + читает/патчит ammo/jump через IL2CPP;
+ *   - показывает тост-подтверждение и (best-effort) Java-панель в активити.
  *
- * ЧЕСТНО: Xposed хукает Java/ART, а логика Unity — нативный IL2CPP. Поэтому
- * чтение патронов и патч прыжка делает НАТИВНАЯ часть, а не Java-хуки.
+ * ЧЕСТНО: Xposed хукает Java, а логика Unity — нативный IL2CPP. Поэтому
+ * значения читает/пишет нативная часть; видимое меню — это ImGui-оверлей.
  */
 public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygoteInit {
 
     static final String TAG = "FarmerV8";
-    static String sModulePath = null;   // путь к apk самого модуля (из initZygote)
-    static boolean sNativeTried = false;
-    static boolean sNativeOk = false;
-    static boolean sPanelShown = false;
+    static String sModulePath = null;
+    static volatile boolean sNativeOk = false;
+    static volatile boolean sBootStarted = false;
+    static volatile boolean sPanelShown = false;
 
-    // --- native bridge (реализуется в libfarmerv8.so, опционально) ----------
-    static native String nativeCheck();         // снимок watch-полей -> строка
-    static native boolean nativePatchJump(float mul);  // прыжок ×mul
-    static native boolean nativeRestore();      // откат патчей
+    static native String nativeCheck();
+    static native boolean nativePatchJump(float mul);
+    static native boolean nativeRestore();
 
     @Override
     public void initZygote(StartupParam sp) {
-        // LSPatch кладёт сюда путь к apk модуля — отсюда достанем .so.
         sModulePath = sp.modulePath;
         XposedBridge.log(TAG + ": initZygote modulePath=" + sModulePath);
     }
 
     @Override
     public void handleLoadPackage(XC_LoadPackage.LoadPackageParam lpparam) {
-        // LSPatch встраивает модуль в одну игру, так что работаем для неё.
         XposedBridge.log(TAG + ": loaded in " + lpparam.packageName);
-        tryLoadNative();
-        // Поймать активити игры, чтобы показать панель на UI-потоке.
+        if (!sBootStarted) { sBootStarted = true; new Thread(new Bootstrap()).start(); }
+        // доп. путь: панель в активити (best-effort, может быть под GL-поверхностью)
         try {
             XposedHelpers.findAndHookMethod("android.app.Activity",
                     lpparam.classLoader, "onResume", new OnResumeHook());
-        } catch (Throwable t) {
-            XposedBridge.log(TAG + ": hook onResume failed: " + t);
+        } catch (Throwable t) { XposedBridge.log(TAG + ": hook onResume failed: " + t); }
+    }
+
+    // --- Фоновая инициализация: ждём контекст, грузим нативный движок ---------
+    static final class Bootstrap implements Runnable {
+        @Override public void run() {
+            Context ctx = null;
+            for (int i = 0; i < 120 && ctx == null; i++) {   // до ~60с
+                ctx = currentContext();
+                if (ctx == null) sleep(500);
+            }
+            if (ctx == null) { XposedBridge.log(TAG + ": no context"); return; }
+            loadNative(ctx);
+            final Context fctx = ctx;
+            new Handler(Looper.getMainLooper()).post(new ShowToast(fctx));
         }
     }
 
-    // Достаём libfarmerv8.so из apk модуля и грузим (если вшит).
-    static void tryLoadNative() {
-        if (sNativeTried) return;
-        sNativeTried = true;
-        if (sModulePath == null) { XposedBridge.log(TAG + ": no modulePath, native skipped"); return; }
+    static Context currentContext() {
+        try {
+            Class<?> at = Class.forName("android.app.ActivityThread");
+            Object app = at.getMethod("currentApplication").invoke(null);
+            return (Context) app;
+        } catch (Throwable t) { return null; }
+    }
+
+    static void sleep(long ms) { try { Thread.sleep(ms); } catch (Throwable ignore) {} }
+
+    // Находим apk модуля и грузим libfarmerv8.so.
+    static synchronized void loadNative(Context ctx) {
+        if (sNativeOk) return;
+        String apk = findModuleApk(ctx);
+        if (apk == null) { XposedBridge.log(TAG + ": module apk not found (native skipped)"); return; }
         ZipFile zf = null;
         try {
-            zf = new ZipFile(sModulePath);
+            zf = new ZipFile(apk);
             ZipEntry e = zf.getEntry("lib/arm64-v8a/libfarmerv8.so");
             if (e == null) e = zf.getEntry("assets/libfarmerv8.so");
-            if (e == null) { XposedBridge.log(TAG + ": native lib not bundled"); return; }
-            File out = new File(System.getProperty("java.io.tmpdir", "/data/local/tmp"),
-                    "libfarmerv8_" + e.getCrc() + ".so");
-            if (!out.exists() || out.length() == 0) {
+            if (e == null) { XposedBridge.log(TAG + ": native lib not bundled in " + apk); return; }
+            File out = new File(ctx.getCacheDir(), "libfarmerv8_" + e.getCrc() + ".so");
+            if (!out.exists() || out.length() != e.getSize()) {
                 InputStream in = zf.getInputStream(e);
                 OutputStream os = new FileOutputStream(out);
-                byte[] buf = new byte[65536];
-                int n;
+                byte[] buf = new byte[65536]; int n;
                 while ((n = in.read(buf)) > 0) os.write(buf, 0, n);
                 os.close(); in.close();
             }
@@ -106,122 +124,86 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
         }
     }
 
-    // Хук Activity.onResume — один раз добавляет панель в окно игры.
-    static final class OnResumeHook extends XC_MethodHook {
-        @Override
-        protected void afterHookedMethod(MethodHookParam param) {
-            if (sPanelShown) return;
-            Object obj = param.thisObject;
-            if (!(obj instanceof Activity)) return;
-            Activity act = (Activity) obj;
-            act.runOnUiThread(new ShowPanel(act));
+    // Ищем apk модуля: сперва modulePath, затем кэш игры .../cache/lspatch/**.apk.
+    static String findModuleApk(Context ctx) {
+        if (sModulePath != null && new File(sModulePath).exists() && zipHasLib(sModulePath)) return sModulePath;
+        try {
+            File root = new File(ctx.getCacheDir(), "lspatch");
+            String hit = scanForApk(root);
+            if (hit != null) return hit;
+        } catch (Throwable ignore) {}
+        return sModulePath;  // последний шанс
+    }
+    static String scanForApk(File dir) {
+        if (dir == null || !dir.isDirectory()) return null;
+        File[] fs = dir.listFiles();
+        if (fs == null) return null;
+        for (File f : fs) {
+            if (f.isDirectory()) { String r = scanForApk(f); if (r != null) return r; }
+            else if (f.getName().endsWith(".apk") && zipHasLib(f.getAbsolutePath())) return f.getAbsolutePath();
+        }
+        return null;
+    }
+    static boolean zipHasLib(String apk) {
+        ZipFile zf = null;
+        try {
+            zf = new ZipFile(apk);
+            return zf.getEntry("lib/arm64-v8a/libfarmerv8.so") != null
+                || zf.getEntry("assets/libfarmerv8.so") != null;
+        } catch (Throwable t) { return false; }
+        finally { if (zf != null) try { zf.close(); } catch (Throwable ignore) {} }
+    }
+
+    static final class ShowToast implements Runnable {
+        final Context ctx; ShowToast(Context c) { ctx = c; }
+        @Override public void run() {
+            try {
+                Toast.makeText(ctx, "FarmerShoot v8 ✓ " + (sNativeOk ? "движок загружен (ImGui-оверлей)"
+                        : "модуль загружен (native нет)"), Toast.LENGTH_LONG).show();
+            } catch (Throwable ignore) {}
         }
     }
 
-    // Строит и показывает панель поверх контента активити (в её же окне).
-    static final class ShowPanel implements Runnable {
-        final Activity act;
-        ShowPanel(Activity a) { act = a; }
-        @Override
-        public void run() {
+    // --- Java-панель в активити (доп. путь) ----------------------------------
+    static final class OnResumeHook extends XC_MethodHook {
+        @Override protected void afterHookedMethod(MethodHookParam param) {
             if (sPanelShown) return;
-            sPanelShown = true;
+            Object o = param.thisObject;
+            if (!(o instanceof Activity)) return;
+            ((Activity) o).runOnUiThread(new ShowPanel((Activity) o));
+        }
+    }
+    static final class ShowPanel implements Runnable {
+        final Activity act; ShowPanel(Activity a) { act = a; }
+        @Override public void run() {
+            if (sPanelShown) return; sPanelShown = true;
             try {
-                Toast.makeText(act,
-                        "FarmerShoot v8 ✓ модуль загружен" + (sNativeOk ? " (native)" : " (java)"),
-                        Toast.LENGTH_LONG).show();
-
-                LinearLayout panel = new LinearLayout(act);
-                panel.setOrientation(LinearLayout.VERTICAL);
-                panel.setBackgroundColor(Color.argb(210, 20, 24, 20));
-                panel.setPadding(24, 24, 24, 24);
-
-                TextView title = new TextView(act);
-                title.setText("FarmerShoot v8" + (sNativeOk ? " · native" : " · java-only"));
-                title.setTextColor(Color.rgb(170, 255, 140));
-                panel.addView(title);
-
-                TextView status = new TextView(act);
-                status.setTextColor(Color.WHITE);
-                status.setText(sNativeOk ? "движок загружен — см. оверлей/лог"
-                                         : "инъекция OK. Нативный движок не вшит —\nammo/jump недоступны (нужна .so).");
-                panel.addView(status);
-
-                Button bCheck = new Button(act);
-                bCheck.setText("ПРОВЕРИТЬ");
-                bCheck.setOnClickListener(new OnCheck(act, status));
-                panel.addView(bCheck);
-
-                Button bJump = new Button(act);
-                bJump.setText("Прыжок ×3");
-                bJump.setOnClickListener(new OnJump(act, 3.0f));
-                panel.addView(bJump);
-
-                Button bRestore = new Button(act);
-                bRestore.setText("Откат");
-                bRestore.setOnClickListener(new OnRestore(act));
-                panel.addView(bRestore);
-
+                LinearLayout p = new LinearLayout(act);
+                p.setOrientation(LinearLayout.VERTICAL);
+                p.setBackgroundColor(Color.argb(200, 18, 22, 18));
+                p.setPadding(20, 20, 20, 20);
+                TextView t = new TextView(act);
+                t.setText("v8 " + (sNativeOk ? "native ✓" : "java"));
+                t.setTextColor(Color.rgb(170, 255, 140));
+                p.addView(t);
+                Button b = new Button(act);
+                b.setText("v8 status");
+                b.setOnClickListener(new OnStatus(act));
+                p.addView(b);
                 FrameLayout.LayoutParams lp = new FrameLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-                lp.gravity = Gravity.TOP | Gravity.START;
-                lp.leftMargin = 24; lp.topMargin = 120;
-                panel.setOnTouchListener(new DragMove(lp, panel));
-                act.addContentView(panel, lp);
-            } catch (Throwable t) {
-                XposedBridge.log(TAG + ": panel failed: " + t);
-            }
+                lp.gravity = Gravity.TOP | Gravity.END; lp.topMargin = 40; lp.rightMargin = 24;
+                act.addContentView(p, lp);
+            } catch (Throwable t) { XposedBridge.log(TAG + ": panel failed: " + t); }
         }
     }
-
-    static final class OnCheck implements View.OnClickListener {
-        final Activity act; final TextView out;
-        OnCheck(Activity a, TextView o) { act = a; out = o; }
+    static final class OnStatus implements View.OnClickListener {
+        final Activity act; OnStatus(Activity a) { act = a; }
         @Override public void onClick(View v) {
-            String r;
-            try { r = sNativeOk ? nativeCheck() : "нативный движок не вшит"; }
-            catch (Throwable t) { r = "native check err: " + t; }
-            out.setText(r);
-            Toast.makeText(act, "CHECK: " + r, Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    static final class OnJump implements View.OnClickListener {
-        final Activity act; final float mul;
-        OnJump(Activity a, float m) { act = a; mul = m; }
-        @Override public void onClick(View v) {
-            boolean ok = false;
-            try { if (sNativeOk) ok = nativePatchJump(mul); } catch (Throwable ignore) {}
-            Toast.makeText(act, ok ? ("прыжок ×" + mul + " применён")
-                                   : "нужен нативный движок (.so не вшит)", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    static final class OnRestore implements View.OnClickListener {
-        final Activity act;
-        OnRestore(Activity a) { act = a; }
-        @Override public void onClick(View v) {
-            boolean ok = false;
-            try { if (sNativeOk) ok = nativeRestore(); } catch (Throwable ignore) {}
-            Toast.makeText(act, ok ? "откат выполнен" : "нечего откатывать", Toast.LENGTH_SHORT).show();
-        }
-    }
-
-    // Перетаскивание панели пальцем.
-    static final class DragMove implements View.OnTouchListener {
-        final FrameLayout.LayoutParams lp; final View target;
-        float dx, dy;
-        DragMove(FrameLayout.LayoutParams p, View t) { lp = p; target = t; }
-        @Override public boolean onTouch(View v, android.view.MotionEvent e) {
-            switch (e.getActionMasked()) {
-                case android.view.MotionEvent.ACTION_DOWN:
-                    dx = e.getRawX() - lp.leftMargin; dy = e.getRawY() - lp.topMargin; return true;
-                case android.view.MotionEvent.ACTION_MOVE:
-                    lp.leftMargin = (int) (e.getRawX() - dx);
-                    lp.topMargin = (int) (e.getRawY() - dy);
-                    target.setLayoutParams(lp); return true;
-            }
-            return false;
+            String s;
+            try { s = sNativeOk ? nativeCheck() : "native не загружен"; }
+            catch (Throwable t) { s = "native err: " + t; }
+            Toast.makeText(act, s, Toast.LENGTH_SHORT).show();
         }
     }
 }
