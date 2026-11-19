@@ -5,6 +5,8 @@ import android.app.Application;
 import android.content.Context;
 import android.graphics.Color;
 import android.graphics.PixelFormat;
+import android.graphics.drawable.GradientDrawable;
+import android.view.MotionEvent;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
@@ -215,94 +217,144 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
         catch (Throwable t) { return false; } finally { if (zf != null) try { zf.close(); } catch (Throwable ignore) {} }
     }
 
-    // ---- окно ----
+    // ---- окно (современное: круглая перетаскиваемая иконка + скруглённая карточка) ----
+    static int dp(Context c, int v) { return (int)(v * c.getResources().getDisplayMetrics().density + 0.5f); }
+
+    static final class Win { WindowManager wm; WindowManager.LayoutParams lp; View root; }
+
     static final class ShowOverlay implements Runnable {
         final Activity act; ShowOverlay(Activity a) { act = a; }
         @Override public void run() {
             if (sShown) return;
             try {
-                LinearLayout panel = new LinearLayout(act);
-                panel.setOrientation(LinearLayout.VERTICAL);
-                panel.setBackgroundColor(Color.argb(230, 14, 18, 14));
-                panel.setPadding(22, 22, 22, 22);
+                int sw = act.getResources().getDisplayMetrics().widthPixels;
+                int sh = act.getResources().getDisplayMetrics().heightPixels;
 
-                // шапка всегда видна; по тапу сворачивает/разворачивает тело
-                TextView title = new TextView(act);
-                title.setText("FarmerShoot v8 ✓  (тап — свернуть)");
-                title.setTextColor(Color.rgb(170, 255, 140)); title.setTextSize(15);
-                title.setPadding(0, 0, 0, 8);
-                panel.addView(title);
+                LinearLayout root = new LinearLayout(act);
+                root.setOrientation(LinearLayout.VERTICAL);
 
-                LinearLayout body = new LinearLayout(act);
-                body.setOrientation(LinearLayout.VERTICAL);
-                panel.addView(body);
+                // круглая иконка: перетаскивание (удержание+движение) + тап = меню
+                TextView bubble = new TextView(act);
+                bubble.setText("v8"); bubble.setTextColor(Color.WHITE); bubble.setTextSize(17);
+                bubble.setGravity(Gravity.CENTER);
+                GradientDrawable bg = new GradientDrawable();
+                bg.setShape(GradientDrawable.OVAL);
+                bg.setColor(Color.argb(240, 46, 150, 80));
+                bg.setStroke(dp(act, 2), Color.argb(255, 190, 255, 190));
+                bubble.setBackground(bg);
+                LinearLayout.LayoutParams blp = new LinearLayout.LayoutParams(dp(act, 54), dp(act, 54));
+                bubble.setLayoutParams(blp);
+                root.addView(bubble);
+
+                // карточка-меню
+                LinearLayout card = new LinearLayout(act);
+                card.setOrientation(LinearLayout.VERTICAL);
+                card.setPadding(dp(act, 14), dp(act, 12), dp(act, 14), dp(act, 12));
+                GradientDrawable cbg = new GradientDrawable();
+                cbg.setColor(Color.argb(240, 16, 19, 24));
+                cbg.setCornerRadius(dp(act, 18));
+                cbg.setStroke(dp(act, 1), Color.argb(255, 70, 90, 70));
+                card.setBackground(cbg);
 
                 TextView status = new TextView(act);
-                status.setTextColor(Color.WHITE); status.setTextSize(11);
+                status.setTextColor(Color.rgb(170, 255, 140)); status.setTextSize(12);
+                status.setPadding(0, 0, 0, dp(act, 6));
                 status.setText(sNativeOk ? "native OK" : "native нет");
-                body.addView(status);
+                card.addView(status);
 
-                LinearLayout row = new LinearLayout(act);
-                Button bDump = new Button(act); bDump.setText("DUMP имена"); bDump.setOnClickListener(new OnDump(act));
-                Button bJump = new Button(act); bJump.setText("Прыжок ×3"); bJump.setOnClickListener(new OnJump(act));
-                Button bRest = new Button(act); bRest.setText("Откат"); bRest.setOnClickListener(new OnRestore(act));
-                row.addView(bDump); row.addView(bJump); row.addView(bRest);
-                body.addView(row);
+                card.addView(makeRow(act, new String[]{"DUMP имена", "ДАМП файлы"},
+                        new View.OnClickListener[]{ new OnDump(act), new OnDumpFiles(act, status) }));
 
-                // снять libunity.so + расшифрованную global-metadata.dat (для Il2CppDumper)
-                Button bFiles = new Button(act); bFiles.setText("СНЯТЬ ДАМП (файлы)"); bFiles.setOnClickListener(new OnDumpFiles(act, status));
-                body.addView(bFiles);
-
-                // СКАНЕР адресов (GameGuardian-метод: поиск -> уточнение)
                 ScanUI scan = new ScanUI(act);
-                scan.build(body);
+                scan.build(card);
 
                 TextView list = new TextView(act);
-                list.setTextColor(Color.rgb(200, 220, 200)); list.setTextSize(9); list.setText("...");
-                ScrollView sv = new ScrollView(act); sv.addView(list);
-                body.addView(sv, new LinearLayout.LayoutParams(900, 620));
+                list.setTextColor(Color.rgb(150, 170, 150)); list.setTextSize(9); list.setText("");
+                card.addView(list);
 
-                // свернуть/развернуть (НЕ закрывает окно — шапка остаётся)
-                title.setOnClickListener(new OnToggle(body, title));
+                // карточка в скролл с ограниченной высотой — всё помещается, листается
+                ScrollView sv = new ScrollView(act);
+                sv.addView(card);
+                int cardW = Math.min(dp(act, 340), (int)(sw * 0.94f));
+                LinearLayout.LayoutParams svlp = new LinearLayout.LayoutParams(cardW, (int)(sh * 0.60f));
+                svlp.topMargin = dp(act, 6);
+                sv.setLayoutParams(svlp);
+                sv.setVisibility(View.GONE);            // старт: только иконка
+                root.addView(sv);
 
-                boolean added = addViaWM(act, panel);
-                if (!added) {
-                    act.addContentView(panel, new ViewGroup.LayoutParams(
-                            ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-                }
+                Win win = new Win();
+                boolean added = addRoot(act, root, win);
+                if (!added) act.addContentView(root, new ViewGroup.LayoutParams(
+                        ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+                bubble.setOnTouchListener(new DragToggle(win, sv));
+
                 sShown = true; sStage = "окно показано";
-                Toast.makeText(act, "FarmerShoot v8 ✓ окно показано", Toast.LENGTH_LONG).show();
+                Toast.makeText(act, "v8 ✓ тащи иконку · тап — меню", Toast.LENGTH_LONG).show();
                 new Handler(Looper.getMainLooper()).post(new Refresh(status, list));
             } catch (Throwable t) { try { XposedBridge.log(TAG + ": overlay failed " + t); } catch (Throwable ignore) {} }
         }
     }
 
-    // пробуем несколько типов окна
-    static boolean addViaWM(Activity act, View panel) {
+    // горизонтальный ряд одинаковых кнопок
+    static LinearLayout makeRow(Activity act, String[] labels, View.OnClickListener[] ls) {
+        LinearLayout row = new LinearLayout(act);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        for (int i = 0; i < labels.length; i++) {
+            Button b = new Button(act); b.setText(labels[i]); b.setOnClickListener(ls[i]);
+            LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f);
+            p.setMargins(dp(act, 2), dp(act, 2), dp(act, 2), dp(act, 2));
+            b.setLayoutParams(p);
+            row.addView(b);
+        }
+        return row;
+    }
+
+    // перетаскивание окна за иконку + тап = показать/скрыть меню
+    static final class DragToggle implements View.OnTouchListener {
+        final Win win; final View menu;
+        int sx, sy; float tx, ty; boolean moved;
+        DragToggle(Win w, View m) { win = w; menu = m; }
+        @Override public boolean onTouch(View v, MotionEvent e) {
+            switch (e.getActionMasked()) {
+                case MotionEvent.ACTION_DOWN:
+                    sx = win.lp.x; sy = win.lp.y; tx = e.getRawX(); ty = e.getRawY(); moved = false; return true;
+                case MotionEvent.ACTION_MOVE:
+                    int dx = (int)(e.getRawX() - tx), dy = (int)(e.getRawY() - ty);
+                    if (Math.abs(dx) + Math.abs(dy) > 16) moved = true;
+                    win.lp.x = sx + dx; win.lp.y = sy + dy;
+                    try { win.wm.updateViewLayout(win.root, win.lp); } catch (Throwable ignore) {}
+                    return true;
+                case MotionEvent.ACTION_UP:
+                    if (!moved) menu.setVisibility(menu.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
+                    return true;
+            }
+            return false;
+        }
+    }
+
+    // добавить корневой view как окно (несколько типов) и запомнить wm/lp в Win
+    static boolean addRoot(Activity act, View root, Win win) {
         WindowManager wm;
         try { wm = (WindowManager) act.getSystemService(Context.WINDOW_SERVICE); } catch (Throwable t) { return false; }
         int[] types;
         boolean canOverlay = Build.VERSION.SDK_INT >= 23 && canDraw(act);
-        if (canOverlay) {
-            types = new int[]{ Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
-                                                           : WindowManager.LayoutParams.TYPE_PHONE,
-                               WindowManager.LayoutParams.TYPE_APPLICATION };
-        } else {
-            types = new int[]{ WindowManager.LayoutParams.TYPE_APPLICATION,
-                               WindowManager.LayoutParams.TYPE_APPLICATION_PANEL };
-        }
+        if (canOverlay) types = new int[]{ Build.VERSION.SDK_INT >= 26 ? WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY
+                                                                       : WindowManager.LayoutParams.TYPE_PHONE,
+                                           WindowManager.LayoutParams.TYPE_APPLICATION };
+        else types = new int[]{ WindowManager.LayoutParams.TYPE_APPLICATION, WindowManager.LayoutParams.TYPE_APPLICATION_PANEL };
         for (int type : types) {
             try {
                 WindowManager.LayoutParams lp = new WindowManager.LayoutParams();
                 lp.width = ViewGroup.LayoutParams.WRAP_CONTENT; lp.height = ViewGroup.LayoutParams.WRAP_CONTENT;
                 lp.format = PixelFormat.TRANSLUCENT;
                 lp.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE | WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL;
-                lp.gravity = Gravity.TOP | Gravity.START; lp.x = 24; lp.y = 110;
+                lp.gravity = Gravity.TOP | Gravity.START; lp.x = dp(act, 12); lp.y = dp(act, 90);
                 lp.type = type;
                 if (type != WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY && type != WindowManager.LayoutParams.TYPE_PHONE) {
                     try { lp.token = act.getWindow().getDecorView().getWindowToken(); } catch (Throwable ignore) {}
                 }
-                wm.addView(panel, lp);
+                wm.addView(root, lp);
+                win.wm = wm; win.lp = lp; win.root = root;
                 return true;
             } catch (Throwable ignore) {}
         }
@@ -362,16 +414,6 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
             Toast.makeText(act, ok ? "откат" : "—", Toast.LENGTH_SHORT).show();
         }
     }
-    // сворачивание тела окна (шапка остаётся, окно не исчезает насовсем)
-    static final class OnToggle implements View.OnClickListener {
-        final View body; final TextView title; OnToggle(View b, TextView t) { body = b; title = t; }
-        @Override public void onClick(View v) {
-            boolean show = body.getVisibility() != View.VISIBLE;
-            body.setVisibility(show ? View.VISIBLE : View.GONE);
-            title.setText(show ? "FarmerShoot v8 ✓  (тап — свернуть)" : "FarmerShoot v8 ✓  (тап — развернуть)");
-        }
-    }
-
     // ===================== СКАНЕР адресов (UI) ==============================
     static final class ScanUI {
         final Activity act; final StringBuilder val = new StringBuilder(); boolean isFloat = false;
@@ -379,41 +421,56 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
         ScanUI(Activity a) { act = a; }
 
         void build(LinearLayout body) {
-            TextView t = new TextView(act); t.setText("СКАНЕР адресов (патроны/прыжок):");
-            t.setTextColor(Color.rgb(255, 205, 100)); body.addView(t);
-            disp = new TextView(act); disp.setTextColor(Color.WHITE); disp.setTextSize(14); body.addView(disp);
+            TextView t = new TextView(act);
+            t.setText("СКАНЕР адресов (патроны / прыжок)");
+            t.setTextColor(Color.rgb(255, 205, 100)); t.setTextSize(13);
+            t.setPadding(0, dp(act, 8), 0, dp(act, 4));
+            body.addView(t);
+
+            // поле значения (скруглённое)
+            disp = new TextView(act);
+            disp.setTextColor(Color.WHITE); disp.setTextSize(18); disp.setGravity(Gravity.CENTER);
+            disp.setPadding(dp(act, 10), dp(act, 8), dp(act, 10), dp(act, 8));
+            GradientDrawable dbg = new GradientDrawable();
+            dbg.setColor(Color.argb(255, 28, 32, 38)); dbg.setCornerRadius(dp(act, 10));
+            disp.setBackground(dbg);
+            LinearLayout.LayoutParams dlp = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+            dlp.setMargins(0, dp(act, 2), 0, dp(act, 6)); disp.setLayoutParams(dlp);
+            body.addView(disp);
+
+            // цифровая клавиатура
             String[][] rows = { {"7","8","9"}, {"4","5","6"}, {"1","2","3"}, {"0",".","-"} };
             for (String[] r : rows) {
-                LinearLayout row = new LinearLayout(act);
-                for (String k : r) { Button b = new Button(act); b.setText(k); b.setOnClickListener(new Key(this, k)); row.addView(b); }
-                body.addView(row);
+                View.OnClickListener[] ls = new View.OnClickListener[r.length];
+                for (int i = 0; i < r.length; i++) ls[i] = new Key(this, r[i]);
+                body.addView(makeRow(act, r, ls));
             }
-            LinearLayout r2 = new LinearLayout(act);
-            Button c = new Button(act); c.setText("C"); c.setOnClickListener(new Key(this, "C")); r2.addView(c);
-            Button tp = new Button(act); tp.setText("int/float"); tp.setOnClickListener(new TypeToggle(this)); r2.addView(tp);
-            body.addView(r2);
-            LinearLayout r3 = new LinearLayout(act);
-            Button s1 = new Button(act); s1.setText("ПОИСК"); s1.setOnClickListener(new DoScan(this, 0)); r3.addView(s1);
-            Button s2 = new Button(act); s2.setText("УТОЧНИТЬ"); s2.setOnClickListener(new DoScan(this, 1)); r3.addView(s2);
-            body.addView(r3);
-            LinearLayout r4 = new LinearLayout(act);
-            Button s3 = new Button(act); s3.setText("СОХР. txt"); s3.setOnClickListener(new DoSave(this)); r4.addView(s3);
-            Button s4 = new Button(act); s4.setText("ПАТЧ=знач"); s4.setOnClickListener(new DoPatch(this)); r4.addView(s4);
-            body.addView(r4);
+            body.addView(makeRow(act, new String[]{"⌫", "C", "int/float"},
+                    new View.OnClickListener[]{ new Key(this, "⌫"), new Key(this, "C"), new TypeToggle(this) }));
+
+            // ПОИСК крупной кнопкой + УТОЧНИТЬ
+            body.addView(makeRow(act, new String[]{"🔍 ПОИСК", "УТОЧНИТЬ"},
+                    new View.OnClickListener[]{ new DoScan(this, 0), new DoScan(this, 1) }));
+            body.addView(makeRow(act, new String[]{"СОХРАНИТЬ txt", "ПАТЧ = значение"},
+                    new View.OnClickListener[]{ new DoSave(this), new DoPatch(this) }));
+
             res = new TextView(act); res.setTextColor(Color.rgb(200, 224, 200)); res.setTextSize(11);
-            res.setText("1) впиши текущее число (патроны) → ПОИСК\n2) выстрели, впиши новое → УТОЧНИТЬ (пока не останется мало)\n3) СОХР.txt → пришли файл");
+            res.setPadding(0, dp(act, 6), 0, 0);
+            res.setText("1) впиши текущее число (патроны) → ПОИСК\n2) стрельни, впиши новое → УТОЧНИТЬ (повтори)\n3) останется 1 → СОХРАНИТЬ txt → пришли мне");
             body.addView(res);
             refresh();
         }
         String value() { return val.length() == 0 ? "0" : val.toString(); }
-        void refresh() { if (disp != null) disp.setText("значение: " + value() + (isFloat ? "  [float]" : "  [int]")); }
+        void refresh() { if (disp != null) disp.setText((val.length() == 0 ? "0" : val.toString()) + (isFloat ? "   float" : "   int")); }
     }
     static final class Key implements View.OnClickListener {
         final ScanUI s; final String k; Key(ScanUI s, String k) { this.s = s; this.k = k; }
         @Override public void onClick(View v) {
-            if ("C".equals(k)) s.val.setLength(0);
-            else s.val.append(k);
-            if (k.contains(".")) s.isFloat = true;
+            if ("C".equals(k)) { s.val.setLength(0); }
+            else if ("⌫".equals(k)) { if (s.val.length() > 0) s.val.deleteCharAt(s.val.length() - 1); }
+            else if (".".equals(k)) { if (s.val.indexOf(".") < 0) { if (s.val.length() == 0) s.val.append("0"); s.val.append("."); s.isFloat = true; } }
+            else if ("-".equals(k)) { if (s.val.length() == 0) s.val.append("-"); }        // минус только в начале
+            else { s.val.append(k); }                                                       // цифра
             s.refresh();
         }
     }

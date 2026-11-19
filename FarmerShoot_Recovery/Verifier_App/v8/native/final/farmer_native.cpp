@@ -269,9 +269,9 @@ static EGLBoolean h_egl(EGLDisplay d, EGLSurface s) {
 }
 
 static void worker() {
-    o_eglSwapBuffers = (EGLBoolean(*)(EGLDisplay,EGLSurface))eglSwapBuffers;
-    A64HookFunction((void*)&eglSwapBuffers, (void*)h_egl, (void**)&o_eglSwapBuffers);
-    LOG("egl hooked");
+    // ImGui-оверлей отключён: UI теперь в Java-окне (WindowManager). Хук egl не ставим,
+    // чтобы не было второго окна. il2cpp-резолв/скан/дамп работают независимо от рендера.
+    (void)&h_egl;
     // ждём libil2cpp и резолвим через xDL
     for (int i = 0; i < 600 && !g_ready.load(); ++i) {
         if (resolveIl2cpp()) {
