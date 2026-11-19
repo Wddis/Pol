@@ -68,6 +68,10 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
     static native String nativeScanSave(String dir, boolean isFloat);
     static native int nativeScanPatch(String value, boolean isFloat);
     static native int nativeScanFreeze(String value, boolean isFloat, boolean on);
+    // инспектор (поиск без ввода значения)
+    static native int nativeScanFirst();
+    static native int nativeScanDir(int mode, boolean isFloat);   // 0 умен.,1 увел.,2 измен.,3 не изм.
+    static native String nativeScanList();
 
     @Override public void initZygote(StartupParam sp) { try { sModulePath = sp.modulePath; } catch (Throwable ignore) {} }
 
@@ -419,7 +423,7 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
     static final class ScanUI {
         final Activity act; final StringBuilder val = new StringBuilder(); boolean isFloat = false;
         boolean frozen = false;
-        TextView disp, res; Button freezeBtn;
+        TextView disp, res, insp, inspLive; Button freezeBtn;
         ScanUI(Activity a) { act = a; }
 
         void build(LinearLayout body) {
@@ -464,6 +468,25 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
             res.setPadding(0, dp(act, 6), 0, 0);
             res.setText("1) впиши текущее число (патроны) → ПОИСК\n2) стрельни, впиши новое → УТОЧНИТЬ (повтори)\n3) останется 1 → СОХРАНИТЬ txt → пришли мне");
             body.addView(res);
+
+            // ========== ИНСПЕКТОР: поиск БЕЗ ввода значения (надёжнее) ==========
+            TextView it = new TextView(act);
+            it.setText("ИНСПЕКТОР (без ввода, по изменению)");
+            it.setTextColor(Color.rgb(120, 200, 255)); it.setTextSize(13);
+            it.setPadding(0, dp(act, 12), 0, dp(act, 4));
+            body.addView(it);
+            body.addView(makeRow(act, new String[]{"НАЧАТЬ СКАН", "ИЗМЕНИЛОСЬ", "НЕ ИЗМ."},
+                    new View.OnClickListener[]{ new DoInspect(this, -1), new DoInspect(this, 2), new DoInspect(this, 3) }));
+            body.addView(makeRow(act, new String[]{"УМЕНЬШИЛОСЬ ▼", "УВЕЛИЧИЛОСЬ ▲"},
+                    new View.OnClickListener[]{ new DoInspect(this, 0), new DoInspect(this, 1) }));
+            insp = new TextView(act); insp.setTextColor(Color.rgb(180, 210, 240)); insp.setTextSize(10);
+            insp.setText("НАЧАТЬ СКАН → стрельни → УМЕНЬШИЛОСЬ → перезаряди → УВЕЛИЧИЛОСЬ …\nпока адресов не станет мало.");
+            body.addView(insp);
+            inspLive = new TextView(act); inspLive.setTextColor(Color.rgb(150, 230, 170)); inspLive.setTextSize(10);
+            inspLive.setText("живые значения кандидатов:");
+            body.addView(inspLive);
+            new Handler(Looper.getMainLooper()).postDelayed(new InspRefresh(this), 1200);
+
             refresh();
         }
         String value() { return val.length() == 0 ? "0" : val.toString(); }
@@ -519,6 +542,28 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
             int n; try { n = nativeScanPatch(val, s.isFloat); } catch (Throwable t) { s.res.setText("err: " + t); return; }
             if (n < 0) { s.res.setText("слишком много адресов (" + (-n) + ") — сначала УТОЧНИ до ≤50"); Toast.makeText(s.act, "сначала уточни", Toast.LENGTH_SHORT).show(); }
             else { s.res.setText("записал " + val + " → " + n + " адрес(ов). Если откатилось — жми ЗАМОРОЗИТЬ."); Toast.makeText(s.act, "записал " + val + " в " + n, Toast.LENGTH_SHORT).show(); }
+        }
+    }
+    static final class DoInspect implements View.OnClickListener {
+        final ScanUI s; final int mode; DoInspect(ScanUI s, int m) { this.s = s; mode = m; }
+        @Override public void onClick(View v) {
+            if (!sNativeOk) { s.insp.setText("native нет"); return; }
+            s.insp.setText(mode == -1 ? "снимок памяти (пару секунд)..." : "фильтрую...");
+            int n;
+            try { n = (mode == -1) ? nativeScanFirst() : nativeScanDir(mode, s.isFloat); }
+            catch (Throwable t) { s.insp.setText("err: " + t); return; }
+            String hint = (mode == -1) ? " — снято. измени значение в игре и жми направление"
+                        : (n <= 1)  ? " — НАЙДЕНО! смотри живое значение, затем ПАТЧ/ЗАМОРОЗКА"
+                        : (n <= 30) ? " — почти, ещё раз измени и фильтруй"
+                                    : " — много, продолжай фильтровать по изменению";
+            s.insp.setText("кандидатов: " + n + hint);
+        }
+    }
+    static final class InspRefresh implements Runnable {
+        final ScanUI s; InspRefresh(ScanUI s) { this.s = s; }
+        @Override public void run() {
+            try { if (sNativeOk && s.inspLive != null) s.inspLive.setText(nativeScanList()); } catch (Throwable ignore) {}
+            new Handler(Looper.getMainLooper()).postDelayed(this, 700);
         }
     }
     static final class DoFreeze implements View.OnClickListener {

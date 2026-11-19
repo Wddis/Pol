@@ -434,6 +434,63 @@ static int g_memRD = -1, g_memRW = -1;
 static int memRD() { if (g_memRD < 0) g_memRD = open("/proc/self/mem", O_RDONLY); return g_memRD; }
 static int memRW() { if (g_memRW < 0) g_memRW = open("/proc/self/mem", O_RDWR);  return g_memRW; }
 
+// прямая запись в память своего процесса (минуя /proc/self/mem и SELinux),
+// с проверкой доступности страницы через pread (чтобы не упасть на освобождённом).
+static bool safeWrite32(uintptr_t a, uint32_t bits) {
+    int fd = memRD(); if (fd < 0) return false;
+    unsigned char t[4];
+    if (pread(fd, t, 4, (off_t)a) != 4) return false;   // страница читаема => маппед
+    *reinterpret_cast<volatile uint32_t*>(a) = bits;      // прямая запись (rw-регион)
+    return true;
+}
+
+// ---- ИНСПЕКТОР: поиск БЕЗ ввода значения (неизвестное + направление) ----
+static std::vector<std::pair<uintptr_t,uint32_t>> g_snap;  // addr, прошлое значение
+
+static long snapFirst() {
+    g_snap.clear();
+    int fd = memRD(); if (fd < 0) return -1;
+    FILE* m = fopen("/proc/self/maps", "r"); if (!m) return -1;
+    char line[1024]; std::vector<unsigned char> buf(1 << 20);
+    const size_t CAP = 3000000;
+    while (fgets(line, sizeof line, m) && g_snap.size() < CAP) {
+        uint64_t s = 0, e = 0; char perms[8] = {0};
+        if (sscanf(line, "%" SCNx64 "-%" SCNx64 " %7s", &s, &e, perms) != 3) continue;
+        if (perms[0] != 'r' || perms[1] != 'w') continue;
+        uint64_t sz = e - s; if (sz > (512ull << 20)) continue;
+        for (uint64_t off = 0; off < sz && g_snap.size() < CAP; off += buf.size()) {
+            size_t want = (size_t)std::min<uint64_t>(buf.size(), sz - off);
+            ssize_t rd = pread(fd, buf.data(), want, (off_t)(s + off));
+            if (rd <= 4) continue;
+            for (ssize_t i = 0; i + 4 <= rd && g_snap.size() < CAP; i += 4) {
+                uint32_t v; memcpy(&v, buf.data() + i, 4);
+                g_snap.push_back({ (uintptr_t)(s + off + i), v });
+            }
+        }
+    }
+    fclose(m);
+    g_cand.clear(); for (auto& p : g_snap) g_cand.push_back(p.first);
+    return (long)g_snap.size();
+}
+// mode: 0 уменьшилось, 1 увеличилось, 2 изменилось, 3 не изменилось
+static long snapFilter(int mode, bool isFloat) {
+    int fd = memRD(); if (fd < 0) return -1;
+    std::vector<std::pair<uintptr_t,uint32_t>> keep; unsigned char t[4];
+    for (auto& pr : g_snap) {
+        if (pread(fd, t, 4, (off_t)pr.first) != 4) continue;
+        uint32_t cur; memcpy(&cur, t, 4);
+        bool ok;
+        if (mode == 2) ok = (cur != pr.second);
+        else if (mode == 3) ok = (cur == pr.second);
+        else if (isFloat) { float a, b; memcpy(&a, &cur, 4); memcpy(&b, &pr.second, 4); ok = (mode == 0) ? (a < b) : (a > b); }
+        else { int a = (int)cur, b = (int)pr.second; ok = (mode == 0) ? (a < b) : (a > b); }
+        if (ok) keep.push_back({ pr.first, cur });
+    }
+    g_snap.swap(keep);
+    g_cand.clear(); for (auto& p : g_snap) g_cand.push_back(p.first);
+    return (long)g_snap.size();
+}
+
 static void scanNew(bool isFloat, int iv, float fv) {
     g_cand.clear();
     int fd = memRD(); if (fd < 0) return;
@@ -515,11 +572,9 @@ Java_com_recovery_farmerv8_FarmerV8Module_nativeScanPatch(JNIEnv* env, jclass, j
     int iv = atoi(v); float fv = (float)atof(v);
     env->ReleaseStringUTFChars(jval, v);
     if (g_cand.empty() || g_cand.size() > 50) return -(jint)g_cand.size(); // слишком много — сначала уточните
-    int fd = memRW(); if (fd < 0) return 0; int n = 0;
-    for (auto a : g_cand) {
-        if (isFloat) { if (pwrite(fd, &fv, 4, (off_t)a) == 4) n++; }
-        else         { if (pwrite(fd, &iv, 4, (off_t)a) == 4) n++; }
-    }
+    uint32_t bits; if (isFloat) memcpy(&bits, &fv, 4); else memcpy(&bits, &iv, 4);
+    int n = 0;
+    for (auto a : g_cand) if (safeWrite32(a, bits)) n++;
     return n;
 }
 
@@ -532,13 +587,10 @@ static std::vector<uintptr_t> g_freezeAddrs;
 static void freezeLoop() {
     for (;;) {
         if (g_freeze.load() && !g_freezeAddrs.empty()) {
-            int fd = memRW();
-            if (fd >= 0) for (auto a : g_freezeAddrs) {
-                if (g_fFloat) pwrite(fd, &g_fFv, 4, (off_t)a);
-                else          pwrite(fd, &g_fIv, 4, (off_t)a);
-            }
+            uint32_t bits; if (g_fFloat) memcpy(&bits, &g_fFv, 4); else memcpy(&bits, &g_fIv, 4);
+            for (auto a : g_freezeAddrs) safeWrite32(a, bits);
         }
-        usleep(120000); // 120 мс
+        usleep(100000); // 100 мс
     }
 }
 
@@ -556,6 +608,26 @@ Java_com_recovery_farmerv8_FarmerV8Module_nativeScanFreeze(JNIEnv* env, jclass, 
         g_freeze = false;
         return 0;
     }
+}
+
+// ---- ИНСПЕКТОР: JNI ----
+extern "C" JNIEXPORT jint JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeScanFirst(JNIEnv*, jclass) { return (jint)snapFirst(); }
+extern "C" JNIEXPORT jint JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeScanDir(JNIEnv*, jclass, jint mode, jboolean isFloat) { return (jint)snapFilter(mode, isFloat); }
+// Живой список кандидатов: адрес + текущее int/float (чтобы увидеть, какой тянет патроны).
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeScanList(JNIEnv* env, jclass) {
+    std::string s; char line[128]; int fd = memRD();
+    size_t lim = g_cand.size() < 12 ? g_cand.size() : 12;
+    snprintf(line, sizeof line, "адресов: %zu\n", g_cand.size()); s = line;
+    for (size_t i = 0; i < lim; ++i) {
+        uintptr_t a = g_cand[i]; unsigned char t[4] = {0}; int iv = 0; float fv = 0;
+        if (fd >= 0 && pread(fd, t, 4, (off_t)a) == 4) { memcpy(&iv, t, 4); memcpy(&fv, t, 4); }
+        snprintf(line, sizeof line, "0x%llx = %d | %.2f\n", (unsigned long long)a, iv, fv);
+        s += line;
+    }
+    return env->NewStringUTF(s.c_str());
 }
 
 extern "C" JNIEXPORT jboolean JNICALL
