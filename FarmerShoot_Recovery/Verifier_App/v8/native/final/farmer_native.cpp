@@ -10,10 +10,15 @@
 #include <jni.h>
 #include <cstdio>
 #include <cstring>
+#include <cstdint>
+#include <cinttypes>
 #include <string>
 #include <vector>
 #include <thread>
 #include <atomic>
+#include <algorithm>
+#include <fcntl.h>
+#include <unistd.h>
 
 #include "And64InlineHook.hpp"
 #include "xdl.h"
@@ -326,6 +331,105 @@ Java_com_recovery_farmerv8_FarmerV8Module_nativeDumpTo(JNIEnv* env, jclass, jstr
     }
     fclose(f); LOG("dump ok"); return JNI_TRUE;
 }
+// ======================= ДАМП для Il2CppDumper ==============================
+// Снимаем расшифрованные файлы прямо из процесса: libunity.so (с диска) и
+// global-metadata.dat (из памяти по магии 0xFAB11BAF). Работает при полностью
+// вырезанных символах — дальше их обрабатывает Il2CppDumper (сигнатурный скан).
+static bool copyFile(const char* src, const char* dst) {
+    FILE* in = fopen(src, "rb"); if (!in) return false;
+    FILE* out = fopen(dst, "wb"); if (!out) { fclose(in); return false; }
+    char buf[1 << 16]; size_t n; bool ok = true;
+    while ((n = fread(buf, 1, sizeof buf, in)) > 0) if (fwrite(buf, 1, n, out) != n) { ok = false; break; }
+    fclose(in); fclose(out); return ok;
+}
+
+// ищем libunity.so путь в maps и копируем файл
+static bool dumpLibunity(const char* dir, std::string& msg) {
+    FILE* m = fopen("/proc/self/maps", "r"); if (!m) { msg = "maps?"; return false; }
+    char line[1024], path[1024]; std::string found;
+    while (fgets(line, sizeof line, m)) {
+        if (strstr(line, "libunity.so")) {
+            char* p = strchr(line, '/');
+            if (p) { p[strcspn(p, "\n")] = 0; found = p; break; }
+        }
+    }
+    fclose(m);
+    if (found.empty()) { msg = "libunity.so не в maps"; return false; }
+    std::string dst = std::string(dir) + "/libunity.so";
+    bool ok = copyFile(found.c_str(), dst.c_str());
+    msg = ok ? ("libunity.so OK (" + found + ")") : "копия libunity.so не удалась";
+    return ok;
+}
+
+// скан памяти процесса на магию метадаты и выгрузка расшифрованной копии
+static bool dumpMetadata(const char* dir, std::string& msg) {
+    int fd = open("/proc/self/mem", O_RDONLY); if (fd < 0) { msg = "mem?"; return false; }
+    FILE* m = fopen("/proc/self/maps", "r"); if (!m) { close(fd); msg = "maps?"; return false; }
+    const uint32_t MAGIC = 0xFAB11BAFu;
+    char line[1024];
+    std::vector<char> buf;
+    uint64_t foundAddr = 0, foundEnd = 0;
+    while (fgets(line, sizeof line, m) && !foundAddr) {
+        uint64_t s = 0, e = 0; char perms[8] = {0};
+        if (sscanf(line, "%" SCNx64 "-%" SCNx64 " %7s", &s, &e, perms) != 3) continue;
+        if (perms[0] != 'r') continue;
+        uint64_t sz = e - s;
+        if (sz < 0x10000 || sz > (512ull << 20)) continue;      // 64КБ..512МБ
+        buf.resize(1 << 20);
+        for (uint64_t off = 0; off < sz && !foundAddr; off += (buf.size() - 8)) {
+            size_t want = (size_t)std::min<uint64_t>(buf.size(), sz - off);
+            ssize_t rd = pread(fd, buf.data(), want, (off_t)(s + off));
+            if (rd <= 4) continue;
+            for (ssize_t i = 0; i + 4 <= rd; ++i) {
+                if (*(uint32_t*)(buf.data() + i) == MAGIC) {
+                    uint64_t addr = s + off + i;
+                    // читаем заголовок (ints) и оцениваем размер метадаты
+                    uint32_t hdr[80];
+                    ssize_t h = pread(fd, hdr, sizeof hdr, (off_t)addr);
+                    if (h < 16) continue;
+                    if (hdr[1] == 0 || hdr[1] > 100) continue;   // version sanity (24/27/29/31...)
+                    uint64_t maxEnd = 0;
+                    for (int k = 2; k + 1 < (int)(h / 4); k += 2) {
+                        uint64_t o = hdr[k], ln = hdr[k + 1];
+                        if (o < (256ull << 20) && ln < (256ull << 20)) { uint64_t end = o + ln; if (end > maxEnd) maxEnd = end; }
+                    }
+                    if (maxEnd < 0x1000 || maxEnd > (256ull << 20)) maxEnd = (48ull << 20);
+                    foundAddr = addr; foundEnd = maxEnd; break;
+                }
+            }
+        }
+    }
+    fclose(m);
+    if (!foundAddr) { close(fd); msg = "global-metadata в памяти не найдена (магия 0xFAB11BAF)"; return false; }
+
+    std::string dst = std::string(dir) + "/global-metadata.dat";
+    FILE* out = fopen(dst.c_str(), "wb");
+    if (!out) { close(fd); msg = "не создать файл metadata"; return false; }
+    std::vector<char> cb(1 << 20); uint64_t written = 0;
+    while (written < foundEnd) {
+        size_t want = (size_t)std::min<uint64_t>(cb.size(), foundEnd - written);
+        ssize_t rd = pread(fd, cb.data(), want, (off_t)(foundAddr + written));
+        if (rd <= 0) break;
+        fwrite(cb.data(), 1, rd, out); written += rd;
+    }
+    fclose(out); close(fd);
+    char b[128]; snprintf(b, sizeof b, "global-metadata.dat OK (%llu МБ, @0x%llx)", (unsigned long long)(written >> 20), (unsigned long long)foundAddr);
+    msg = b;
+    return written > 0x1000;
+}
+
+extern "C" JNIEXPORT jstring JNICALL
+Java_com_recovery_farmerv8_FarmerV8Module_nativeDumpFiles(JNIEnv* env, jclass, jstring jdir) {
+    const char* dir = env->GetStringUTFChars(jdir, nullptr);
+    std::string m1, m2;
+    bool a = dumpLibunity(dir, m1);
+    bool b = dumpMetadata(dir, m2);
+    env->ReleaseStringUTFChars(jdir, dir);
+    std::string r = std::string(a ? "✓ " : "✗ ") + m1 + "\n" + (b ? "✓ " : "✗ ") + m2;
+    LOG("dumpFiles: %s", r.c_str());
+    return env->NewStringUTF(r.c_str());
+}
+
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_recovery_farmerv8_FarmerV8Module_nativePatchJump(JNIEnv*, jclass, jfloat) {
     return (kPatchClass[0] && g_armed) ? JNI_TRUE : JNI_FALSE;

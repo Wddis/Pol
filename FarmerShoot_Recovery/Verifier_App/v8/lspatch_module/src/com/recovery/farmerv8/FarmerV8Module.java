@@ -57,6 +57,7 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
 
     static native String nativeInfo();
     static native boolean nativeDumpTo(String path);
+    static native String nativeDumpFiles(String dir);   // libunity.so + global-metadata.dat
     static native boolean nativePatchJump(float mul);
     static native boolean nativeRestore();
 
@@ -243,6 +244,10 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
                 row.addView(bDump); row.addView(bJump); row.addView(bRest);
                 body.addView(row);
 
+                // снять libunity.so + расшифрованную global-metadata.dat (для Il2CppDumper)
+                Button bFiles = new Button(act); bFiles.setText("СНЯТЬ ДАМП (файлы)"); bFiles.setOnClickListener(new OnDumpFiles(act, status));
+                body.addView(bFiles);
+
                 TextView list = new TextView(act);
                 list.setTextColor(Color.rgb(200, 220, 200)); list.setTextSize(9); list.setText("...");
                 ScrollView sv = new ScrollView(act); sv.addView(list);
@@ -318,6 +323,22 @@ public class FarmerV8Module implements IXposedHookLoadPackage, IXposedHookZygote
             Toast.makeText(act, ok ? ("имена: " + path) : "native нет / не готово", Toast.LENGTH_LONG).show();
         }
     }
+    // снятие файлов для Il2CppDumper в files-папку
+    static final class OnDumpFiles implements View.OnClickListener {
+        final Activity act; final TextView status; OnDumpFiles(Activity a, TextView s) { act = a; status = s; }
+        @Override public void onClick(View v) {
+            String dir = sDumpDir;
+            if (dir == null) { try { File d = act.getExternalFilesDir(null); if (d != null) dir = d.getAbsolutePath(); } catch (Throwable ignore) {} }
+            if (dir == null) dir = act.getCacheDir().getAbsolutePath();
+            String r;
+            try { r = sNativeOk ? nativeDumpFiles(dir) : "native не загружен"; }
+            catch (Throwable t) { r = "err: " + t; }
+            final String res = r, fdir = dir;
+            status.setText("ДАМП:\n" + res + "\n→ " + fdir);
+            Toast.makeText(act, "ДАМП в " + fdir, Toast.LENGTH_LONG).show();
+        }
+    }
+
     static final class OnJump implements View.OnClickListener {
         final Activity act; OnJump(Activity a) { act = a; }
         @Override public void onClick(View v) {
