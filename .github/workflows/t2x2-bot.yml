@@ -1,7 +1,7 @@
 # Telegram bot «Двойная резка» on GitHub Actions runners (owner's choice, 16.11.2026: no free server without
 # registration was found). One run lives up to ~5.6 h; an hourly schedule keeps one run queued (concurrency group),
 # so the next run starts right after the current one ends. State, logs and transcripts are kept in the Actions cache.
-# Secrets (repo Settings → Secrets and variables → Actions): TG_BOT_TOKEN, TG_OWNER_ID, YT_COOKIES_B64.
+# Secrets (repo Settings → Secrets and variables → Actions): TG_BOT_TOKEN, TG_OWNER_ID, YT_COOKIES_B64, GEMINI_API_KEY (brain, 23.11).
 name: t2x2-bot
 on:
   workflow_dispatch:
@@ -40,6 +40,8 @@ jobs:
             ~/t2x2work/jobs/*/plan*.json
             ~/t2x2work/vod*/transcript_live.txt
             ~/t2x2work/vod*/events.json
+            ~/t2x2work/vod*/brain_map.json
+            ~/t2x2work/cookies.enc
           key: t2x2-state-${{ github.run_id }}
           restore-keys: t2x2-state-
       - name: Install
@@ -49,6 +51,7 @@ jobs:
           TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN || vars.TG_BOT_TOKEN }}
           TG_OWNER_ID: ${{ secrets.TG_OWNER_ID || vars.TG_OWNER_ID }}
           YT_COOKIES_B64: ${{ secrets.YT_COOKIES_B64 || vars.YT_COOKIES_B64 }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: bash tools/tgbot/gha_run.sh
       - name: Save bot state
         if: always()
@@ -61,4 +64,6 @@ jobs:
             ~/t2x2work/jobs/*/plan*.json
             ~/t2x2work/vod*/transcript_live.txt
             ~/t2x2work/vod*/events.json
+            ~/t2x2work/vod*/brain_map.json
+            ~/t2x2work/cookies.enc
           key: t2x2-state-${{ github.run_id }}
