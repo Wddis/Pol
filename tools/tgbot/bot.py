@@ -268,6 +268,7 @@ def cmd_transcribe_job():
         activity(f"расшифровка {fmt(dur)} (≈{int(dur / 27 / 60) + 1} мин)"); say(f"📝 Расшифровка {fmt(dur)} (≈{int(dur / 27 / 60) + 1} мин)…")
         ok, out = run(["python3", os.path.join(T, "stt.py"), "audio.wav", "transcript_live.txt"], cwd=d, timeout=8 * 3600)
         say("✅ Расшифровка готова." if ok else f"❌ <code>{esc(out)}</code>")
+        if ok and brain.available(): smart.cmd_smap(None, "")
 
 def cmd_map(m, a):
     tr = os.path.join(vdir(), "transcript_live.txt")
@@ -432,6 +433,7 @@ def cmd_chapter(m, a):
     else: ch[i]["title"] = mm[2].strip()
     jd["chapters"] = ch; jsave(j, jd); cmd_chapters(m, "")
 def describe(j, jd):
+    if jd.get("smart"): return smart.describe(j, jd)
     vod = jd["vod"]; date = time.strftime("%d.%m.%y")
     tc = timecodes(j).split("\n(видео")[0]
     title = jd.get("title", "")
@@ -466,6 +468,7 @@ def publish(meta_path, label):
     ok, out = run(["node", os.path.join(T, "yt", "studio_upload.js"), "cdp:9222", meta_path], cwd=REPO, timeout=3600, tail=30)
     link = re.findall(r"VIDEO_LINK (\S+)", out)
     if link: return link[-1], ""
+    if "accounts.google.com" in out or "NO_STUDIO_TAB" in out or "Verify it" in out: return None, "LOGIN"
     if "UPLOAD_LIMIT" in out: return None, "LIMIT"
     return None, out[-600:]
 def publish_do(m, a):
@@ -474,14 +477,19 @@ def publish_do(m, a):
     if not jd.get("title"): return say("Сначала /title")
     if not jd.get("cover") and a.strip() != "без обложки": return say("Нет обложки: пришли фото (или /publish без обложки)")
     d = jdir(j)
-    meta = {"video": os.path.join(d, "final.mp4"), "thumb": jd.get("cover", ""), "title": jd["title"], "description": describe(j, jd),
+    meta = {"video": jd.get("final") or os.path.join(d, "final.mp4"), "thumb": jd.get("cover", ""), "title": jd["title"], "description": describe(j, jd),
             "tags": ["t2x2", "т2х2", "лучшее с т2х2", "лучшее с t2x2", "реакция", "юмор", "нарезка", "антон т2х2"] + jd.get("tags", []),
             "visibility": "PUBLIC", "channel": CHANNEL, "shot_dir": os.path.join(d, "up")}
     json.dump(meta, open(os.path.join(d, "studio.json"), "w"), ensure_ascii=False, indent=1)
     def job():
         say(f"📤 Публикую <b>{esc(jd['title'])}</b>…")
         link, err = publish(os.path.join(d, "studio.json"), j)
-        if link: jd["link"] = link; jd["stage"] = "published"; jsave(j, jd); S["last_main_link"] = link; save(); say(f"✅ Опубликовано: {link}\nЧерез ~30 мин проверю ограничения: /limits")
+        if link:
+            jd["link"] = link; jd["stage"] = "published"; jsave(j, jd); S["last_main_link"] = link; save()
+            say(f"✅ Опубликовано: {link}\nЧерез ~2 ч сам проверю 18+ и музыку (блокирующие песни заглушу).")
+            if jd.get("smart"): smart.after_publish(j, link)
+            else: threading.Thread(target=lambda: (time.sleep(7200), smart.check_video(link.rstrip('/').split('/')[-1])), daemon=True).start()
+        elif err == "LOGIN": smart.need_login("публикация")
         elif err == "LIMIT": say("⛔ Лимит загрузок YouTube на сутки. Повтори через 24 ч (не долбить — попытки тоже считаются).")
         else: say(f"❌ Публикация: <code>{esc(err)}</code>"); send_file(os.path.join(d, "up", "error.png"), "скрин ошибки", "photo")
     bg("публикация", job)
@@ -647,7 +655,7 @@ def when(iso):
 
 MENU = [[{"text": "🔴 Прямой эфир", "callback_data": "mode:live"}, {"text": "📼 Прошедший стрим", "callback_data": "mode:past"}],
         [{"text": "🎬 Шортсы (полка)", "callback_data": "mode:shorts"}, {"text": "ℹ️ Статус", "callback_data": "mode:status"}]]
-BETA = "🧪 <b>Бета-тест.</b> Основной способ нарезки пока — по опыту в сессии Claude; бот учится по логам."
+BETA = "🧠 <b>Двойная резка — умный бот</b> (Gemini). Пиши обычным текстом: «нарежь вчерашний стрим», «сделай шортсы», «что делаешь?»."
 def cmd_start(m, a): say(f"{BETA}\n\nВыбери режим:", MENU)
 def cmd_help(m, a): say(HELP)
 
@@ -735,13 +743,15 @@ def past_pick(vod):
     have = os.path.exists(tr) and os.path.getsize(tr) > 1000
     if have: warn.append("расшифровка уже есть — сразу покажу темы")
     if S.get("live_on"): warn.append("сейчас идёт нарезка эфира — она продолжится параллельно")
+    S["vod_date"] = when(v["createdAt"])[:5]; save()
     ask(f"Нарезать стрим <b>{when(v['createdAt'])}</b> ({fmt(v['lengthSeconds'])}, {esc((v.get('game') or {}).get('displayName', ''))}), VOD {vod}?"
         + ("" if have else f"\nСначала расшифровка (~{int(v['lengthSeconds'] / 27 / 60) + 3} мин)."), past_start, vod, v["lengthSeconds"], have, warn=warn)
 def past_start(vod, length, have):
     S["vod"] = vod; S["vod_len"] = length; save(); vdir(vod); blog("past_start", vod=vod, have_transcript=have)
-    if have: return cmd_map(None, "")
+    if have: return smart.cmd_smap(None, "") if brain.available() else cmd_map(None, "")
     def job():
-        cmd_transcribe_job(); cmd_map(None, "")
+        cmd_transcribe_job()
+        if not brain.available(): cmd_map(None, "")
     bg("расшифровка", job)
 
 def cmd_logs(m, a):
@@ -755,6 +765,7 @@ def cmd_logs(m, a):
 # ----------------------------------------------------------------- free text → assistant (rules + local AI)
 sys.path.insert(0, os.path.dirname(__file__))
 import assist
+import brain, smart                     # Gemini brain + current-regulation pipeline (23.11.2026)
 def recent_log(n=25):
     f = os.path.join(LOGD, time.strftime("%Y-%m-%d") + ".jsonl")
     if not os.path.exists(f): return []
@@ -774,6 +785,13 @@ def facts():
                              "начало": e["first"][:120]} for i, e in enumerate(evs)],
             "последние_события": recent_log(12)}
 def on_text(m, txt):
+    if brain.available():
+        def sw():
+            try: smart.chat(txt)
+            except Exception as ex:
+                blog("error", where="smart_chat", err=str(ex)[:500], tb=traceback.format_exc()[-1500:])
+                say(f"🤖 Gemini не ответил ({esc(str(ex)[:160])}). Повтори чуть позже или командой (/help).")
+        return threading.Thread(target=sw, daemon=True).start()
     def work():
         try:
             evs, lines = [], []
@@ -803,7 +821,7 @@ CMDS = {"start": cmd_start, "menu": cmd_start, "help": cmd_help, "logs": cmd_log
         "transcribe": cmd_transcribe, "map": cmd_map, "cut": cmd_cut, "title": cmd_title, "chapters": cmd_chapters,
         "chapter": cmd_chapter, "desc": cmd_desc, "publish": cmd_publish, "jobs": cmd_jobs, "job": cmd_job, "short": cmd_short,
         "stitle": cmd_stitle, "shorts": cmd_shorts, "pubshorts": cmd_pubshorts, "cookies": cmd_cookies, "panel": cmd_panel,
-        "limits": cmd_limits, "pair": cmd_pair, "clean": cmd_clean, "drop": cmd_drop, "add": cmd_add, "go": cmd_go}
+        "limits": cmd_limits, "pair": cmd_pair, "clean": cmd_clean, "drop": cmd_drop, "add": cmd_add, "go": cmd_go, "smap": smart.cmd_smap, "check": lambda m, a: bg("проверка видео", smart.check_video, (re.findall(r"[A-Za-z0-9_-]{11}", a or "") or [""])[-1])}
 
 def handle(u):
     if "callback_query" in u:
@@ -817,6 +835,10 @@ def handle(u):
         if k == "past": return past_pick(v)
         if k == "live" and v == "stop": return live_stop()
         if k == "go": cmd_go(q["message"], v)
+        if k == "sm":
+            kind, _, arg = v.partition(":")
+            if kind == "ev": return smart.start_event(int(arg))
+            if kind == "shorts": return smart.start_shorts(arg or "all")
         return
     m = u.get("message") or {}
     if not m: return
@@ -858,13 +880,14 @@ def resume_after_restart():
         say("🔁 <b>Бот перезапустился</b> (сервер обновился).\n" + "\n".join("• " + esc(n) for n in notes))
 
 def main():
+    smart.init(sys.modules[__name__])
     log("bot started; work dir", WORK); blog("start", work=WORK, owner=bool(S.get("owner")), ai=bool(assist.MODEL))
     assist.preload()
     threading.Thread(target=resume_after_restart, daemon=True).start()
     tg("setMyCommands", commands=[{"command": c, "description": d} for c, d in [
         ("status", "что происходит"), ("vod", "выбрать VOD/канал"), ("watch", "следить за стримом"), ("transcribe", "расшифровать VOD"),
         ("start", "меню: эфир / прошедший стрим"), ("live", "нарезать идущий эфир"), ("past", "нарезать прошедший стрим"), ("logs", "логи бота"),
-        ("map", "темы стрима"), ("cut", "нарезать тему"), ("jobs", "нарезки"), ("title", "название"), ("chapters", "тайм-коды"),
+        ("smap", "🧠 карта стрима (Gemini)"), ("check", "проверить видео: 18+/музыка"), ("map", "темы стрима"), ("cut", "нарезать тему"), ("jobs", "нарезки"), ("title", "название"), ("chapters", "тайм-коды"),
         ("desc", "описание"), ("publish", "опубликовать"), ("short", "собрать шортс"), ("shorts", "полка шортсов"),
         ("pubshorts", "опубликовать полку"), ("limits", "18+/ограничения"), ("cookies", "прислать cookies"), ("panel", "поднять Studio"), ("help", "помощь")]])
     off = S.get("offset", 0); conflicts = 0
