@@ -101,6 +101,9 @@ TOOLS = [
     ("search_code", "Поиск по коду (ripgrep): регулярка по файлам папки, с номерами строк", {"pattern": {"type": "string"}, "path": {"type": "string"}}),
     ("run_tests", "Прогнать тесты pytest (папка или файл), коротко: какие упали и почему", {"path": {"type": "string"}}),
     ("lint", "Линтер ruff: ошибки и подозрительный код (неиспользуемое, необъявленное, опасное)", {"path": {"type": "string"}}),
+    ("browse", "Открыть сайт в браузере (Chromium): скриншот страницы (ты его увидишь) + текст. Можно кликнуть по тексту "
+               "кнопки/ссылки или ввести текст в поле (CSS-селектор=>текст, затем Enter)", {"url": {"type": "string"}, "full_page": {"type": "boolean"},
+               "click": {"type": "string"}, "type": {"type": "string"}}),
     ("screenshot", "Сделать скриншот своего экрана и посмотреть его", {}),
     ("view_image", "Посмотреть картинку из /work (результат рендера, график и т.п.)", {"path": {"type": "string"}}),
     ("send_to_owner", "Отправить владельцу файл из /work в Telegram (видео, картинку, документ)", {"path": {"type": "string"}, "caption": {"type": "string"}}),
@@ -151,6 +154,18 @@ class Agent:
                           f"{json.dumps(a.get('path') or '.')} 2>&1 | tail -60", 600)
         if name == "lint":
             return sb.run(f"python3 -m ruff check --no-cache --output-format concise {json.dumps(a.get('path') or '/work')} 2>&1 | tail -60", 120)
+        if name == "browse":
+            url = a.get("url", "")
+            if not re.match(r"^https?://", url): return "нужен полный адрес: https://…"
+            f = os.path.join(WORK, f"web_{int(time.time())}.png")
+            cmd = ["node", os.path.join(REPO, "tools", "yt", "browse.js"), url, f] + (["--full"] if a.get("full_page") else []) + \
+                  (["--click", a["click"]] if a.get("click") else []) + (["--type", a["type"]] if a.get("type") else [])
+            r = subprocess.run(cmd, cwd=REPO, capture_output=True, text=True, timeout=150)
+            try: d = json.loads(r.stdout.strip().splitlines()[-1])
+            except Exception: return "браузер: " + (r.stderr or r.stdout)[-400:]
+            if os.path.exists(f) and sb.mode == "user": sh(["chown", f"{USER}:{USER}", f])
+            info = f"адрес: {d['url']}\nзаголовок: {d['title']}\n{('ошибка: ' + d['error']) if d.get('error') else ''}\nтекст страницы:\n{d['text'][:4000]}"
+            return {"image": f, "text": info} if os.path.exists(f) else info
         if name in ("screenshot", "view_image"):
             f = sb.screenshot() if name == "screenshot" else sb.path(a["path"])[0]
             if not f or not os.path.exists(f): return "не получилось (экран не запущен или файла нет)"
@@ -190,7 +205,7 @@ class Agent:
             self.log.append((name, args, res if isinstance(res, str) else res))
             if isinstance(res, dict) and res.get("image"):               # let the model SEE the screen / image
                 b64 = base64.b64encode(open(res["image"], "rb").read()).decode()
-                msgs.append({"role": "tool", "tool_call_id": c.get("id", f"c{step}"), "content": f"картинка {os.path.basename(res['image'])} — смотри следующий кадр"})
+                msgs.append({"role": "tool", "tool_call_id": c.get("id", f"c{step}"), "content": (res.get("text", "") + "\n" if res.get("text") else "") + f"картинка {res['image'].replace(WORK, '/work')} — смотри следующий кадр"})
                 msgs.append({"role": "user", "content": [{"type": "text", "text": "Вот изображение:"},
                                                          {"type": "image_url", "image_url": {"url": "data:image/png;base64," + b64}}]})
             else:
