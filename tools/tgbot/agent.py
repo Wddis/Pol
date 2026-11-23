@@ -98,6 +98,9 @@ TOOLS = [
     ("write_file", "Создать/перезаписать файл в /work", {"path": {"type": "string"}, "content": {"type": "string"}}),
     ("edit_file", "Точечная правка: заменить фрагмент old на new (old должен встречаться ровно 1 раз)", {"path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}}),
     ("list_dir", "Список файлов в папке", {"path": {"type": "string"}}),
+    ("search_code", "Поиск по коду (ripgrep): регулярка по файлам папки, с номерами строк", {"pattern": {"type": "string"}, "path": {"type": "string"}}),
+    ("run_tests", "Прогнать тесты pytest (папка или файл), коротко: какие упали и почему", {"path": {"type": "string"}}),
+    ("lint", "Линтер ruff: ошибки и подозрительный код (неиспользуемое, необъявленное, опасное)", {"path": {"type": "string"}}),
     ("screenshot", "Сделать скриншот своего экрана и посмотреть его", {}),
     ("view_image", "Посмотреть картинку из /work (результат рендера, график и т.п.)", {"path": {"type": "string"}}),
     ("send_to_owner", "Отправить владельцу файл из /work в Telegram (видео, картинку, документ)", {"path": {"type": "string"}, "caption": {"type": "string"}}),
@@ -108,7 +111,7 @@ def tool_defs(): return [{"type": "function", "function": {"name": n, "descripti
 
 SYSTEM = """Ты — опытный инженер-программист и монтажёр, автономный агент со своим облачным Linux. Решаешь задачу владельца
 YouTube-канала нарезок сам, шаг за шагом, ИНСТРУМЕНТАМИ (каждый ответ — вызов ровно одного инструмента).
-Метод как у сильных инженеров: 1) think — план; 2) маленький шаг; 3) проверь результат (вывод, тест, скриншот,
+Метод как у сильных инженеров: 0) разберись в коде (list_dir, search_code, read_file); 1) think — план и гипотезы; 2) маленький шаг; 3) проверь результат (run_tests, lint, вывод, скриншот,
 view_image); 4) ошибка → think: причина → исправь → проверь снова. Не выдумывай результатов: всё проверяй командой.
 Пиши код в /work, запускай, тестируй. Для видео — ffmpeg (1920x1080 / 60 fps / H.264 / AAC 48k, если не сказано иное).
 Нужны пакеты — ставь (pip install --user …, npm в /work). Долгое и окна — через `setsid … &`, потом проверяй (ps, скриншот). В конце — finish с итогом по-русски
@@ -141,6 +144,13 @@ class Agent:
         if name == "list_dir":
             real, _ = sb.path(a.get("path") or "/work")
             return "\n".join(sorted(f + ("/" if os.path.isdir(os.path.join(real, f)) else f"  ({os.path.getsize(os.path.join(real, f))} Б)") for f in os.listdir(real))[:200])
+        if name == "search_code":
+            return sb.run(f"rg -n --no-heading -S {json.dumps(a.get('pattern', ''))} {json.dumps(a.get('path') or '/work')} | head -80", 60)
+        if name == "run_tests":
+            return sb.run(f"cd {json.dumps(a.get('path') or '/work')} 2>/dev/null || true; python3 -m pytest -q -x --no-header -p no:cacheprovider "
+                          f"{json.dumps(a.get('path') or '.')} 2>&1 | tail -60", 600)
+        if name == "lint":
+            return sb.run(f"python3 -m ruff check --no-cache --output-format concise {json.dumps(a.get('path') or '/work')} 2>&1 | tail -60", 120)
         if name in ("screenshot", "view_image"):
             f = sb.screenshot() if name == "screenshot" else sb.path(a["path"])[0]
             if not f or not os.path.exists(f): return "не получилось (экран не запущен или файла нет)"

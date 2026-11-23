@@ -46,9 +46,9 @@ def chapters_text(chs, A, B_, cuts, dur):
         if rows and o - rows[-1][0] < 10: continue
         title = brain.clean_title(title, 60) or "…"
         rows.append((o, title))
-    if rows and rows[0][0] != 0: rows[0] = (0, rows[0][1])
-    if len(rows) < 3: return ""                                  # YouTube needs ≥ 3 chapters → skip if the model gave fewer
-    return "\n".join(f"{F(o)} - {t}" for o, t in rows if o < dur - 10)
+    rows = [r for r in rows if r[0] < dur - 10]                   # chapters at the very end are dropped FIRST (bug found by
+    if len(rows) < 3: return ""                                  # the bot's agent 23.11: the ≥3 check ran before this filter)
+    return "\n".join(f"{F(o)} - {t}" for o, t in rows)
 
 def tunnel_link():
     """Studio login lost → owner signs in himself through the pult page. Cloudflare quick tunnel (no account) → devtunnel."""
