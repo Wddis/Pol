@@ -11,7 +11,10 @@
 import json, os, re, time, urllib.request, urllib.error
 
 URL = os.environ.get("GEMINI_URL", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions")
-MODELS = [m.strip() for m in os.environ.get("GEMINI_MODELS", "gemini-3.5-flash,gemini-3.8-flash,gemini-3.7-flash,gemini-flash-latest").split(",") if m.strip()]
+MODELS = [m.strip() for m in os.environ.get("GEMINI_MODELS", "gemini-3.5-flash,gemini-3.5-flash-lite,gemini-flash-lite-latest,gemini-3.1-flash-lite,gemma-4-31b-it").split(",") if m.strip()]
+# free tier (tested 23.11): 3.5-flash = best; lite models = own quota; 3.6–3.8-flash = no free quota (always 429) → not used.
+COOL = {}                                                         # model → time until it is skipped (429/503 cooldown)
+LAST = {"ok": ""}
 
 def available(): return bool(os.environ.get("GEMINI_API_KEY"))
 
@@ -20,25 +23,27 @@ def _post(body, timeout=300):
         "Content-Type": "application/json", "Authorization": "Bearer " + os.environ.get("GEMINI_API_KEY", "")})
     return json.load(urllib.request.urlopen(req, timeout=timeout))
 
-def ask(messages, tools=None, json_mode=False, temperature=0.4, timeout=300):
-    """returns the assistant message dict ({"content":…, "tool_calls":[…]}). Tries the models in order on overload/quota."""
-    err = None
-    for m in MODELS:
+def ask(messages, tools=None, json_mode=False, temperature=0.4, timeout=300, models=None):
+    """returns the assistant message dict ({"content":…, "tool_calls":[…]}). On overload/quota/timeout it moves to the next
+    model AT ONCE (no waiting) and skips that model for a minute — the owner must not wait minutes for an answer."""
+    errs = []; order = models or MODELS
+    for m in sorted(order, key=lambda x: COOL.get(x, 0) > time.time()):      # cooling models go last
         body = {"model": m, "messages": messages, "temperature": temperature}
         if tools: body["tools"] = tools
         if json_mode: body["response_format"] = {"type": "json_object"}
-        for attempt in range(2):
-            try:
-                r = _post(body, timeout)
-                msg = r["choices"][0]["message"]; msg["_model"] = m; return msg
-            except urllib.error.HTTPError as e:
-                txt = e.read().decode("utf-8", "replace")[:300]; err = f"{m}: HTTP {e.code} {txt}"
-                if e.code in (429, 503, 500): time.sleep(4 * (attempt + 1)); continue   # overload / quota → retry, then next model
-                if e.code in (404, 400) and "no longer available" in txt or e.code == 404: break
-                raise RuntimeError(err)
-            except Exception as e:                                   # timeouts, network
-                err = f"{m}: {e}"; time.sleep(3)
-    raise RuntimeError("Gemini недоступен: " + (err or "?"))
+        try:
+            r = _post(body, timeout)
+            msg = r["choices"][0]["message"]; msg["_model"] = m; LAST["ok"] = m
+            if msg.get("content"): msg["content"] = re.sub(r"(?s)<thought>.*?</thought>\s*", "", msg["content"]).strip()
+            return msg
+        except urllib.error.HTTPError as e:
+            txt = e.read().decode("utf-8", "replace")[:200]; errs.append(f"{m}: HTTP {e.code}")
+            if e.code in (429, 500, 502, 503, 504, 404): COOL[m] = time.time() + (600 if e.code == 404 else 60); continue
+            if e.code == 400 and tools: continue                          # a model without tool support → next
+            raise RuntimeError(f"{m}: HTTP {e.code} {txt}")
+        except Exception as e:                                           # timeouts, network
+            errs.append(f"{m}: {str(e)[:60]}"); COOL[m] = time.time() + 60
+    raise RuntimeError("Gemini недоступен (" + "; ".join(errs[-4:]) + ")")
 
 def ask_json(system, user, **kw):
     msg = ask([{"role": "system", "content": system}, {"role": "user", "content": user}], json_mode=True, **kw)
@@ -100,3 +105,29 @@ def clean_title(t, limit=100):
 
 if __name__ == "__main__":                                       # quick self-test: python3 brain.py
     print(ask([{"role": "user", "content": "Скажи «ок»."}]).get("content"))
+
+def locate_layout(png_path):
+    """Vision: on a 1920x1080 stream frame find the webcam window and the main game/video area (for shorts crops).
+    Uses Gemini's native box_2d format [ymin, xmin, ymax, xmax] on a 0–1000 scale. Returns {"cam":[x,y,w,h],"screen":[…]} px."""
+    import base64
+    b64 = base64.b64encode(open(png_path, "rb").read()).decode()
+    msg = ask([{"role": "user", "content": [
+        {"type": "text", "text": "Кадр Twitch-стрима. Найди: 1) cam — окно ВЕБКИ стримера (живой человек); 2) screen — основную "
+         "область игры/видео. Верни JSON {\"cam\":{\"box_2d\":[ymin,xmin,ymax,xmax]},\"screen\":{\"box_2d\":[ymin,xmin,ymax,xmax]}} "
+         "в нормированной шкале 0–1000."},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64," + b64}}]}], json_mode=True, temperature=0.0, timeout=90,
+        models=["gemini-3.5-flash", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"])
+    txt = re.sub(r"^```(json)?|```$", "", (msg.get("content") or "").strip()).strip()
+    try: r = json.loads(txt)
+    except Exception: return {}
+    out = {}
+    for k in ("cam", "screen"):
+        v = (r.get(k) or {}).get("box_2d") if isinstance(r.get(k), dict) else r.get(k)
+        if not (isinstance(v, list) and len(v) == 4): continue
+        y0, x0, y1, x1 = [float(t) for t in v]
+        x, y, w, h = x0 * 1.92, y0 * 1.08, (x1 - x0) * 1.92, (y1 - y0) * 1.08
+        if k == "cam": x, y, w, h = x + 8, y + 8, w - 16, h - 16       # strictly inside the window (no game strip)
+        x, y = max(0, int(x)) // 2 * 2, max(0, int(y)) // 2 * 2
+        w, h = int(min(w, 1920 - x)) // 2 * 2, int(min(h, 1080 - y)) // 2 * 2
+        if w >= 160 and h >= 120: out[k] = [x, y, w, h]
+    return out

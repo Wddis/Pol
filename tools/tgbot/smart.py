@@ -152,7 +152,7 @@ def start_event(i, confirm=True):
 def smart_job(j):
     jd = B.jload(j); d = B.jdir(j); A, Bt = jd["from"], jd["to"]
     B.need_disk((Bt - A) / 3600 * 8 + 3, "нарезка")
-    env = {"MAT": "1"}
+    env = {"MAT": "1", "NO_PREVIEW": "1"}
     if jd.get("kind") == "game" or not jd.get("original"): env["GAME"] = "1"
     else:
         oid = youtube_id(jd["original"]); env.update({"ORIG": oid} if oid else {"GAME": "1"}); jd["orig_id"] = oid
@@ -245,6 +245,10 @@ def short_job(j):
     if not ok: raise RuntimeError(out)
     off = float(re.findall(r"offset ([\d.]+)", out)[-1])
     lay = LAYOUTS.get(B.S.get("layout", "default"), LAYOUTS["default"])
+    ok2, o2 = B.run(["python3", os.path.join(B.T, "layout_detect.py"), "src.mp4", f"{(jd['from'] + jd['to']) / 2 - off:.1f}"], cwd=d, timeout=120)
+    try:
+        det = json.loads(o2.strip().splitlines()[-1]); lay = {"CAM": det["CAM"], "SCR": det["SCR"]}; jd["layout"] = det["layout"]
+    except Exception: pass                                            # face not found → the owner's/default layout
     ok, out = B.run(["bash", os.path.join(B.T, "shorts_tt", "render.sh"), "src.mp4", jd["lines"], "short.mp4",
                      f"{jd['from'] - off:.2f}-{jd['to'] - off:.2f}"], cwd=d, env=lay, timeout=1800)
     if not ok: raise RuntimeError(out)
@@ -262,7 +266,7 @@ FUNCS = [
     ("cut_range", "нарезать кусок стрима по времени (секунды стрима)", {"from": {"type": "number"}, "to": {"type": "number"}, "title": {"type": "string"}}),
     ("make_shorts", "собрать шортсы из карты: все или номер", {"which": {"type": "string"}}),
     ("publish_shorts", "опубликовать полку шортсов на YouTube с интервалом в минутах", {"interval": {"type": "integer"}}),
-    ("set_title", "поменять название текущей нарезки", {"title": {"type": "string"}}),
+    ("set_title", "поменять название ТЕКУЩЕЙ нарезки, которая ещё НЕ опубликована (стадия превью)", {"title": {"type": "string"}}),
     ("publish", "опубликовать текущую нарезку (нужна обложка)", {}),
     ("check_video", "проверить опубликованное видео: 18+, претензии, заглушить блокирующую музыку", {"video": {"type": "string"}}),
     ("pick_stream", "выбрать прошедший стрим из списка или идущий эфир", {"live": {"type": "boolean"}}),
@@ -293,6 +297,18 @@ def run_fn(name, a):
     if name == "pick_stream": return B.mode_live() if a.get("live") else B.mode_past()
     if name == "layout": B.S["layout"] = a.get("name", "default"); B.save(); return B.say(f"Раскладка шортсов: {B.S['layout']}")
 HIST = []
+RULES_FB = [(r"(?i)что (ты )?делаешь|статус|что происходит|почему (ничего|стоит)", lambda t: B.cmd_status(None, "")),
+            (r"(?i)повтори", lambda t: retry_last()),
+            (r"(?i)мест[оа]|диск|почисти", lambda t: run_fn("free_disk", {})),
+            (r"(?i)карт[ау]|темы|что было на стриме|разбери стрим", lambda t: cmd_smap(None, "")),
+            (r"(?i)шортс", lambda t: B.cmd_shorts(None, "")),
+            (r"(?i)видео канала|список видео|наши видео", lambda t: run_fn("list_videos", {}))]
+def fallback(txt):
+    """Gemini is overloaded/out of quota → the most common requests by rules, the rest — commands"""
+    for rx, f in RULES_FB:
+        if re.search(rx, txt): B.say("🤖 (мозг перегружен, отвечаю по правилам)"); return f(txt)
+    B.say("🤖 Мозг Gemini сейчас перегружен/кончилась бесплатная квота — повтори через минуту или командой: "
+          "/status, /smap, /jobs, /shorts, /pubshorts 10, /check ссылка, /help.")
 def chat(txt):
     if re.match(r"(?i)^\s*(вош[её]л|готово|залогинился)\s*$", txt) and B.S.get("after_login"):
         B.S["after_login"] = ""; B.save()
@@ -302,12 +318,22 @@ def chat(txt):
     r = load_map() or {}
     ctx = {"статус": re.sub(r"<[^>]+>", "", B.status_text())[:1500],
            "карта": [{"№": i + 1, "время": f"{F(e['from'])}-{F(e['to'])}", "название": e["title"], "частей": len(e["parts"])} for i, e in enumerate(r.get("events", []))],
-           "шортсы": [f"{k + 1}. {s['line1']} / {s['line2']}" for k, s in enumerate(r.get("shorts", []))]}
-    sysm = (brain.RULES + "\n\nТы — Telegram-бот-помощник владельца канала. Отвечай коротко по-русски. Если просьбу можно выполнить "
-            "функцией — вызови её (одну). Если неясно — уточни вопросом. Факты бота:\n" + json.dumps(ctx, ensure_ascii=False))
+           "шортсы": [f"{k + 1}. {s['line1']} / {s['line2']}" for k, s in enumerate(r.get("shorts", []))],
+           "текущая_нарезка": (lambda j: f"{j}: {(B.jload(j) or {}).get('title', '')} · {(B.jload(j) or {}).get('stage', '')}" if j else "нет")(B.S.get("job")),
+           "видео_канала": [f"{v['title']} — https://youtu.be/{v['id']}" for v in B.S.get("videos_cache", [])[:25]]}
+    sysm = (brain.RULES + "\n\nТы — Telegram-бот-помощник владельца канала. Отвечай коротко по-русски.\n"
+            "ЖЁСТКИЕ ПРАВИЛА: 1) Если просьбу можно выполнить функцией — ВЫЗОВИ её (одну), не описывай словами. "
+            "2) НИКОГДА не пиши «запустил/сделал/готово», если не вызвал функцию в этом ответе. "
+            "3) Названия, тексты, время — передавай В ФУНКЦИЮ ДОСЛОВНО как написал владелец, ничего не меняй. "
+            "4) Удаление видео/канала и любые необратимые действия, которых нет в функциях, — не выполняешь: вежливо откажи. "
+            "5) Неясно, что делать или с каким видео, — задай ОДИН уточняющий вопрос. "
+            "6) На вопрос о факте (ссылка, статус, сколько частей) отвечай по фактам ниже, без выдумок.\nФакты бота:\n" + json.dumps(ctx, ensure_ascii=False))
     HIST.append({"role": "user", "content": txt}); del HIST[:-12]
     while HIST and HIST[0]["role"] != "user": HIST.pop(0)
-    msg = brain.ask([{"role": "system", "content": sysm}] + HIST, tools=tools(), temperature=0.3, timeout=120)
+    try: msg = brain.ask([{"role": "system", "content": sysm}] + HIST, tools=tools(), temperature=0.2, timeout=45)
+    except Exception:
+        HIST.pop()                                                   # no unanswered question left in the history
+        return fallback(txt)
     calls = msg.get("tool_calls") or []
     if calls:
         c = calls[0]["function"]; name = c["name"]
@@ -392,7 +418,9 @@ def deferred_loop():
 # ----------------------------------------------------------------- channel videos: find by words, title / cover / music
 def videos(shorts=False):
     ok, out = node("studio_list.js", B.CHANNEL, *(["--shorts"] if shorts else []), timeout=300)
-    return [dict(zip(("id", "dur", "title"), [x.strip() for x in l.split("|", 2)])) for l in out.splitlines() if re.match(r"^[A-Za-z0-9_-]{11} \|", l)] if ok else []
+    vs = [dict(zip(("id", "dur", "title"), [x.strip() for x in l.split("|", 2)])) for l in out.splitlines() if re.match(r"^[A-Za-z0-9_-]{11} \|", l)] if ok else []
+    if vs and not shorts: B.S["videos_cache"] = vs[:40]; B.save()                  # the chat knows the channel's videos
+    return vs
 def find_video(q):
     ids = re.findall(r"(?:youtu\.be/|v=|shorts/|^)([A-Za-z0-9_-]{11})(?:\b|$)", q.strip())
     if ids and len(q.strip()) <= 60 and " " not in q.strip(): return {"id": ids[-1], "title": ids[-1]}
@@ -443,8 +471,8 @@ def use_intro(path):
 
 # chat tools for all of the above
 FUNCS += [
-    ("set_video_title", "поменять название уже опубликованного видео (видео — ссылка или слова из названия)", {"video": {"type": "string"}, "title": {"type": "string"}}),
-    ("replace_cover", "поменять обложку уже опубликованного видео (потом владелец пришлёт фото)", {"video": {"type": "string"}}),
+    ("set_video_title", "поменять название видео, которое УЖЕ на канале (есть в списке «видео_канала»; видео — ссылка или слова из названия)", {"video": {"type": "string"}, "title": {"type": "string"}}),
+    ("replace_cover", "поменять обложку видео, которое УЖЕ на канале (потом владелец пришлёт фото)", {"video": {"type": "string"}}),
     ("list_videos", "показать последние видео канала", {}),
     ("regenerate", "перегенерировать (заново отрендерить) текущую нарезку", {}),
     ("new_intro", "сделать интро в другом современном оттенке: neon, brand, cold, warm, pastel, mono_pop", {"preset": {"type": "string"}}),

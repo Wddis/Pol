@@ -50,5 +50,5 @@ if [ -n "$ORIG" ]; then python3 $T/cover_refs.py out.mp4 refs --orig "$ORIG" >> 
 elif [ -n "$GAME" ]; then python3 $T/cover_refs.py out.mp4 refs --game >> make.log 2>&1
 else log "REFS: set ORIG=<original id> (reaction) or GAME=1 (game) and rerun"; fi
 wait
-log "5 preview"; ffmpeg -loglevel error -y -i $NAME.mp4 -vf "scale=640:360,fps=30" -c:v libx264 -preset veryfast -crf 24 -c:a aac -b:a 128k ${NAME}_preview_360p30.mp4
+if [ "$NO_PREVIEW" != 1 ]; then log "5 preview"; ffmpeg -loglevel error -y -i $NAME.mp4 -vf "scale=640:360,fps=30" -c:v libx264 -preset veryfast -crf 24 -c:a aac -b:a 128k ${NAME}_preview_360p30.mp4; fi
 log "DONE $W/$NAME.mp4"

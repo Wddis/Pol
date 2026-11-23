@@ -490,7 +490,8 @@ def publish_do(m, a):
         say(f"📤 Публикую <b>{esc(jd['title'])}</b>…")
         link, err = publish(os.path.join(d, "studio.json"), j)
         if link:
-            jd["link"] = link; jd["stage"] = "published"; jsave(j, jd); S["last_main_link"] = link; save()
+            jd["link"] = link; jd["stage"] = "published"; jsave(j, jd); S["last_main_link"] = link
+            S.setdefault("videos_cache", []).insert(0, {"id": link.rstrip("/").split("/")[-1], "dur": "", "title": jd["title"]}); save()
             say(f"✅ Опубликовано: {link}\nЧерез ~2 ч сам проверю 18+ и музыку (блокирующие песни заглушу).")
             if jd.get("smart"): smart.after_publish(j, link)
             else: threading.Thread(target=lambda: (time.sleep(7200), smart.check_video(link.rstrip('/').split('/')[-1])), daemon=True).start()

@@ -5,7 +5,7 @@ sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg xvfb zip >/dev/nul
 [ -x ~/venv/bin/python ] || python3 -m venv ~/venv
 . ~/venv/bin/activate
 pip install -q -U pip
-pip install -q requests numpy pillow scipy yt-dlp yt-dlp-ejs faster-whisper rapidocr-onnxruntime
+pip install -q requests numpy pillow scipy yt-dlp yt-dlp-ejs faster-whisper rapidocr-onnxruntime opencv-python-headless
 python -c "import llama_cpp" 2>/dev/null || pip install -q llama-cpp-python --prefer-binary --extra-index-url https://abetlen.github.io/llama-cpp-python/whl/cpu
 python -c "from faster_whisper import WhisperModel as W; [W(m,device='cpu',compute_type='int8') for m in ('base','small')]"
 npm install -s --no-save playwright@1 >/dev/null
