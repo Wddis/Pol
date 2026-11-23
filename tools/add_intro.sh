@@ -5,7 +5,7 @@
 # Fast path: stream copy (no re-encode) when the video matches the intro (1920x1080, 60 fps, h264 yuv420p,
 # AAC 48 kHz stereo — what edit2.py produces). Otherwise the intro is re-encoded to match the video first.
 set -e
-v=$1; out=$2; dir=$(cd "$(dirname "$0")/.." && pwd); intro=${3:-$dir/assets/intro/intro_t2x2.mp4}
+v=$1; out=$2; dir=$(cd "$(dirname "$0")/.." && pwd); intro=${3:-${INTRO_FILE:-$dir/assets/intro/intro_t2x2.mp4}}
 sig() { ffprobe -v error -show_entries stream=codec_name,width,height,r_frame_rate,pix_fmt,sample_rate,channels -of csv=p=0 "$1" | sort | tr '\n' ';'; }
 tmp=$(mktemp -d)
 if [ "$(sig "$v")" != "$(sig "$intro")" ]; then

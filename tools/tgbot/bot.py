@@ -97,7 +97,9 @@ def _worker():
         try: fn(*a); blog("job_done", job=name, sec=round(time.time() - t0))
         except Exception as ex:
             log(traceback.format_exc()); blog("error", job=name, err=str(ex)[:2000], tb=traceback.format_exc()[-3000:])
-            say(f"❌ <b>{esc(name)}</b> — ошибка: <code>{esc(str(ex)[:700])}</code>\nНичего не сломано, остальное продолжаю. Повторить — той же командой.")
+            try: smart.heal(name.replace(" (повтор)", ""), fn, a, ex, name.count("(повтор)"))      # self-healing: fix + retry or explain
+            except Exception as hx:
+                say(f"❌ <b>{esc(name)}</b> — ошибка: <code>{esc(str(ex)[:700])}</code>\nНичего не сломано, остальное продолжаю. Повторить — той же командой.")
         finally: S["busy"] = ""; S["now"] = {}; save()
 threading.Thread(target=_worker, daemon=True).start()
 THREADS = {}
@@ -446,6 +448,9 @@ def cmd_desc(m, a):
     if a and a.startswith("source "): jd["source"] = a[7:].strip(); jsave(j, jd)
     say(f"<pre>{esc(describe(j, jd))}</pre>\n(ссылка на оригинал: /desc source https://… )")
 def on_photo(m):
+    if S.get("await_cover_for"):                                         # «поменяй обложку у …» → this photo
+        p = os.path.join(WORK, "cover_replace.jpg")
+        if download(m["photo"][-1]["file_id"], p): return bg("замена обложки", smart.apply_cover, p)
     j, jd = cur_job()
     if not jd: return say("Обложку некуда прикрепить: нет текущей нарезки (/jobs)")
     fid = m["photo"][-1]["file_id"]; path = os.path.join(jdir(j), "cover.jpg")
@@ -881,6 +886,8 @@ def resume_after_restart():
 
 def main():
     smart.init(sys.modules[__name__])
+    if S.get("intro_override") and os.path.exists(S["intro_override"]): os.environ["INTRO_FILE"] = S["intro_override"]
+    threading.Thread(target=smart.deferred_loop, daemon=True).start()
     log("bot started; work dir", WORK); blog("start", work=WORK, owner=bool(S.get("owner")), ai=bool(assist.MODEL))
     assist.preload()
     threading.Thread(target=resume_after_restart, daemon=True).start()

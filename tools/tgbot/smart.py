@@ -297,6 +297,7 @@ def chat(txt):
     if re.match(r"(?i)^\s*(вош[её]л|готово|залогинился)\s*$", txt) and B.S.get("after_login"):
         B.S["after_login"] = ""; B.save()
         B.run(["node", os.path.join(B.T, "yt", "export_cookies.js"), os.path.join(B.WORK, "cookies.txt")], cwd=B.REPO, timeout=120)
+        if B.S.pop("after_login_job", None): B.save(); B.say("👍 Сессию сохранил. Повторяю то, что упало из-за входа…"); return retry_last()
         return B.say("👍 Сессию сохранил (переживёт перезапуск). Повтори последнее действие — Studio снова доступна.")
     r = load_map() or {}
     ctx = {"статус": re.sub(r"<[^>]+>", "", B.status_text())[:1500],
@@ -324,3 +325,143 @@ def chat(txt):
         args = json.loads(fake[2]); name = fake[1]
         return confirm(name, args) if name in HEAVY else run_fn(name, args)
     HIST.append({"role": "assistant", "content": ans}); B.blog("smart_chat", q=txt[:300], a=ans[:500]); B.say("🤖 " + md(ans))
+
+# ----------------------------------------------------------------- self-healing (the owner wants it to «работать бесперебойно»)
+RETRY = {}                                                     # name → (fn, args) of failed jobs, for «повтори»
+def cleanup(keep_job=None):
+    """free disk: intermediates of every job (sources, renders, parts), finals of published jobs, VOD video segments"""
+    freed = 0; root = os.path.join(B.WORK, "jobs")
+    for j in os.listdir(root) if os.path.isdir(root) else []:
+        if j == keep_job: continue
+        d = os.path.join(root, j); jd = B.jload(j) or {}
+        names = ["ev.mp4", "out.mp4", "src.mp4", "final_o.mp4", "final_nomm.mp4"] + (["final.mp4", "preview.mp4"] if jd.get("stage") == "published" else [])
+        for n in names + [x for x in os.listdir(d) if x.endswith(".parts") or x.endswith(".segs")]:
+            p = os.path.join(d, n)
+            if os.path.exists(p):
+                freed += sum(os.path.getsize(os.path.join(dp, f)) for dp, _, fs in os.walk(p) for f in fs) if os.path.isdir(p) else os.path.getsize(p)
+                subprocess.run(["rm", "-rf", p])
+    for v in [x for x in os.listdir(B.WORK) if x.startswith("vod")]:
+        for n in ("video.mp4.segs", "audio.wav"):
+            p = os.path.join(B.WORK, v, n)
+            if os.path.exists(p): subprocess.run(["rm", "-rf", p]); freed += 1
+    return freed / 2**30
+
+NET = re.compile(r"(?i)timed? ?out|connection (reset|refused|aborted)|temporary failure|HTTP Error 5\d\d|50[234]|ECONNRESET|EAI_AGAIN|RemoteDisconnected|IncompleteRead")
+def heal(name, fn, args, ex, tries=0):
+    """called by the bot's job worker on any failure: fix what can be fixed automatically, then retry; else explain"""
+    err = str(ex); RETRY[name] = (fn, args); B.S["last_failed"] = name; B.save()
+    def again(why, delay=0):
+        B.say(f"🛠 <b>{B.esc(name)}</b>: {B.esc(why)} — исправил, повторяю{' через ' + str(delay // 60) + ' мин' if delay >= 60 else ''}.")
+        threading.Thread(target=lambda: (time.sleep(delay), B.bg(name + " (повтор)", fn, *args)), daemon=True).start()
+    if tries >= 2: return explain(name, err)
+    if "мало места" in err or "No space left" in err:
+        gb = cleanup(); return again(f"кончилось место, освободил {gb:.1f} ГБ")
+    if err == "LOGIN" or "LOGIN" in err or "accounts.google.com" in err:
+        B.S["after_login_job"] = name; B.save(); return need_login(name)
+    if "UPLOAD_LIMIT" in err or err.strip() == "LIMIT":
+        B.S.setdefault("deferred", []).append({"at": time.time() + 24 * 3600 + 600, "job": B.S.get("job"), "what": "publish"}); B.save()
+        return B.say(f"⛔ Суточный лимит загрузок YouTube. Сам повторю публикацию через 24 ч (переживёт перезапуск сервера).")
+    if "9222" in err and ("ECONNREFUSED" in err or "connectOverCDP" in err):
+        subprocess.run(["pkill", "-f", "remote_browser.js"]); time.sleep(2); B.panel_start(); return again("браузер Studio упал — перезапустил")
+    if NET.search(err): return again("сбой сети/сервиса", 90 * (tries + 1))
+    return explain(name, err)
+def explain(name, err):
+    txt = f"❌ <b>{B.esc(name)}</b>: <code>{B.esc(err[:500])}</code>"
+    if brain.available():
+        try:
+            a = brain.ask([{"role": "system", "content": "Ты инженер видео-конвейера (ffmpeg, yt-dlp, playwright/YouTube Studio, Python). Объясни владельцу "
+                            "по-русски в 2–3 коротких предложениях: что сломалось и что сделать (команда бота или действие). Без воды."},
+                           {"role": "user", "content": f"Задача: {name}\nОшибка:\n{err[-2500:]}"}], timeout=60)
+            txt += "\n🤖 " + md(a.get("content", ""))
+        except Exception: pass
+    B.say(txt + "\nПовторить: напиши «повтори».")
+def retry_last():
+    n = B.S.get("last_failed"); f = RETRY.get(n)
+    if not f: return B.say("Нечего повторять (после перезапуска сервера — повтори командой).")
+    B.bg(n + " (повтор)", f[0], *f[1])
+def deferred_loop():
+    while True:
+        time.sleep(600)
+        due = [d for d in B.S.get("deferred", []) if d["at"] <= time.time()]
+        if not due: continue
+        B.S["deferred"] = [d for d in B.S["deferred"] if d["at"] > time.time()]; B.save()
+        for d in due:
+            if d["what"] == "publish" and d.get("job"):
+                B.S["job"] = d["job"]; B.save(); B.say(f"⏰ Повторяю отложенную публикацию {d['job']}."); B.publish_do(None, "")
+
+# ----------------------------------------------------------------- channel videos: find by words, title / cover / music
+def videos(shorts=False):
+    ok, out = node("studio_list.js", B.CHANNEL, *(["--shorts"] if shorts else []), timeout=300)
+    return [dict(zip(("id", "dur", "title"), [x.strip() for x in l.split("|", 2)])) for l in out.splitlines() if re.match(r"^[A-Za-z0-9_-]{11} \|", l)] if ok else []
+def find_video(q):
+    ids = re.findall(r"(?:youtu\.be/|v=|shorts/|^)([A-Za-z0-9_-]{11})(?:\b|$)", q.strip())
+    if ids and len(q.strip()) <= 60 and " " not in q.strip(): return {"id": ids[-1], "title": ids[-1]}
+    vs = videos() + videos(True)
+    if not vs: return None
+    if brain.available():
+        r = brain.ask_json("Выбери видео канала по описанию владельца. Верни JSON {\"id\":\"...\"} или {\"id\":\"\"}.",
+                           f"Описание: {q}\nВидео:\n" + "\n".join(f"{v['id']} | {v['title']}" for v in vs[:80]), timeout=60)
+        v = next((x for x in vs if x["id"] == r.get("id")), None)
+        if v: return v
+    words = [w for w in re.findall(r"\w+", q.lower()) if len(w) > 2]
+    best = max(vs, key=lambda v: sum(w in v["title"].lower() for w in words)); return best if any(w in best["title"].lower() for w in words) else None
+def set_video_title(q, title):
+    v = find_video(q); t = brain.clean_title(title)
+    if not v: return B.say("Не нашёл такое видео на канале — уточни название или пришли ссылку.")
+    if not t: return B.say("Название пустое или с матом/«18+» — так нельзя (риск 18+).")
+    p = os.path.join(B.WORK, "edit_title.json"); json.dump([{"id": v["id"], "title": t}], open(p, "w"), ensure_ascii=False)
+    ok, out = node("studio_edit.js", p); B.say(f"✅ Название «{B.esc(v['title'][:60])}» → <b>{B.esc(t)}</b>" if ok else f"❌ <code>{B.esc(out[-300:])}</code>")
+def ask_cover(q):
+    v = find_video(q)
+    if not v: return B.say("Не нашёл такое видео на канале — уточни название или пришли ссылку.")
+    B.S["await_cover_for"] = v; B.save(); B.say(f"🖼 Пришли новую обложку фото — поставлю на «{B.esc(v['title'][:80])}» (https://youtu.be/{v['id']}).")
+def apply_cover(path):
+    v = B.S.pop("await_cover_for", None); B.save()
+    p = os.path.join(B.WORK, "edit_thumb.json"); json.dump([{"id": v["id"], "thumb": path}], open(p, "w"))
+    ok, out = node("studio_edit.js", p); B.say(f"✅ Обложка заменена: https://youtu.be/{v['id']}" if ok else f"❌ <code>{B.esc(out[-300:])}</code>")
+
+# ----------------------------------------------------------------- re-generation and intro styles
+def regenerate(j=None):
+    j = j or B.S.get("job"); jd = B.jload(j) if j else None
+    if not jd or not jd.get("smart"): return B.say("Нет текущей нарезки для перегенерации (/jobs).")
+    jd["stage"] = "queued"; B.jsave(j, jd)
+    for f in ("final.mp4", "preview.mp4"):
+        try: os.remove(os.path.join(B.jdir(j), f))
+        except FileNotFoundError: pass
+    B.bg(f"перегенерация {j}", smart_job, j)
+PRESETS = {"neon": "неон (пурпур/бирюза)", "brand": "фирменный синий+жёлтый", "cold": "холодный", "warm": "тёплый", "pastel": "пастель", "mono_pop": "монохром с акцентом"}
+def new_intro(preset):
+    preset = preset if preset in PRESETS else "brand"; d = os.path.join(B.WORK, "intro"); os.makedirs(d, exist_ok=True)
+    src = os.path.join(B.REPO, "assets", "intro", "intro_t2x2.mp4"); out = os.path.join(d, f"intro_{preset}.mp4")
+    ok, o = B.run(["bash", os.path.join(B.T, "intro", "tint_intro.sh"), preset, src, out], timeout=900)
+    if not ok: raise RuntimeError("интро: " + o)
+    B.send_file(out, f"Интро «{PRESETS[preset]}» — ставить основным?", "video")
+    B.ask(f"Сделать интро «{PRESETS[preset]}» основным для новых видео?", use_intro, out)
+def use_intro(path):
+    B.S["intro_override"] = path; B.save(); os.environ["INTRO_FILE"] = path
+    B.say("✅ Новое интро будет в следующих нарезках.")
+
+# chat tools for all of the above
+FUNCS += [
+    ("set_video_title", "поменять название уже опубликованного видео (видео — ссылка или слова из названия)", {"video": {"type": "string"}, "title": {"type": "string"}}),
+    ("replace_cover", "поменять обложку уже опубликованного видео (потом владелец пришлёт фото)", {"video": {"type": "string"}}),
+    ("list_videos", "показать последние видео канала", {}),
+    ("regenerate", "перегенерировать (заново отрендерить) текущую нарезку", {}),
+    ("new_intro", "сделать интро в другом современном оттенке: neon, brand, cold, warm, pastel, mono_pop", {"preset": {"type": "string"}}),
+    ("free_disk", "освободить место на диске сервера", {}),
+    ("retry_last", "повторить последнюю упавшую задачу", {}),
+]
+HEAVY |= {"set_video_title", "regenerate"}
+RU.update({"set_video_title": lambda a: f"переименовать видео «{a.get('video', '')}» → «{a.get('title', '')}»",
+           "regenerate": lambda a: "заново отрендерить текущую нарезку"})
+_run_fn0 = run_fn
+def run_fn(name, a):
+    if name == "set_video_title": return B.bg("переименование видео", set_video_title, a.get("video", ""), a.get("title", ""))
+    if name == "replace_cover": return B.bg("поиск видео для обложки", ask_cover, a.get("video", ""))
+    if name == "list_videos":
+        vs = videos(); return B.say("\n".join(f"• {B.esc(v['title'][:80])} — https://youtu.be/{v['id']}" for v in vs[:15]) or "Не смог открыть список (Studio?)")
+    if name == "regenerate": return regenerate()
+    if name == "new_intro": return B.bg("новое интро", new_intro, a.get("preset", "brand"))
+    if name == "free_disk": return B.say(f"🧹 Освободил {cleanup():.1f} ГБ. {B.disk()}")
+    if name == "retry_last": return retry_last()
+    return _run_fn0(name, a)
