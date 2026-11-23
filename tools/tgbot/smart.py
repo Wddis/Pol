@@ -493,3 +493,36 @@ def run_fn(name, a):
     if name == "free_disk": return B.say(f"🧹 Освободил {cleanup():.1f} ГБ. {B.disk()}")
     if name == "retry_last": return retry_last()
     return _run_fn0(name, a)
+
+# ----------------------------------------------------------------- the agent with its own cloud Linux (agent.py)
+AGENT = {"cur": None}
+def agent_task(task):
+    import agent
+    if AGENT["cur"] and not AGENT["cur"].stop: return B.say("🧑‍💻 Агент уже занят задачей — «стоп», чтобы остановить.")
+    def work():
+        try:
+            a = agent.Agent(task, say=B.say, send=lambda p, c: B.send_file(p, c, "video" if p.endswith(".mp4") else ("photo" if p.endswith((".png", ".jpg")) else "document")))
+            AGENT["cur"] = a; B.blog("agent_start", task=task[:500], mode=a.sb.mode); r = a.run()
+            B.blog("agent_end", result=str(r)[:800], steps=len(a.log))
+        except Exception as ex:
+            B.blog("error", where="agent", err=str(ex)[:500], tb=traceback.format_exc()[-1500:]); B.say(f"❌ Агент: <code>{B.esc(str(ex)[:300])}</code>")
+        finally:
+            if AGENT["cur"]: AGENT["cur"].stop = True
+    threading.Thread(target=work, daemon=True).start()
+def agent_stop():
+    if AGENT["cur"] and not AGENT["cur"].stop: AGENT["cur"].stop = True; return B.say("⏹ Останавливаю агента после текущего шага.")
+    B.say("Агент сейчас ничем не занят.")
+FUNCS += [("agent_task", "сложная задача для агента со своим облачным Linux: написать/отладить код, смонтировать/сгенерировать видео или "
+           "картинку ffmpeg/python, исследовать проблему, сделать скриншоты — всё, чего нет в других функциях", {"task": {"type": "string"}}),
+          ("agent_stop", "остановить агента", {})]
+HEAVY |= {"agent_task"}
+RU["agent_task"] = lambda a: f"поручить агенту (свой Linux): {a.get('task', '')[:200]}"
+_run_fn1 = run_fn
+def run_fn(name, a):
+    if name == "agent_task": return agent_task(a.get("task", ""))
+    if name == "agent_stop": return agent_stop()
+    return _run_fn1(name, a)
+_chat0 = chat
+def chat(txt):
+    if re.match(r"(?i)^\s*(стоп|stop|хватит)\s*!?\s*$", txt) and AGENT["cur"] and not AGENT["cur"].stop: return agent_stop()
+    return _chat0(txt)

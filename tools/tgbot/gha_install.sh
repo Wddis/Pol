@@ -17,3 +17,5 @@ fi
 mkdir -p ~/models
 [ -s ~/models/qwen3b.gguf ] || curl -fsSL -o ~/models/qwen3b.gguf https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF/resolve/main/qwen2.5-3b-instruct-q4_k_m.gguf
 echo "install ok"
+# the agent's own cloud Linux (docker sandbox: desktop on Xvfb + dev tools); without docker the agent uses a separate user
+command -v docker >/dev/null && (docker image inspect t2x2-sandbox >/dev/null 2>&1 || docker build -q -t t2x2-sandbox tools/tgbot/sandbox >/dev/null) && echo "sandbox image ok" || echo "sandbox: user mode"
