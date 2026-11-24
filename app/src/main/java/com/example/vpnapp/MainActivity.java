@@ -182,7 +182,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         appsRow.setBackgroundResource(R.drawable.bg_cell_bottom);
         showRows();
 
-        modeRow.setOnClickListener(v -> openBridges());
+        modeRow.setOnClickListener(v -> openPicker());
         appsRow.setOnClickListener(v -> openApps());
         keyBanner.setOnClickListener(v -> OdaSheet.openBot(this, "renew"));
         findViewById(R.id.menuButton).setOnClickListener(v -> OdaSheet.open(this, OdaSheet.MENU));
@@ -191,7 +191,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
             onPowerClick();
         });
         speedLink.setOnClickListener(v -> runSpeedTest());
-        findViewById(R.id.engineCell).setOnClickListener(v -> openBridges());
+        findViewById(R.id.engineCell).setOnClickListener(v -> openPicker());
         findViewById(R.id.killSwitch).setOnClickListener(v -> openKillSwitchSettings());
         findViewById(R.id.historyLog).setOnClickListener(v -> openLog());
         findViewById(R.id.historyClear).setOnClickListener(v -> {
@@ -222,15 +222,6 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
                 CountryPickerSheet.REQUEST_KEY, this, (key, result) -> {
                     String code = result.getString(CountryPickerSheet.RESULT_CODE);
                     if (code != null) onCountryPicked(code);
-                });
-        getSupportFragmentManager().setFragmentResultListener(
-                BridgesSheet.REQUEST_KEY, this, (key, result) -> {
-                    showRows();
-                    // Новый режим мостов при включённом VPN — переподключение
-                    boolean changed = result.getBoolean(BridgesSheet.RESULT_CHANGED);
-                    if (changed && (state == ConnectionState.ON || state == ConnectionState.CONNECTING)) {
-                        sendToService(VpnTunnelService.ACTION_RECONNECT);
-                    }
                 });
         getSupportFragmentManager().setFragmentResultListener(
                 AppsSheet.REQUEST_KEY, this, (key, result) -> {
@@ -387,6 +378,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         if (code.equals(prefs.getCountry())) return;
         prefs.setCountry(code);
         showRows();
+        if (tab == TAB_SETTINGS) buildSettings();
         // При включённом режиме смена страны = переподключение
         if (state == ConnectionState.ON || state == ConnectionState.CONNECTING) {
             sendToService(VpnTunnelService.ACTION_COUNTRY);
@@ -636,9 +628,8 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     // ---------- строки главной ----------
 
     private void showRows() {
-        BridgeMode mode = prefs.getMode();
-        bindRow(modeRow, R.drawable.ic_bolt, true, getString(mode.title),
-                getString(mode == BridgeMode.AUTO ? R.string.mode_row_sub_auto : R.string.mode_row_sub), null);
+        bindRow(modeRow, R.drawable.ic_bolt, true, getString(R.string.mode_psiphon),
+                Country.label(this, prefs.getCountry()), null);
         bindRow(appsRow, R.drawable.ic_globe, false, getString(R.string.apps_row), appsText(), null);
         // На главной подписи в одну строку: высота строк не меняется при смене способа
         for (View row : new View[]{modeRow, appsRow}) {
@@ -759,14 +750,9 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
      */
     private void buildSettings() {
         settingsList.removeAllViews();
-        BridgeMode mode = prefs.getMode();
         section(R.string.section_connection);
-        row(R.drawable.ic_bolt, true, getString(R.string.set_mode), getString(mode.hint), getString(mode.title), v -> openBridges());
-        if (mode != BridgeMode.BYPASS) {
-            Country c = Country.find(this, prefs.getCountry());
-            row(R.drawable.ic_place, false, getString(R.string.set_country), getString(R.string.set_country_sub),
-                    c.name + (Country.isAny(c.code) ? "" : " " + Country.flag(c.code)), v -> openPicker());
-        }
+        row(R.drawable.ic_place, true, getString(R.string.mode_psiphon),
+                getString(R.string.set_country_sub), Country.label(this, prefs.getCountry()), v -> openPicker());
         row(R.drawable.ic_globe, false, getString(R.string.set_apps), appsText(), null, v -> openApps());
 
         section(R.string.section_protection);
@@ -855,11 +841,6 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
     private void openLog() {
         if (getSupportFragmentManager().findFragmentByTag(LogSheet.TAG) != null) return;
         new LogSheet().show(getSupportFragmentManager(), LogSheet.TAG);
-    }
-
-    private void openBridges() {
-        if (getSupportFragmentManager().findFragmentByTag(BridgesSheet.TAG) != null) return;
-        new BridgesSheet().show(getSupportFragmentManager(), BridgesSheet.TAG);
     }
 
     private void openApps() {

@@ -45,6 +45,9 @@ jobs:
       - name: Test DPI bypass strategies
         run: bash scripts/test-bypass.sh
 
+      - name: Test Psiphon readiness and recovery
+        run: bash scripts/test-psiphon-health.sh
+
       # Лицензия ключа в приложении: Ed25519 на Java (векторы RFC 8032) против кода подписи сервера ключей,
       # защита от подделки срока, чужого телефона, перевода часов назад
       - name: Test key licenses (Ed25519, License.java)

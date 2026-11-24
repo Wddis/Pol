@@ -19,7 +19,6 @@ public final class Prefs {
 
     private static final String FILE = "oda_prefs";
     private static final String KEY_COUNTRY = "country";
-    private static final String KEY_MODE = "bridge_mode";
     private static final String KEY_CUSTOM = "custom_bridges";
     private static final String KEY_BYEDPI = "byedpi_args";
     // До 0.8.5: название сработавшей стратегии, одно на все сети (там могла остаться «oob SNI»)
@@ -38,6 +37,11 @@ public final class Prefs {
 
     public Prefs(Context context) {
         sp = context.getApplicationContext().getSharedPreferences(FILE, Context.MODE_PRIVATE);
+        String savedCountry = sp.getString(KEY_COUNTRY, DEFAULT_COUNTRY);
+        String supportedCountry = Country.find(context, savedCountry).code;
+        if (!supportedCountry.equals(savedCountry)) {
+            sp.edit().putString(KEY_COUNTRY, supportedCountry).apply();
+        }
     }
 
     public String getCountry() {
@@ -49,11 +53,7 @@ public final class Prefs {
     }
 
     BridgeMode getMode() {
-        return BridgeMode.from(sp.getString(KEY_MODE, BridgeMode.AUTO.name()));
-    }
-
-    void setMode(BridgeMode mode) {
-        sp.edit().putString(KEY_MODE, mode.name()).apply();
+        return BridgeMode.PSIPHON;
     }
 
     String getCustomBridges() {

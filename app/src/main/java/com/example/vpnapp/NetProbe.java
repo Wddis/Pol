@@ -36,8 +36,8 @@ import javax.net.ssl.SSLSocketFactory;
  * Проверка сети мимо VPN (само приложение исключено из VPN). Вызывать из фонового потока.
  * <p>
  * 1) Напрямую ({@link #run}): открываются ли зарубежные и российские сайты. Если российские
- * открываются, а зарубежные нет — у оператора, скорее всего, «белые списки», и обойти их не сможет
- * ни Psiphon, ни Tor. Этот же результат — эталон «обычного интернета» для обхода DPI.
+ * открываются, а зарубежные нет — оператор может использовать «белый список».
+ * Этот же результат используется как эталон «обычного интернета» для обхода DPI.
  * <p>
  * 2) Через SOCKS обхода DPI ({@link #bypassQuality}) — так же, как пойдёт трафик телефона:
  * DNS через 1.1.1.1 (такой DNS у телефона при обходе DPI), соединение по IP через SOCKS
@@ -378,6 +378,17 @@ final class NetProbe {
         return fetchError(host, path, ip, port, socksPort) == null;
     }
 
+    /** Проверка HTTPS с DNS на стороне Psiphon. Никогда не выполняется напрямую. */
+    static boolean psiphonHealth(int socksPort) {
+        if (socksPort <= 0) return false;
+        for (Site site : new Site[]{FOREIGN[0], FOREIGN[1]}) {
+            if (fetchError(site.host, site.path, null, 443, socksPort, 2_500, true) == null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /**
      * То же, что {@link #fetch}, но с причиной: null — открылся; «TCP» — нет соединения;
      * «TLS» — нет ответа на рукопожатие; «сброс» — соединение сброшено; «серт.» — чужой
@@ -386,15 +397,21 @@ final class NetProbe {
      */
     @Nullable
     static String fetchError(String host, String path, InetAddress ip, int port, int socksPort) {
+        return fetchError(host, path, ip, port, socksPort, READ_TIMEOUT_MS, false);
+    }
+
+    @Nullable
+    private static String fetchError(String host, String path, @Nullable InetAddress ip, int port,
+                                     int socksPort, int readTimeout, boolean requireSuccess) {
         long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(SITE_DEADLINE_MS);
         Socket raw = new Socket();
         try {
-            raw.setSoTimeout(READ_TIMEOUT_MS);
+            raw.setSoTimeout(readTimeout);
             raw.setTcpNoDelay(true);
             try {
                 if (socksPort > 0) {
                     raw.connect(new InetSocketAddress("127.0.0.1", socksPort), CONNECT_TIMEOUT_MS);
-                    socks5Connect(raw, ip, port);
+                    socks5Connect(raw, ip != null ? ip.getAddress() : null, host, port);
                 } else {
                     raw.connect(new InetSocketAddress(ip, port), CONNECT_TIMEOUT_MS);
                 }
@@ -404,13 +421,14 @@ final class NetProbe {
             SSLSocket ssl = (SSLSocket) tlsFactory.createSocket(raw, host, port, true);
             SSLParameters params = ssl.getSSLParameters();
             params.setServerNames(Collections.singletonList(new SNIHostName(host)));
+            if (requireSuccess) params.setEndpointIdentificationAlgorithm("HTTPS");
             ssl.setSSLParameters(params);
             try {
                 ssl.startHandshake();
             } catch (IOException e) {
                 return ioReason(e, "TLS");
             }
-            if (!hostnameVerifier.verify(host, ssl.getSession())) return "серт.";
+            if (!requireSuccess && !hostnameVerifier.verify(host, ssl.getSession())) return "серт.";
             OutputStream out = ssl.getOutputStream();
             out.write(("GET " + path + " HTTP/1.1\r\nHost: " + host + "\r\nUser-Agent: " + UA
                     + "\r\nAccept: text/html,*/*\r\nAccept-Encoding: identity\r\nConnection: close\r\n\r\n")
@@ -418,24 +436,27 @@ final class NetProbe {
             out.flush();
             InputStream in = ssl.getInputStream();
             byte[] buf = new byte[8192];
-            byte[] head = new byte[5];
+            byte[] head = new byte[requireSuccess ? 12 : 5];
             int headLen = 0;
             int total = 0;
             try {
                 while (total < ENOUGH_BYTES) {
                     long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
                     if (left <= 0) return total / 1024 + " КБ";  // данные идут слишком медленно или застряли
-                    ssl.setSoTimeout((int) Math.min(READ_TIMEOUT_MS, left));
+                    ssl.setSoTimeout((int) Math.min(readTimeout, left));
                     int n = in.read(buf);
                     if (n < 0) break;  // весь ответ получен
                     for (int i = 0; i < n && headLen < head.length; i++) head[headLen++] = buf[i];
+                    if (requireSuccess && headLen == head.length) break;
                     total += n;
                 }
             } catch (IOException e) {
                 return ioReason(e, total / 1024 + " КБ");
             }
-            return headLen == head.length
-                    && "HTTP/".equals(new String(head, StandardCharsets.US_ASCII)) ? null : "HTTP";
+            if (headLen != head.length) return "HTTP";
+            String status = new String(head, StandardCharsets.US_ASCII);
+            return (requireSuccess ? status.matches("HTTP/1\\.[01] 2[0-9]{2}") : "HTTP/".equals(status))
+                    ? null : "HTTP";
         } catch (IOException | RuntimeException e) {
             return "ошибка";
         } finally {
@@ -453,20 +474,27 @@ final class NetProbe {
         return m.contains("reset") ? "сброс" : where;
     }
 
-    /** SOCKS5 CONNECT по IP — так же, как к ByeDPI подключается tun2socks. */
-    private static void socks5Connect(Socket s, InetAddress ip, int port) throws IOException {
+    /** SOCKS5 CONNECT по IP или с DNS на стороне прокси. */
+    private static void socks5Connect(Socket s, @Nullable byte[] address, String host, int port)
+            throws IOException {
         OutputStream out = s.getOutputStream();
         InputStream in = s.getInputStream();
         out.write(new byte[]{5, 1, 0});
         out.flush();
         byte[] auth = readFully(in, 2);
         if (auth[0] != 5 || auth[1] != 0) throw new IOException("SOCKS: нет доступа");
-        byte[] addr = ip.getAddress();
+        byte[] addr = address != null ? address : host.getBytes(StandardCharsets.US_ASCII);
         ByteArrayOutputStream req = new ByteArrayOutputStream();
         req.write(5);
         req.write(1);
         req.write(0);
-        req.write(addr.length == 4 ? 1 : 4);
+        if (address == null) {
+            if (addr.length == 0 || addr.length > 255) throw new IOException("SOCKS: имя хоста");
+            req.write(3);
+            req.write(addr.length);
+        } else {
+            req.write(addr.length == 4 ? 1 : 4);
+        }
         req.write(addr, 0, addr.length);
         req.write(port >> 8);
         req.write(port & 0xff);

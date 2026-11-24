@@ -20,13 +20,13 @@
     <string name="detail_ip">IP %1$s · %2$s</string>
     <string name="detail_ip_only">IP %1$s</string>
     <string name="detail_ip_unknown">IP не определён</string>
-    <string name="detail_region_fallback">Выбранной страны нет в Psiphon, выход в другой стране</string>
 
     <!-- Psiphon -->
-    <string name="psiphon_starting">Psiphon: запуск…</string>
-    <string name="psiphon_searching">Psiphon: поиск сервера, попыток %1$d</string>
-    <string name="psiphon_reconnecting">Psiphon переподключается…</string>
-    <string name="psiphon_timeout">не подключился вовремя</string>
+    <string name="psiphon_starting">Подключение к серверу ODA…</string>
+    <string name="psiphon_reconnecting">Восстанавливаем подключение…</string>
+    <string name="psiphon_waiting_network">Ожидаем доступную сеть…</string>
+    <string name="psiphon_timeout">За отведённое время HTTPS через туннель не ответил</string>
+    <string name="psiphon_recovery_timeout">Туннель не восстановился за отведённое время</string>
 
     <!-- Обход DPI (ByeDPI) -->
     <string name="bypass_trying">Обход DPI: проверяю %1$s…</string>
@@ -98,11 +98,11 @@
     <string name="error_timeout">Tor не подключился вовремя</string>
     <string name="error_blocked">Tor заблокирован в этой сети. Попробуйте способ «Авто» (с Psiphon), Wi-Fi или мосты /webtunnel из @GetBridgesBot (СПОСОБ → Свои мосты). Подробности в ЖУРНАЛЕ</string>
     <string name="error_all_blocked">Не удалось подключиться ни через Psiphon, ни через Tor. Попробуйте другую сеть (Wi-Fi) или свои мосты /webtunnel из @GetBridgesBot. Подробности в ЖУРНАЛЕ</string>
-    <string name="error_whitelist">Зарубежные сайты закрыты даже без VPN: похоже, оператор включил «белые списки». Их не обходит ни один способ. Подключитесь к Wi-Fi. Подробности в ЖУРНАЛЕ</string>
+    <string name="error_whitelist">В этой сети не удалось подключиться к серверам ODA. Возможно, оператор разрешает только выбранные сайты. Попробуйте другую сеть.</string>
     <string name="error_offline">Нет доступа в интернет. Проверьте подключение</string>
-    <string name="error_psiphon_missing">В этой сборке нет Psiphon. Выберите «Авто» или способ через Tor</string>
-    <string name="error_psiphon_stopped">Psiphon неожиданно остановился</string>
-    <string name="error_psiphon_failed">Psiphon не подключился. Попробуйте «Авто» или другую сеть (Wi-Fi). Подробности в ЖУРНАЛЕ</string>
+    <string name="error_psiphon_missing">В этой сборке отсутствует клиент ODA серверов.</string>
+    <string name="error_psiphon_stopped">Подключение не восстановилось. Попробуйте другую сеть.</string>
+    <string name="error_psiphon_failed">Подключение не удалось. Попробуйте «Авто» или другую сеть. Подробности в журнале.</string>
     <string name="error_bypass_missing">В этой сборке нет модуля обхода DPI. Выберите «Авто» или другой способ</string>
     <string name="error_bypass_stopped">Обход DPI неожиданно остановился</string>
     <string name="error_bypass_failed">Обход DPI не помог: сайты закрыты не по DPI, а по IP, либо «белые списки». Попробуйте «Авто» (Psiphon/Tor) или Wi-Fi. Подробности в ЖУРНАЛЕ</string>
@@ -119,7 +119,7 @@
     <string name="mode_auto_hint">Обход DPI, Psiphon и Tor одновременно: работает тот, кто подключится первым</string>
     <string name="mode_bypass">Обход DPI</string>
     <string name="mode_bypass_hint">Без сервера и ключей: прямое соединение с обходом фильтра. Быстро, но без выбора страны и без анонимности. Не поможет против блокировки по IP</string>
-    <string name="mode_psiphon">Psiphon</string>
+    <string name="mode_psiphon">ODA сервера</string>
     <string name="mode_psiphon_hint">Сеть Psiphon: десяток способов маскировки, подключается быстрее Tor. Не анонимна, как Tor</string>
     <string name="mode_snowflake">Snowflake</string>
     <string name="mode_snowflake_hint">Через браузеры добровольцев (CDN77 и Google AMP)</string>
@@ -164,11 +164,11 @@
         <item>GB</item>
         <item>US</item>
         <item>CA</item>
-        <item>JP</item>
-        <item>FI</item>
+        <item>IN</item>
+        <item>IT</item>
     </string-array>
     <string-array name="country_names">
-        <item>Авто (быстрее)</item>
+        <item>Авто</item>
         <item>Германия</item>
         <item>Нидерланды</item>
         <item>Швеция</item>
@@ -177,7 +177,7 @@
         <item>Великобритания</item>
         <item>США</item>
         <item>Канада</item>
-        <item>Япония</item>
-        <item>Финляндия</item>
+        <item>Индия</item>
+        <item>Италия</item>
     </string-array>
 </resources>

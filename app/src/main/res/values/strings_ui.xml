@@ -27,7 +27,7 @@
     <string name="speed_need_on">Тест скорости — после подключения</string>
     <string name="engine_label">Способ</string>
     <string name="engine_bypass">Обход DPI</string>
-    <string name="engine_psiphon">Psiphon</string>
+    <string name="engine_psiphon">ODA сервера</string>
     <string name="engine_tor">Tor</string>
     <string name="kill_switch_label">Kill Switch</string>
     <string name="kill_on">Включён</string>

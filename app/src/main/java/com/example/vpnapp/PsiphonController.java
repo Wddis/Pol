@@ -79,6 +79,9 @@ final class PsiphonController {
     private static final Object LAUNCH_LOCK = new Object();
     private static final long STALE_WAIT_MS = 3_000;
     private static final long SUMMARY_MS = 20_000;
+    private static final long HEALTH_INTERVAL_MS = 45_000;
+    private static final long HEALTH_RETRY_MS = 2_500;
+    private static final long RECOVERY_TIMEOUT_MS = 40_000;
     private static final int MAX_LOGGED_WARNINGS = 20;
     private static final int MAX_MESSAGE = 200;
 
@@ -88,11 +91,9 @@ final class PsiphonController {
     // Поля ниже меняются только в потоке handler
     @Nullable private Listener listener;
     private int session;
-    private boolean ready;
-    private boolean tunnelUp;
+    private final PsiphonHealth health = new PsiphonHealth();
+    private int checkingEpoch = -1;
     private int socksPort;
-    private String egressRegion = "";
-    private boolean regionFallback;
     @Nullable private String serverRegion;
     @Nullable private String protocol;
     private long timeoutMs;
@@ -104,6 +105,8 @@ final class PsiphonController {
     private volatile int liveSession;
 
     private final Runnable timeout = this::onTimeout;
+    private final Runnable healthCheck = this::checkHealth;
+    private final Runnable recoveryTimeout = this::onRecoveryTimeout;
 
     PsiphonController(Context context, Handler handler) {
         this.context = context.getApplicationContext();
@@ -127,7 +130,6 @@ final class PsiphonController {
         this.networkId = networkId;
         this.deviceRegion = deviceRegion;
         this.timeoutMs = timeoutMs;
-        regionFallback = false;
         launch(Country.isAny(countryCode) ? "" : countryCode.toUpperCase(Locale.ROOT), l);
         handler.postDelayed(timeout, timeoutMs);
     }
@@ -136,7 +138,6 @@ final class PsiphonController {
         listener = l;
         int s = ++session;
         liveSession = s;
-        egressRegion = region;
         File exe = new File(context.getApplicationInfo().nativeLibraryDir, LIB);
         DiagLog.add("Psiphon: запуск, выход " + (region.isEmpty() ? "любой" : region)
                 + ", сеть " + networkId.split("-")[0]);
@@ -146,19 +147,16 @@ final class PsiphonController {
         new Thread(() -> run(s, exe, region, id, device), "oda-psiphon").start();
     }
 
-    /** Выбранной страны нет среди серверов Psiphon: выход в любой стране. */
-    boolean isRegionFallback() {
-        return regionFallback;
-    }
-
     /** Остановка: процесс Psiphon завершается. */
     void stop() {
         listener = null;
         session++;
         liveSession = 0;
         handler.removeCallbacks(timeout);
-        ready = false;
-        tunnelUp = false;
+        handler.removeCallbacks(healthCheck);
+        handler.removeCallbacks(recoveryTimeout);
+        health.reset();
+        checkingEpoch = -1;
         socksPort = 0;
         serverRegion = null;
         protocol = null;
@@ -208,6 +206,7 @@ final class PsiphonController {
                     cmd.add("-serverList");
                     cmd.add(list.getAbsolutePath());
                 }
+                if (s != liveSession) return;
                 p = new ProcessBuilder(cmd).directory(dir).redirectErrorStream(true).start();
             } catch (IOException | JSONException | RuntimeException e) {
                 Log.w(TAG, "start", e);
@@ -243,7 +242,6 @@ final class PsiphonController {
         private int attempts;
         private int warnings;
         private long lastSummary = SystemClock.elapsedRealtime();
-        private long lastShown;
 
         Reader(int s) {
             this.s = s;
@@ -294,7 +292,6 @@ final class PsiphonController {
                     JSONArray regions = data.optJSONArray("regions");
                     String list = regions != null ? join(regions) : "";
                     DiagLog.add("Psiphon: доступные страны выхода " + (list.isEmpty() ? "—" : list));
-                    handler.post(() -> onRegions(s, list));
                     break;
                 }
                 case "RemoteServerListResourceDownloaded":
@@ -309,12 +306,6 @@ final class PsiphonController {
                     if (now - lastSummary >= SUMMARY_MS) {
                         lastSummary = now;
                         summary();
-                    }
-                    // Число попыток на экране — не чаще раза в секунду
-                    if (now - lastShown >= 1_000) {
-                        lastShown = now;
-                        int a = attempts;
-                        handler.post(() -> onAttempts(s, a));
                     }
                     break;
                 }
@@ -393,31 +384,10 @@ final class PsiphonController {
     // ---------- Поток handler: состояние ----------
 
     private void onSocksPort(int s, int port) {
-        if (s != session) return;
+        if (s != session || port == socksPort) return;
         socksPort = port;
         DiagLog.add("Psiphon: SOCKS порт " + port);
-        maybeReady();
-    }
-
-    /** Выбранной страны нет в списке Psiphon: перезапуск с выходом в любой стране. */
-    private void onRegions(int s, String regions) {
-        Listener l = listener;
-        if (s != session || l == null || ready || egressRegion.isEmpty() || regions.isEmpty()) return;
-        for (String r : regions.split(" ")) {
-            if (r.equals(egressRegion)) return;
-        }
-        DiagLog.add("Psiphon: страны " + egressRegion + " нет среди серверов, выход в любой стране");
-        regionFallback = true;
-        Process p = process;
-        process = null;
-        if (p != null) p.destroy();
-        launch("", l);
-    }
-
-    private void onAttempts(int s, int attempts) {
-        Listener l = listener;
-        if (s != session || l == null || ready) return;
-        l.onPsiphonProgress(context.getString(R.string.psiphon_searching, attempts));
+        if (health.transportUp() && port > 0) handler.post(healthCheck);
     }
 
     private void onConnectedServer(int s, String proto, String region) {
@@ -438,33 +408,70 @@ final class PsiphonController {
         Listener l = listener;
         if (s != session || l == null) return;
         boolean up = count > 0;
-        if (!ready) {
-            tunnelUp = up;
-            maybeReady();
-            return;
-        }
-        if (up != tunnelUp) {
-            tunnelUp = up;
-            l.onPsiphonTunnel(up);
+        if (up == health.transportUp()) return;
+        PsiphonHealth.Change change = health.transport(up);
+        handler.removeCallbacks(healthCheck);
+        if (change == PsiphonHealth.Change.LOST) reportLoss(l);
+        if (up && socksPort > 0) {
+            if (!health.connectedBefore()) {
+                l.onPsiphonProgress(context.getString(R.string.detail_checking));
+            }
+            handler.post(healthCheck);
         }
     }
 
-    private void maybeReady() {
+    private void checkHealth() {
+        if (listener == null || !health.transportUp() || socksPort <= 0) return;
+        int s = session;
+        int epoch = health.epoch();
+        if (checkingEpoch == epoch) return;
+        checkingEpoch = epoch;
+        int port = socksPort;
+        new Thread(() -> {
+            boolean ok = NetProbe.psiphonHealth(port);
+            handler.post(() -> onHealth(s, epoch, ok));
+        }, "oda-psiphon-health").start();
+    }
+
+    private void onHealth(int s, int epoch, boolean ok) {
         Listener l = listener;
-        if (l == null || ready || !tunnelUp || socksPort <= 0) return;
-        ready = true;
-        handler.removeCallbacks(timeout);
-        DiagLog.add("Psiphon подключён: " + (protocol != null ? protocol : "?")
-                + ", сервер " + (serverRegion != null ? serverRegion : "?"));
-        l.onPsiphonReady(socksPort, serverRegion);
+        if (s != session || l == null || epoch != health.epoch()) return;
+        checkingEpoch = -1;
+        PsiphonHealth.Change change = health.probe(epoch, ok);
+        if (change == PsiphonHealth.Change.READY) {
+            handler.removeCallbacks(timeout);
+            DiagLog.add("Psiphon: HTTPS доступен, " + protocol + ", сервер " + serverRegion);
+            l.onPsiphonReady(socksPort, serverRegion);
+        } else if (change == PsiphonHealth.Change.RESTORED) {
+            handler.removeCallbacks(recoveryTimeout);
+            l.onPsiphonTunnel(true);
+        } else if (change == PsiphonHealth.Change.LOST) {
+            reportLoss(l);
+        }
+        if (s == session && epoch == health.epoch()) {
+            handler.postDelayed(healthCheck, ok ? HEALTH_INTERVAL_MS : HEALTH_RETRY_MS);
+        }
+    }
+
+    void recheckNetwork() {
+        handler.removeCallbacks(healthCheck);
+        handler.post(healthCheck);
+    }
+
+    private void reportLoss(Listener l) {
+        handler.removeCallbacks(recoveryTimeout);
+        handler.postDelayed(recoveryTimeout, RECOVERY_TIMEOUT_MS);
+        l.onPsiphonTunnel(false);
+    }
+
+    private void onRecoveryTimeout() {
+        fail(session, context.getString(R.string.psiphon_recovery_timeout));
     }
 
     private void onTimeout() {
-        Listener l = listener;
-        if (l == null || ready) return;
+        if (listener == null || health.connectedBefore()) return;
         DiagLog.add("Psiphon: туннель не готов за " + timeoutMs / 1000 + " с");
-        stop();
-        l.onPsiphonError(context.getString(R.string.psiphon_timeout));
+        fail(session, context.getString(R.string.psiphon_timeout));
     }
 
     private void onExit(int s, int code) {

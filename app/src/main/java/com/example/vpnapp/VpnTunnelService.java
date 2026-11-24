@@ -67,9 +67,10 @@ public class VpnTunnelService extends VpnService
     private static final long DNSTT_STALL_MS = 120_000;
     private static final long DNSTT_HARD_MS = 240_000;
     // Psiphon сам перебирает серверы и способы маскировки: столько ждём первого туннеля
-    private static final long PSIPHON_TIMEOUT_MS = 8 * 60_000;
+    private static final long PSIPHON_TIMEOUT_MS = 35_000;
     // Перезапуски Psiphon, если его процесс завершился после подключения
     private static final int PSIPHON_RESTARTS = 3;
+    private static final long NETWORK_CHANGE_MS = 750;
     // Перезапуски ByeDPI, если его процесс завершился после подключения
     private static final int BYPASS_RESTARTS = 3;
     // Если полный перебор недавно не нашёл стратегию для соцсетей, в режиме «Обход DPI»
@@ -146,6 +147,22 @@ public class VpnTunnelService extends VpnService
     private boolean directDone;
     @Nullable private String tunDns;  // реальный DNS текущего tun (обход DPI); null — фиктивный
     private boolean underlyingIpv6;  // у сети оператора есть глобальный IPv6
+    @Nullable private ConnectivityManager connectivity;
+    @Nullable private Network underlyingNetwork;
+    private final Runnable networkChanged = this::checkUnderlyingNetwork;
+    private final Runnable restartPsiphon = this::startPsiphon;
+    private final ConnectivityManager.NetworkCallback networkCallback =
+            new ConnectivityManager.NetworkCallback() {
+                @Override
+                public void onAvailable(Network network) {
+                    scheduleNetworkCheck();
+                }
+
+                @Override
+                public void onLost(Network network) {
+                    scheduleNetworkCheck();
+                }
+            };
 
     @Override
     public void onCreate() {
@@ -156,6 +173,15 @@ public class VpnTunnelService extends VpnService
         thread = new HandlerThread("oda-vpn");
         thread.start();
         worker = new Handler(thread.getLooper());
+        connectivity = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        if (connectivity != null) {
+            try {
+                connectivity.registerDefaultNetworkCallback(networkCallback);
+            } catch (RuntimeException e) {
+                Log.w(TAG, "default network callback", e);
+                connectivity = null;
+            }
+        }
         tor = new TorController(this, worker);
         psiphon = new PsiphonController(this, worker);
         for (int i = 0; i < bypass.length; i++) bypass[i] = new BypassController(this, worker, i);
@@ -203,6 +229,9 @@ public class VpnTunnelService extends VpnService
 
     @Override
     public void onDestroy() {
+        if (connectivity != null) {
+            connectivity.unregisterNetworkCallback(networkCallback);
+        }
         worker.post(() -> {
             if (active) {
                 teardown();
@@ -223,6 +252,7 @@ public class VpnTunnelService extends VpnService
         int id = ++connection;
         netCountry = networkCountry();
         // Тип сети определяем до подъёма VPN, пока активна сеть оператора
+        underlyingNetwork = activeNetwork();
         networkId = networkId();
         underlyingIpv6 = underlyingHasIpv6();
         engine = null;
@@ -287,7 +317,11 @@ public class VpnTunnelService extends VpnService
         // Обход DPI запускаем первым: когда срабатывает, он самый быстрый (прямое соединение)
         if (bypassUsed) startBypass();
         if (psiphonUsed) {
-            startPsiphon();
+            if (mode == BridgeMode.PSIPHON && connectivity != null && underlyingNetwork == null) {
+                publish(ConnectionState.CONNECTING, getString(R.string.psiphon_waiting_network), "");
+            } else {
+                startPsiphon();
+            }
         } else if (helperOnly && helperPort > 0) {
             psiphonHelperOnly = true;
             DiagLog.add("Psiphon подключается в фоне — только как запасной путь для Telegram и того, "
@@ -339,6 +373,8 @@ public class VpnTunnelService extends VpnService
     }
 
     private void startPsiphon() {
+        worker.removeCallbacks(restartPsiphon);
+        if (!active) return;
         psiphonActive = true;
         psiphon.start(prefs.getCountry(), networkId, netCountry, PSIPHON_TIMEOUT_MS, this);
     }
@@ -546,6 +582,7 @@ public class VpnTunnelService extends VpnService
             generation++;
             stopTunnel();
             socksPort = 0;
+            psiphonRestarts = 0;
             publish(ConnectionState.CONNECTING, getString(R.string.detail_switching), "");
             startPsiphon();
             return;
@@ -553,6 +590,11 @@ public class VpnTunnelService extends VpnService
         if (engine == null) {
             // Ещё подключаемся: перезапускаем текущие попытки с новой страной
             if (psiphonActive) startPsiphon();
+            else if (prefs.getMode() == BridgeMode.PSIPHON
+                    && (connectivity == null || underlyingNetwork != null)) {
+                psiphonRestarts = 0;
+                startPsiphon();
+            }
             if (torActive && !plan.isEmpty()) startAttempt();
             // обход DPI страну не использует — его не трогаем
             return;
@@ -642,12 +684,13 @@ public class VpnTunnelService extends VpnService
         engine = StatusBus.ENGINE_PSIPHON;
         stopOtherEngines(StatusBus.ENGINE_PSIPHON);
         socksPort = port;
-        if (startTunnel()) checkIp();
+        if (startTunnel()) showVerifiedPsiphon();
     }
 
     @Override
     public void onPsiphonTunnel(boolean up) {
         if (StatusBus.ENGINE_BYPASS.equals(engine) && helperPort > 0) {
+            relay.setUpstream(up ? helperPsiphonPort : 0);
             DiagLog.add(up ? "Запасной путь (Psiphon): туннель восстановлен"
                     : "Запасной путь (Psiphon): туннель пропал, Psiphon переподключается");
             return;
@@ -655,7 +698,7 @@ public class VpnTunnelService extends VpnService
         if (!StatusBus.ENGINE_PSIPHON.equals(engine)) return;
         if (up) {
             DiagLog.add("Psiphon: туннель восстановлен");
-            checkIp();
+            showVerifiedPsiphon();
         } else {
             DiagLog.add("Psiphon: туннель пропал, Psiphon переподключается");
             generation++;
@@ -667,7 +710,8 @@ public class VpnTunnelService extends VpnService
     public void onPsiphonError(String reason) {
         if (!active) return;
         DiagLog.add("Psiphon: " + reason);
-        if (StatusBus.ENGINE_PSIPHON.equals(engine)) {
+        if (StatusBus.ENGINE_PSIPHON.equals(engine)
+                || (engine == null && psiphonRestarts > 0 && prefs.getMode() == BridgeMode.PSIPHON)) {
             // Psiphon был подключён и завершился: перезапускаем его
             engine = null;
             generation++;
@@ -675,7 +719,7 @@ public class VpnTunnelService extends VpnService
             socksPort = 0;
             if (psiphonRestarts++ < PSIPHON_RESTARTS) {
                 publish(ConnectionState.CONNECTING, getString(R.string.psiphon_reconnecting), "");
-                startPsiphon();
+                worker.postDelayed(restartPsiphon, 1_000L << (psiphonRestarts - 1));
                 return;
             }
             psiphonActive = false;
@@ -1071,17 +1115,27 @@ public class VpnTunnelService extends VpnService
         }
     }
 
+    private void showVerifiedPsiphon() {
+        psiphonRestarts = 0;
+        publish(ConnectionState.ON, psiphonDetail(null, null), "");
+        checkIp(false);
+    }
+
     /** Проверка IP и страны выхода в фоне, с повтором при неудаче. */
     private void checkIp() {
+        checkIp(true);
+    }
+
+    private void checkIp(boolean waitForIp) {
         int gen = ++generation;
-        publish(ConnectionState.CONNECTING, getString(R.string.detail_checking), "");
+        if (waitForIp) publish(ConnectionState.CONNECTING, getString(R.string.detail_checking), "");
         int port = socksPort;
         boolean viaTrace = StatusBus.ENGINE_PSIPHON.equals(engine)
                 || StatusBus.ENGINE_BYPASS.equals(engine);
         new Thread(() -> {
             String ip = null;
             String cc = null;
-            for (int i = 0; i < IP_CHECK_ATTEMPTS && ip == null; i++) {
+            for (int i = 0; i < (waitForIp ? IP_CHECK_ATTEMPTS : 1) && ip == null; i++) {
                 try {
                     if (viaTrace) {
                         IpChecker.Exit exit = IpChecker.fetchTrace(port);
@@ -1149,18 +1203,19 @@ public class VpnTunnelService extends VpnService
     /** Строка под статусом при подключении через Psiphon. */
     private String psiphonDetail(@Nullable String ip, @Nullable String cc) {
         String proto = psiphon.protocol();
-        StringBuilder sb = new StringBuilder("Psiphon");
+        StringBuilder sb = new StringBuilder(getString(R.string.mode_psiphon));
         if (proto != null && !proto.isEmpty()) sb.append(" (").append(proto).append(')');
         String code = cc != null ? cc.toUpperCase(Locale.ROOT) : psiphon.serverRegion();
         sb.append(" · ");
-        if (ip == null) {
+        if (ip == null && code != null && !code.isEmpty()) {
+            sb.append(Country.label(this, code));
+        } else if (ip == null) {
             sb.append(getString(R.string.detail_ip_unknown));
         } else if (code == null || code.isEmpty()) {
             sb.append(getString(R.string.detail_ip_only, ip));
         } else {
             sb.append(getString(R.string.detail_ip, ip, Country.label(this, code)));
         }
-        if (psiphon.isRegionFallback()) sb.append('\n').append(getString(R.string.detail_region_fallback));
         return sb.toString();
     }
 
@@ -1250,6 +1305,53 @@ public class VpnTunnelService extends VpnService
     }
 
     // ---------- Сеть ----------
+
+    @Nullable
+    private Network activeNetwork() {
+        ConnectivityManager manager = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        return manager != null ? manager.getActiveNetwork() : null;
+    }
+
+    private void scheduleNetworkCheck() {
+        worker.removeCallbacks(networkChanged);
+        worker.postDelayed(networkChanged, NETWORK_CHANGE_MS);
+    }
+
+    private void checkUnderlyingNetwork() {
+        if (!active || prefs.getMode() != BridgeMode.PSIPHON || connectivity == null) return;
+        Network next = activeNetwork();
+        NetworkCapabilities capabilities = next != null ? connectivity.getNetworkCapabilities(next) : null;
+        // Android может ещё сообщать о VPN при переключении системной сети.
+        if (capabilities != null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return;
+        if (Objects.equals(next, underlyingNetwork)) return;
+        underlyingNetwork = next;
+        networkId = networkId();
+        netCountry = networkCountry();
+        if (next != null && StatusBus.ENGINE_PSIPHON.equals(engine)) {
+            // Сохраняем соединение, пока новый маршрут пропускает трафик через текущий туннель.
+            psiphon.recheckNetwork();
+            return;
+        }
+        psiphonRestarts = 0;
+        worker.removeCallbacks(restartPsiphon);
+        psiphon.stop();
+        psiphonActive = false;
+        generation++;
+        int id = ++connection;
+        probe = null;
+        directScore = null;
+        directDone = false;
+        engine = null;
+        stopTunnel();
+        socksPort = 0;
+        publish(ConnectionState.CONNECTING, getString(next == null
+                ? R.string.psiphon_waiting_network : R.string.psiphon_reconnecting), "");
+        if (next != null) {
+            NetProbe.resetDns();
+            probeNetwork(id);
+            startPsiphon();
+        }
+    }
 
     /** Код страны сети оператора (подсказка для Moat и Psiphon), без разрешений. */
     @Nullable
@@ -1394,6 +1496,8 @@ public class VpnTunnelService extends VpnService
     private void teardown() {
         keyWatch.stopped();
         active = false;
+        worker.removeCallbacks(networkChanged);
+        worker.removeCallbacks(restartPsiphon);
         generation++;
         bypassWatch++;
         connection++;
