@@ -629,7 +629,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
 
     private void showRows() {
         bindRow(modeRow, R.drawable.ic_bolt, true, getString(R.string.mode_psiphon),
-                Country.label(this, prefs.getCountry()), null);
+                Country.selectionLabel(this, prefs.getCountry()), null);
         bindRow(appsRow, R.drawable.ic_globe, false, getString(R.string.apps_row), appsText(), null);
         // На главной подписи в одну строку: высота строк не меняется при смене способа
         for (View row : new View[]{modeRow, appsRow}) {
@@ -752,7 +752,7 @@ public class MainActivity extends AppCompatActivity implements StatusBus.Listene
         settingsList.removeAllViews();
         section(R.string.section_connection);
         row(R.drawable.ic_place, true, getString(R.string.mode_psiphon),
-                getString(R.string.set_country_sub), Country.label(this, prefs.getCountry()), v -> openPicker());
+                getString(R.string.set_country_sub), Country.selectionLabel(this, prefs.getCountry()), v -> openPicker());
         row(R.drawable.ic_globe, false, getString(R.string.set_apps), appsText(), null, v -> openApps());
 
         section(R.string.section_protection);

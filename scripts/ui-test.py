@@ -281,7 +281,7 @@ def main():
     tap(rid="modeRow")
     time.sleep(1.5)  # лист выезжает
     shot("ода-сервера")
-    tap(text="Германия")
+    tap(text="Германия (Анти-глушилка)")
     time.sleep(1.5)
     ok(find(rid="powerButton") is not None, "список стран закрылся после выбора")
     close_sheet()

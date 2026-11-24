@@ -9,7 +9,7 @@ import java.util.List;
 /** Страна выхода: двухбуквенный код и название. */
 public final class Country {
 
-    /** Регион «Авто»: страну выхода выбирает Tor. */
+    /** Регион «Авто»: страну выхода выбирает клиент туннеля. */
     public static final String ANY = "ANY";
 
     public final String code;
@@ -55,6 +55,17 @@ public final class Country {
         String f = flag(code);
         String name = nameOf(context, code);
         return f.isEmpty() ? name : name + " " + f;
+    }
+
+    static String selectionName(Context context, String code) {
+        String name = nameOf(context, code);
+        return PsiphonRoute.priority(code) ? context.getString(R.string.country_anti_label, name) : name;
+    }
+
+    static String selectionLabel(Context context, String code) {
+        String name = selectionName(context, code);
+        String flag = flag(code);
+        return flag.isEmpty() ? name : name + " " + flag;
     }
 
     /** Название страны по коду; для стран вне списка — сам код. */

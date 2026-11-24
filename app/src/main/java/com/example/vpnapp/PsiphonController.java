@@ -62,7 +62,6 @@ final class PsiphonController {
     private static final String TAG = "PsiphonController";
     private static final String LIB = "libpsiphon.so";
     private static final String DIR = "psiphon";
-    private static final String DATA_DIR = "data";
     private static final String CONFIG_FILE = "config.json";
     private static final String SERVER_LIST_ASSET = "psiphon/server_list.txt";
     private static final String SERVER_LIST_FILE = "server_list.txt";
@@ -94,6 +93,7 @@ final class PsiphonController {
     private final PsiphonHealth health = new PsiphonHealth();
     private int checkingEpoch = -1;
     private int socksPort;
+    private String selectedRegion = "";
     @Nullable private String serverRegion;
     @Nullable private String protocol;
     private long timeoutMs;
@@ -130,12 +130,13 @@ final class PsiphonController {
         this.networkId = networkId;
         this.deviceRegion = deviceRegion;
         this.timeoutMs = timeoutMs;
-        launch(Country.isAny(countryCode) ? "" : countryCode.toUpperCase(Locale.ROOT), l);
+        launch(PsiphonRoute.region(countryCode), l);
         handler.postDelayed(timeout, timeoutMs);
     }
 
     private void launch(String region, Listener l) {
         listener = l;
+        selectedRegion = region;
         int s = ++session;
         liveSession = s;
         File exe = new File(context.getApplicationInfo().nativeLibraryDir, LIB);
@@ -191,7 +192,7 @@ final class PsiphonController {
                 if (!exe.isFile()) throw new IOException("нет " + LIB + " в APK");
                 killStale();
                 File dir = new File(context.getFilesDir(), DIR);
-                File data = new File(dir, DATA_DIR);
+                File data = new File(dir, PsiphonRoute.cacheDirectory(region));
                 //noinspection ResultOfMethodCallIgnored
                 data.mkdirs();
                 File config = writeConfig(dir, data, region, networkId, deviceRegion);
@@ -393,7 +394,7 @@ final class PsiphonController {
     private void onConnectedServer(int s, String proto, String region) {
         if (s != session) return;
         if (protocol == null && !proto.isEmpty()) protocol = proto;
-        if (serverRegion == null && !region.isEmpty()) serverRegion = region;
+        onServerRegion(s, region);
     }
 
     private void onProtocol(int s, String proto) {
@@ -401,7 +402,13 @@ final class PsiphonController {
     }
 
     private void onServerRegion(int s, String region) {
-        if (s == session && !region.isEmpty()) serverRegion = region;
+        if (s != session || region.isEmpty()) return;
+        if (!PsiphonRoute.acceptsRegion(selectedRegion, region)) {
+            DiagLog.add("Psiphon: выбран " + selectedRegion + ", сервер сообщил " + region);
+            fail(s, context.getString(R.string.psiphon_wrong_country));
+            return;
+        }
+        serverRegion = region;
     }
 
     private void onTunnels(int s, int count) {
@@ -503,6 +510,10 @@ final class PsiphonController {
                 .put("OnlyAfterAttempts", 0)));
         c.put("RemoteServerListSignaturePublicKey", SERVER_LIST_KEY);
         c.put("EgressRegion", region);
+        if (PsiphonRoute.priority(region)) {
+            c.put("InitialLimitTunnelProtocols", new JSONArray(PsiphonRoute.PRIORITY_TRANSPORTS));
+            c.put("InitialLimitTunnelProtocolsCandidateCount", PsiphonRoute.PRIORITY_CANDIDATES);
+        }
         c.put("NetworkID", networkId);
         if (deviceRegion != null) c.put("DeviceRegion", deviceRegion.toUpperCase(Locale.ROOT));
         // Нужен только SOCKS: в него заворачивает трафик tun2socks

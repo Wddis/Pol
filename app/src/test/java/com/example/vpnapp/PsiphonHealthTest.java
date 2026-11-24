@@ -41,7 +41,27 @@ final class PsiphonHealthTest {
         expect(READY, health.probe(health.epoch(), true));
 
         rejectsUnusableProxy();
+        checksCountryAffinity();
         System.out.println("Psiphon health and SOCKS routing: OK");
+    }
+
+    private static void checksCountryAffinity() {
+        List<String> marked = List.of("DE", "NL", "SE");
+        if (marked.stream().anyMatch(code -> !PsiphonRoute.priority(code))
+                || List.of("ANY", "CH", "FR", "GB", "US", "CA", "IN", "IT").stream()
+                .anyMatch(PsiphonRoute::priority)) {
+            throw new AssertionError("Only Germany, Netherlands and Sweden use priority transports");
+        }
+        if (!"data-DE".equals(PsiphonRoute.cacheDirectory("de"))
+                || !"data-NL".equals(PsiphonRoute.cacheDirectory("NL"))
+                || !"data".equals(PsiphonRoute.cacheDirectory("ANY"))
+                || !"data".equals(PsiphonRoute.cacheDirectory("../DE"))) {
+            throw new AssertionError("Affinity caches must be separated by valid region");
+        }
+        if (PsiphonRoute.acceptsRegion("DE", "NL") || !PsiphonRoute.acceptsRegion("DE", "de")
+                || !PsiphonRoute.acceptsRegion("", "NL")) {
+            throw new AssertionError("A manual region must reject a different reported country");
+        }
     }
 
     private static void rejectsUnusableProxy() throws Exception {

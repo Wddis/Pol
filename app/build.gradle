@@ -2,6 +2,8 @@ plugins {
     id 'com.android.application'
 }
 
+def odaPreview = providers.gradleProperty('odaPreview').isPresent()
+
 android {
     namespace = 'com.example.vpnapp'
     // tor-android требует compileSdk 37.1+ (Android 17); targetSdk остаётся 36
@@ -15,8 +17,9 @@ android {
         applicationId = 'com.example.vpnapp'
         minSdk = 24
         targetSdk = 36
-        versionCode = 27
-        versionName = '0.12.3'
+        versionCode = 28
+        versionName = '0.13.0'
+        manifestPlaceholders.odaAppLabel = odaPreview ? 'ODA Preview' : '@string/app_name'
 
         // Только ARM: реальные телефоны (x86 нужен лишь эмуляторам, экономим ~15 МБ).
         // -PodaEmulator — только x86_64: проверка в эмуляторе CI без трансляции ARM-кода (Go под ней падает)
@@ -57,7 +60,12 @@ android {
     }
     buildTypes {
         debug {
-            if (odaKeystore) signingConfig = signingConfigs.oda
+            if (odaPreview) {
+                applicationIdSuffix = '.preview'
+                versionNameSuffix = '-preview'
+            } else if (odaKeystore) {
+                signingConfig = signingConfigs.oda
+            }
         }
     }
 

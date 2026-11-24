@@ -27,6 +27,8 @@
     <string name="psiphon_waiting_network">Ожидаем доступную сеть…</string>
     <string name="psiphon_timeout">За отведённое время HTTPS через туннель не ответил</string>
     <string name="psiphon_recovery_timeout">Туннель не восстановился за отведённое время</string>
+    <string name="psiphon_wrong_country">Сервер находится в другой стране</string>
+    <string name="country_anti_label">%1$s (Анти-глушилка)</string>
 
     <!-- Обход DPI (ByeDPI) -->
     <string name="bypass_trying">Обход DPI: проверяю %1$s…</string>

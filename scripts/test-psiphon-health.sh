@@ -12,5 +12,6 @@ printf '%s\n' 'package com.example.vpnapp; final class DiagLog { static void add
     > "$tmp/DiagLog.java"
 javac -encoding UTF-8 -d "$tmp/classes" \
     "$tmp/Nullable.java" "$tmp/DiagLog.java" "$src/NetProbe.java" \
-    "$src/BypassSearch.java" "$src/BypassProfile.java" "$src/PsiphonHealth.java" "$test/PsiphonHealthTest.java"
+    "$src/BypassSearch.java" "$src/BypassProfile.java" "$src/PsiphonHealth.java" "$src/PsiphonRoute.java" \
+    "$test/PsiphonHealthTest.java"
 java -cp "$tmp/classes" com.example.vpnapp.PsiphonHealthTest "$@"
