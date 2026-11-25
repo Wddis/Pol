@@ -1,0 +1,71 @@
+profile,region_requested,attempt,utc,result,exit_region,transport,candidate_servers,connection_attempts,seconds_to_tunnel,seconds_to_https,elapsed_seconds,https_latency_ms,browser_example_http,browser_search_http,browser_protocol,notes
+linux_https_proxy,auto,1,2026-11-25T00:29:48+00:00,verified,CA,UNFRONTED-MEEK-OSSH,420,26,10.855,11.662,11.662,,,,,
+linux_https_proxy,DE,1,2026-11-25T00:29:48+00:00,verified,DE,UNFRONTED-MEEK-OSSH,44,13,8.748,9.888,9.888,,,,,
+linux_https_proxy,DE,2,2026-11-25T00:29:58+00:00,verified,DE,UNFRONTED-MEEK-OSSH,44,39,10.534,11.861,11.861,,,,,
+linux_https_proxy,NL,1,2026-11-25T00:30:00+00:00,verified,NL,UNFRONTED-MEEK-OSSH,35,19,9.375,10.616,10.616,,,,,
+linux_https_proxy,NL,2,2026-11-25T00:30:11+00:00,verified,NL,UNFRONTED-MEEK-OSSH,35,37,7.99,9.026,9.027,,,,,
+linux_https_proxy,SE,1,2026-11-25T00:30:10+00:00,verified,SE,UNFRONTED-MEEK-OSSH,11,15,9.661,10.865,10.865,,,,,
+linux_https_proxy,SE,2,2026-11-25T00:30:21+00:00,verified,SE,UNFRONTED-MEEK-OSSH,11,32,15.445,16.838,16.838,,,,,
+linux_https_proxy,CH,1,2026-11-25T00:30:20+00:00,verified,CH,UNFRONTED-MEEK-OSSH,8,23,14.453,15.563,15.563,,,,,
+linux_https_proxy,FR,1,2026-11-25T00:30:36+00:00,verified,FR,UNFRONTED-MEEK-OSSH,18,11,9.322,10.336,10.336,,,,,
+linux_https_proxy,GB,1,2026-11-25T00:30:38+00:00,verified,GB,UNFRONTED-MEEK-OSSH,32,15,9.386,10.393,10.393,,,,,
+linux_https_proxy,US,1,2026-11-25T00:30:46+00:00,verified,US,UNFRONTED-MEEK-OSSH,67,15,8.402,9.079,9.079,,,,,
+linux_https_proxy,CA,1,2026-11-25T00:30:49+00:00,verified,CA,UNFRONTED-MEEK-OSSH,57,9,7.371,8.309,8.309,,,,,
+linux_https_proxy,IN,1,2026-11-25T00:30:55+00:00,verified,IN,UNFRONTED-MEEK-OSSH,13,13,9.562,11.144,11.144,,,,,
+linux_https_proxy,IT,1,2026-11-25T00:30:57+00:00,verified,IT,UNFRONTED-MEEK-OSSH,10,10,8.065,9.254,9.254,,,,,
+linux_app_https_probe_mobile_priorities,auto,1,2026-11-25T00:34:08+00:00,verified,DE,UNFRONTED-MEEK-OSSH,420,44,17.388,21.385,21.385,2669,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,DE,1,2026-11-25T00:34:08+00:00,verified,DE,UNFRONTED-MEEK-OSSH,44,19,13.086,19.045,19.045,3758,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,DE,2,2026-11-25T00:34:28+00:00,verified,DE,UNFRONTED-MEEK-OSSH,44,13,3.973,7.988,7.988,2653,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,NL,1,2026-11-25T00:34:30+00:00,verified,NL,UNFRONTED-MEEK-OSSH,35,16,11.966,15.84,15.84,2339,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,NL,2,2026-11-25T00:34:46+00:00,verified,NL,UNFRONTED-MEEK-OSSH,35,12,4.687,12.448,12.448,4719,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,SE,1,2026-11-25T00:34:36+00:00,verified,SE,UNFRONTED-MEEK-OSSH,11,4,12.196,20.26,20.26,5047,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,SE,2,2026-11-25T00:34:57+00:00,verified,SE,UNFRONTED-MEEK-OSSH,11,2,5.7,10.783,10.783,2917,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,CH,1,2026-11-25T00:35:00+00:00,verified,CH,UNFRONTED-MEEK-OSSH,8,8,12.969,16.971,16.971,2858,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,FR,1,2026-11-25T00:35:09+00:00,verified,FR,UNFRONTED-MEEK-OSSH,18,11,11.879,17.444,17.444,3167,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,GB,1,2026-11-25T00:35:17+00:00,verified,GB,UNFRONTED-MEEK-OSSH,32,29,15.975,19.801,19.801,2674,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,US,1,2026-11-25T00:35:27+00:00,verified,US,UNFRONTED-MEEK-OSSH,67,62,23.805,30.405,30.405,3783,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s. This result arrived after that budget on Linux."
+linux_app_https_probe_mobile_priorities,CA,1,2026-11-25T00:35:38+00:00,verified,CA,UNFRONTED-MEEK-OSSH,57,22,17.118,22.593,22.593,2649,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,IN,1,2026-11-25T00:35:59+00:00,verified,IN,UNFRONTED-MEEK-OSSH,13,52,27.099,29.476,29.476,1957,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_mobile_priorities,IT,1,2026-11-25T00:36:01+00:00,verified,IT,UNFRONTED-MEEK-OSSH,10,20,16.63,18.869,18.869,1934,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_app_https_probe_30s_retest,US,1,2026-11-25T00:37:24+00:00,verified,US,UNFRONTED-MEEK-OSSH,67,23,9.399,10.476,10.476,702,,,,"Application HTTPS checker, including TLS and HTTP. The APK regional attempt budget is 30 s."
+linux_local_https_only,auto,1,2026-11-25T00:29:57+00:00,tunnel,,,420,340,,,35.121,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,DE,1,2026-11-25T00:29:57+00:00,tunnel,,,44,148,,,35.003,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,NL,1,2026-11-25T00:30:32+00:00,tunnel,,,35,245,,,35.0,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,SE,1,2026-11-25T00:30:32+00:00,tunnel,,,11,132,,,35.044,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,CH,1,2026-11-25T00:31:07+00:00,tunnel,,,8,104,,,35.201,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,FR,1,2026-11-25T00:31:07+00:00,tunnel,,,18,252,,,35.057,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,GB,1,2026-11-25T00:31:42+00:00,tunnel,,,32,343,,,35.21,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,US,1,2026-11-25T00:31:42+00:00,tunnel,,,67,402,,,35.054,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,CA,1,2026-11-25T00:32:17+00:00,tunnel,,,57,228,,,35.101,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,IN,1,2026-11-25T00:32:17+00:00,tunnel,,,13,161,,,35.027,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_local_https_only,IT,1,2026-11-25T00:32:53+00:00,tunnel,,,10,100,,,35.068,,,,,Local HTTPS control returned 200. No route to any external VPN gateway.
+linux_connect_host_allowlist,auto,1,2026-11-25T00:30:16+00:00,tunnel,,,420,420,,,35.161,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,DE,1,2026-11-25T00:30:16+00:00,tunnel,,,44,233,,,35.061,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,NL,1,2026-11-25T00:30:51+00:00,tunnel,,,35,385,,,35.144,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,SE,1,2026-11-25T00:30:51+00:00,tunnel,,,11,143,,,35.102,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,CH,1,2026-11-25T00:31:26+00:00,tunnel,,,8,112,,,35.027,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,FR,1,2026-11-25T00:31:26+00:00,tunnel,,,18,242,,,35.039,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,GB,1,2026-11-25T00:32:01+00:00,tunnel,,,32,374,,,35.139,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,US,1,2026-11-25T00:32:01+00:00,tunnel,,,67,527,,,35.002,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,CA,1,2026-11-25T00:32:36+00:00,tunnel,,,57,228,,,35.15,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,IN,1,2026-11-25T00:32:36+00:00,tunnel,,,13,143,,,35.097,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+linux_connect_host_allowlist,IT,1,2026-11-25T00:33:12+00:00,tunnel,,,10,110,,,35.007,,,,,External allowed HTTPS returned 200. Unlisted CONNECT returned 403.
+chromium_tun_default_dns,auto,1,2026-11-25T00:32:49+00:00,browser_verified,FR,UNFRONTED-MEEK-OSSH,420,9,10.157,11.367,26.136,,200,200,h2,
+chromium_tun_default_dns,DE,1,2026-11-25T00:32:49+00:00,browser_verified,DE,UNFRONTED-MEEK-OSSH,44,16,11.982,13.34,28.653,,200,200,h2,
+chromium_tun_default_dns,NL,1,2026-11-25T00:33:16+00:00,browser_verified,NL,UNFRONTED-MEEK-OSSH,35,29,14.695,15.801,25.195,,200,200,h2,
+chromium_tun_default_dns,SE,1,2026-11-25T00:33:19+00:00,tunnel,,,11,73,,,35.003,,,,,
+chromium_tun_default_dns,CH,1,2026-11-25T00:33:41+00:00,browser_verified,CH,UNFRONTED-MEEK-OSSH,8,16,12.812,13.89,26.502,,200,200,h2,
+chromium_tun_default_dns,FR,1,2026-11-25T00:33:54+00:00,browser_verified,FR,UNFRONTED-MEEK-OSSH,18,42,21.241,22.513,37.349,,200,200,h2,
+chromium_tun_default_dns,GB,1,2026-11-25T00:34:08+00:00,browser_verified,GB,UNFRONTED-MEEK-OSSH,32,59,22.277,23.376,36.087,,200,200,h2,
+chromium_tun_default_dns,US,1,2026-11-25T00:34:32+00:00,tunnel,,,67,95,,,35.138,,,,,
+chromium_tun_default_dns,CA,1,2026-11-25T00:34:45+00:00,browser_verified,CA,UNFRONTED-MEEK-OSSH,57,27,16.269,17.107,32.459,,200,200,h2,
+chromium_tun_default_dns,IN,1,2026-11-25T00:35:07+00:00,browser_verified,IN,UNFRONTED-MEEK-OSSH,13,48,27.417,29.099,49.911,,200,200,h2,
+chromium_tun_default_dns,IT,1,2026-11-25T00:35:19+00:00,browser_verified,IT,UNFRONTED-MEEK-OSSH,10,10,12.917,14.107,30.848,,200,200,h2,
+chromium_tun_retest,SE,2,2026-11-25T00:35:43+00:00,browser_verified,SE,UNFRONTED-MEEK-OSSH,11,11,14.079,15.872,30.866,,200,200,h2,
+chromium_tun_retest,US,2,2026-11-25T00:35:43+00:00,browser_verified,US,UNFRONTED-MEEK-OSSH,67,40,18.49,18.847,29.289,,200,200,h2,
+region_queue,,,,verified,,,,,,,,,,,,"Production queue code with simulated Android callbacks. Ten terminal results, two concurrent probes, retry, cache, cancellation, network change, 180 s deadline."
+chrome_local_tls,,,,verified,,,,,,,,,,,,"Chromium verified HTTPS 200 using system DNS, mapdns, TUN and SOCKS with a trusted test CA. The SOCKS CONNECT request carried the hostname."
+chrome_native_restart,,,,verified,,,,,,,,,,,,Chromium verified HTTPS 200 again after restarting the native tunnel in the Linux namespace.
+http3_fallback,,,,verified,,,,,,,,,,,,"Chromium NetLog recorded a QUIC session and UDP send error, then navigation succeeded over HTTP/1.1 after the server advertised h3."
+udp_reject,,,,verified,,,,,,,,,,,,"IPv4, IPv6 and mapped IPv4 UDP/443 received a local port-unreachable in at most 3.1 ms."
+parallel_health_probes,CH,,,verified,,,,,,,,,,,,"Main HTTPS status codes during DE and NL probes: 200,200,200,200,200,200,200,200"
