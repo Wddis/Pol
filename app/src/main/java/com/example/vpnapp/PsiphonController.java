@@ -3,6 +3,12 @@ package com.example.vpnapp;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.net.ConnectivityManager;
+import android.net.LinkProperties;
+import android.net.Network;
+import android.net.NetworkCapabilities;
+import android.net.ProxyInfo;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Handler;
 import android.os.SystemClock;
@@ -25,6 +31,8 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.Writer;
 import java.io.OutputStreamWriter;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -96,6 +104,8 @@ final class PsiphonController {
     private final PsiphonHealth health = new PsiphonHealth();
     private int checkingEpoch = -1;
     private int socksPort;
+    private int httpPort;
+
     private String selectedRegion = "";
     @Nullable private String serverRegion;
     @Nullable private String protocol;
@@ -169,6 +179,7 @@ final class PsiphonController {
         health.reset();
         checkingEpoch = -1;
         socksPort = 0;
+        httpPort = 0;
         latencyMs = -1;
         serverRegion = null;
         protocol = null;
@@ -190,6 +201,10 @@ final class PsiphonController {
     @Nullable
     String serverRegion() {
         return serverRegion;
+    }
+
+    int browserProxyPort() {
+        return httpPort;
     }
 
     long latencyMs() {
@@ -298,6 +313,11 @@ final class PsiphonController {
                 case "BuildInfo":
                     log("Psiphon: сборка " + clip(data.optString("buildRev")));
                     break;
+                case "ListeningHttpProxyPort": {
+                    int port = data.optInt("port");
+                    handler.post(() -> { if (s == session) httpPort = port; });
+                    break;
+                }
                 case "ListeningSocksProxyPort": {
                     int port = data.optInt("port");
                     handler.post(() -> onSocksPort(s, port));
@@ -524,6 +544,25 @@ final class PsiphonController {
 
     // ---------- Файлы ----------
 
+    @Nullable
+    private String upstreamProxy() {
+        ConnectivityManager manager = context.getSystemService(ConnectivityManager.class);
+        Network network = manager != null ? manager.getActiveNetwork() : null;
+        if (network == null) return null;
+        NetworkCapabilities caps = manager.getNetworkCapabilities(network);
+        if (caps == null || caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return null;
+        LinkProperties link = manager.getLinkProperties(network);
+        ProxyInfo proxy = link != null ? link.getHttpProxy() : null;
+        if (proxy == null || !Uri.EMPTY.equals(proxy.getPacFileUrl())
+                || proxy.getHost() == null || proxy.getPort() <= 0) return null;
+        try {
+            return new URI("http", null, proxy.getHost(), proxy.getPort(), null, null, null)
+                    .toASCIIString();
+        } catch (URISyntaxException ignored) {
+            return null;
+        }
+    }
+
     private void writeConfig(File file, File data, String region, String networkId,
                              @Nullable String deviceRegion) throws IOException, JSONException {
         JSONObject c = new JSONObject();
@@ -547,10 +586,12 @@ final class PsiphonController {
             c.put("InitialLimitTunnelProtocolsCandidateCount", PsiphonRoute.initialCandidateCount(transports));
             log("Psiphon: приоритет " + transports + ", затем все транспорты");
         }
+        String upstream = upstreamProxy();
+        if (upstream != null) c.put("UpstreamProxyUrl", upstream);
         c.put("NetworkID", networkId);
         if (deviceRegion != null) c.put("DeviceRegion", deviceRegion.toUpperCase(Locale.ROOT));
-        // Нужен только SOCKS: в него заворачивает трафик tun2socks
-        c.put("DisableLocalHTTPProxy", true);
+        // Android 10+ может передать адрес локального HTTP-прокси браузеру.
+        c.put("DisableLocalHTTPProxy", latencyProbe || Build.VERSION.SDK_INT < Build.VERSION_CODES.Q);
         c.put("LocalSocksProxyPort", 0);
         // Таймаут подключения считает приложение, сам Psiphon не сдаётся
         c.put("EstablishTunnelTimeoutSeconds", 0);

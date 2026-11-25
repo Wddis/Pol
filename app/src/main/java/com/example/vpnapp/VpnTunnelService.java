@@ -10,6 +10,7 @@ import android.net.LinkAddress;
 import android.net.LinkProperties;
 import android.net.Network;
 import android.net.NetworkCapabilities;
+import android.net.ProxyInfo;
 import android.net.VpnService;
 import android.os.Build;
 import android.os.Handler;
@@ -101,6 +102,7 @@ public class VpnTunnelService extends VpnService
     private boolean active;
     private boolean tunnelRunning;
     private int tunnelRun;
+    private int tunHttpPort;
     private int socksPort;
     private int generation;  // отсекает устаревшие результаты фоновых задач
     private int connection;  // номер подключения: отсекает ответы прошлого подключения
@@ -1048,7 +1050,8 @@ public class VpnTunnelService extends VpnService
     private boolean startTunnel(boolean fresh) {
         // Обходу DPI нужен реальный DNS без mapdns: при необходимости переустанавливаем tun
         boolean direct = StatusBus.ENGINE_BYPASS.equals(engine);
-        if (fresh || tun == null || !Objects.equals(direct ? bypassDns : null, tunDns)) {
+        if (fresh || tun == null || tunHttpPort != browserProxyPort()
+                || !Objects.equals(direct ? bypassDns : null, tunDns)) {
             try {
                 // Новый интерфейс — до закрытия старого: система переключает VPN без окна,
                 // когда трафик шёл бы мимо
@@ -1434,6 +1437,12 @@ public class VpnTunnelService extends VpnService
         return "UNKNOWN";
     }
 
+    private int browserProxyPort() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q || !StatusBus.ENGINE_PSIPHON.equals(engine)
+                || !prefs.getExcludedApps().isEmpty()) return 0;
+        return psiphon.browserProxyPort();
+    }
+
     private ParcelFileDescriptor establishTun(boolean directDns) throws IOException {
         // Tor/Psiphon: IPv6 тоже в туннель, чтобы он не утекал мимо. Обход DPI соединяет напрямую:
         // если у сети оператора нет IPv6, IPv6 в VPN не нужен и вреден — tun2socks принимает
@@ -1459,7 +1468,7 @@ public class VpnTunnelService extends VpnService
             // Tor/Psiphon: фиктивный DNS, перехватывает mapdns
             b.addDnsServer(Tun2SocksConfig.FAKE_DNS);
         }
-        tunDns = directDns ? bypassDns : null;
+        int browserPort = browserProxyPort();
         try {
             // Само приложение (Tor, мосты и Psiphon) ходит в сеть напрямую
             b.addDisallowedApplication(getPackageName());
@@ -1477,9 +1486,14 @@ public class VpnTunnelService extends VpnService
         }
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             b.setMetered(false);
+            if (browserPort > 0) {
+                b.setHttpProxy(ProxyInfo.buildDirectProxy("127.0.0.1", browserPort));
+            }
         }
         ParcelFileDescriptor fd = b.establish();
         if (fd == null) throw new IOException("VPN not prepared");
+        tunHttpPort = browserPort;
+        tunDns = directDns ? bypassDns : null;
         return fd;
     }
 

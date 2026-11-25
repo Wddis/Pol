@@ -1,0 +1,14 @@
+diff --git a/psiphon/httpProxy.go b/psiphon/httpProxy.go
+--- a/psiphon/httpProxy.go
++++ b/psiphon/httpProxy.go
+@@ -258,7 +258,9 @@ func (proxy *HttpProxy) ServeHTTP(responseWriter http.ResponseWriter, request *http.Request) {
+ 	} else if request.URL.IsAbs() {
+ 		proxy.httpProxyHandler(responseWriter, request)
+ 	} else {
+-		proxy.urlProxyHandler(responseWriter, request)
++		// Android advertises this port to other apps. Accept only standard
++		// forward-proxy traffic, which is always tunneled in ODA.
++		http.Error(responseWriter, "", http.StatusBadRequest)
+ 	}
+ }
+ 

@@ -43,6 +43,12 @@ if [ "$(git -C "$SRC" rev-parse -q --verify HEAD 2>/dev/null || true)" != "$COMM
 fi
 echo "Psiphon $(git -C "$SRC" rev-parse --short=10 HEAD): $SRC"
 
+# Системному HTTP-прокси доступны только запросы через туннель.
+PATCH="$ROOT/scripts/psiphon-http-proxy.patch"
+if ! git -C "$SRC" apply --reverse --check "$PATCH"; then
+    git -C "$SRC" apply "$PATCH"
+fi
+
 build() {
     local abi="$1" goarch="$2" cc="$3"
     mkdir -p "$OUT/$abi"
