@@ -117,7 +117,7 @@ def main():
             run(sys.executable,LEGACY/"tools/layout_detect.py",sample)
     elif action == "new_intro":
         OUTPUT.mkdir(exist_ok=True)
-        run("bash",LEGACY/"tools/intro/tint_intro.sh",a.style,EVIDENCE/"intro-original-2026-11-12.mp4",
+        run("bash",LEGACY/"tools/intro/tint_intro.sh",a.style,LEGACY/"assets/intro/intro_t2x2.mp4",
             OUTPUT/f"intro-{a.style}.mp4")
     elif action == "make_shorts":
         source, dest = Path(a.input).resolve(), Path(a.output).resolve()

@@ -17,7 +17,7 @@ import time
 from clip_core import ROOT, LEGACY, probe, read, run, timeline, write
 from pipeline_media import FF, checksum
 
-INTRO=ROOT/"evidence/intro-original-2026-11-12.mp4"
+INTRO=LEGACY/"assets/intro/intro_t2x2.mp4"
 CHANNEL="https://www.twitch.tv/t2x2"
 LIMIT=-1.0
 
