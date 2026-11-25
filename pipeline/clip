@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""Локальный интерфейс монтажного проекта T2x2."""
+import argparse
+import json
+import os
+import tempfile
+from pathlib import Path
+import shutil
+import sys
+
+from clip_core import EVIDENCE, LEGACY, OUTPUT, ROOT, probe, read, run, seconds, write
+
+def file_in_project(path):
+    path = Path(path)
+    return path if path.is_absolute() else ROOT/path
+
+def render(edl, preview):
+    from render import render as assemble
+    write(OUTPUT/"render_request.json",{"edl":str(edl),"preview":preview})
+    assemble(edl,preview)
+
+def edit_range(a):
+    start,end = seconds(a.start),seconds(a.end)
+    if end <= start:
+        raise ValueError("Конец должен быть позже начала.")
+    plan = read(ROOT/"edl.json")
+    if a.input:
+        plan.update({"source":str(Path(a.input).resolve()),"offset":a.offset})
+    source = file_in_project(plan["source"])
+    video = next(s for s in probe(source)["streams"] if s["codec_type"] == "video")
+    duration = float(video.get("duration",probe(source)["format"]["duration"]))
+    if start < plan["offset"] or end > plan["offset"]+duration:
+        raise ValueError("Диапазон выходит за пределы локального исходника.")
+    plan.update({"vod_keep":[[start,end]],"censorship":None,"donations":[]})
+    edl = OUTPUT/"range.edl.json"
+    write(edl,plan)
+    render(edl,True)
+
+def main():
+    if len(sys.argv)>1 and sys.argv[1] in ("run","doctor"):
+        from pipeline import main as pipeline_main
+        raise SystemExit(pipeline_main(sys.argv[1:]))
+    parser = argparse.ArgumentParser(description=__doc__)
+    cmd = parser.add_subparsers(dest="action",required=True)
+    cmd.add_parser("doctor")
+    cmd.add_parser("run")
+    p = cmd.add_parser("pick_stream")
+    p.add_argument("vod",nargs="?")
+    p = cmd.add_parser("map_stream")
+    p.add_argument("--transcript",type=Path)
+    p = cmd.add_parser("cut_event")
+    p.add_argument("id",type=int)
+    p.add_argument("--edl",default="edl.json")
+    p = cmd.add_parser("cut_range")
+    p.add_argument("start")
+    p.add_argument("end")
+    p.add_argument("--input")
+    p.add_argument("--offset",type=float,default=0)
+    p = cmd.add_parser("regenerate")
+    p.add_argument("--edl")
+    p.add_argument("--final",action="store_true")
+    p = cmd.add_parser("make_shorts")
+    p.add_argument("input")
+    p.add_argument("output")
+    p.add_argument("title")
+    p.add_argument("ranges")
+    p = cmd.add_parser("layout")
+    p.add_argument("input")
+    p.add_argument("--at",type=float,default=30)
+    p = cmd.add_parser("new_intro")
+    p.add_argument("style",choices=["neon","brand","cold"])
+    p = cmd.add_parser("replace_cover")
+    p.add_argument("file")
+    p = cmd.add_parser("set_title")
+    p.add_argument("title")
+    p = cmd.add_parser("check_video")
+    p.add_argument("input")
+    p.add_argument("--transcribe",action="store_true")
+    for name in ("status","free_disk","retry_last","publish","publish_shorts"):
+        cmd.add_parser(name)
+    a = parser.parse_args()
+    action = a.action
+    if action == "pick_stream":
+        selection = {"vod":a.vod or read(ROOT/"events.json")["vod"]}
+        write(OUTPUT/"stream.json",selection)
+        print(selection["vod"])
+    elif action == "map_stream":
+        if a.transcript:
+            OUTPUT.mkdir(exist_ok=True)
+            run(sys.executable,LEGACY/"tools/auto_events.py",a.transcript.resolve(),
+                "--json",OUTPUT/"candidate-events.json")
+            return
+        data = read(ROOT/"events.json")
+        selection = OUTPUT/"stream.json"
+        if selection.exists() and read(selection)["vod"] != data["vod"]:
+            raise ValueError("Для выбранного стрима ещё не сохранена проверенная карта событий.")
+        for row in data["events"]:
+            print(f"{row['id']}. {row['start']:.1f} с — {row['title']}. {row['decision']}")
+    elif action == "cut_event":
+        path = file_in_project(a.edl)
+        if a.id != 3 and path == ROOT/"edl.json":
+            raise ValueError("Для этого номера передайте собственный файл --edl.")
+        render(path,True)
+    elif action == "cut_range":
+        edit_range(a)
+    elif action in ("regenerate","retry_last"):
+        last = OUTPUT/("render_request.json" if action == "retry_last" else "last_render.json")
+        edl = getattr(a,"edl",None) or (read(last)["edl"] if last.exists() else "edl.json")
+        preview = read(last)["preview"] if action == "retry_last" and last.exists() else not getattr(a,"final",False)
+        render(file_in_project(edl),preview)
+    elif action == "layout":
+        source = Path(a.input).resolve()
+        with tempfile.TemporaryDirectory() as workspace:
+            sample = Path(workspace)/"layout.png"
+            seek = [] if source.suffix.lower() in (".png",".jpg",".jpeg",".webp") else ["-ss",a.at]
+            run("ffmpeg","-v","error",*seek,"-i",source,"-vf","scale=1920:1080","-frames:v",1,sample)
+            run(sys.executable,LEGACY/"tools/layout_detect.py",sample)
+    elif action == "new_intro":
+        OUTPUT.mkdir(exist_ok=True)
+        run("bash",LEGACY/"tools/intro/tint_intro.sh",a.style,EVIDENCE/"intro-original-2026-11-12.mp4",
+            OUTPUT/f"intro-{a.style}.mp4")
+    elif action == "make_shorts":
+        source, dest = Path(a.input).resolve(), Path(a.output).resolve()
+        dest.parent.mkdir(parents=True,exist_ok=True)
+        env = {**os.environ,"PATH":f"{Path(sys.executable).parent}:{os.environ['PATH']}",
+               "SHORTS_FONTS":str(LEGACY/"tools/shorts_tt/fonts"),"MAT":"0"}
+        video = next(stream for stream in probe(source)["streams"] if stream["codec_type"]=="video")
+        sx,sy = video["width"]/1920,video["height"]/1080
+        for key,box in {"SCR":(1264,711,328,0),"CAM":(620,349,1300,716)}.items():
+            env.setdefault(key,":".join(str(round(value*scale)) for value,scale in zip(box,(sx,sy,sx,sy))))
+        with tempfile.TemporaryDirectory() as workspace:
+            run(sys.executable,LEGACY/"tools/shorts_template2.py","--assets","clean",a.title,"short",
+                cwd=workspace,env=env)
+            graph = (
+                f"[0:v]split[video][cam];[video]crop={env['SCR']},"
+                "scale=1008:567:force_original_aspect_ratio=increase,crop=1008:567[screen];"
+                f"[cam]crop={env['CAM']},scale=1008:567:force_original_aspect_ratio=increase,"
+                "crop=1008:567[face];[1:v][screen]overlay=36:392[stage];"
+                "[stage][face]overlay=36:983[layout];[layout][2:v]overlay=0:0,format=yuv420p[v]")
+            parts = []
+            for i, interval in enumerate(a.ranges.split()):
+                start,end = map(seconds,interval.split("-",1))
+                if end <= start:
+                    raise ValueError("Конец интервала Shorts должен быть позже начала.")
+                part = f"part-{i}.mp4"
+                run("ffmpeg","-v","error","-filter_complex_threads","2","-ss",start,"-i",source,
+                    "-loop","1","-framerate","60","-i","short_bg.png",
+                    "-loop","1","-framerate","60","-i","short_fg.png",
+                    "-filter_complex",graph,"-map","[v]","-map","0:a:0","-t",end-start,
+                    "-c:v","libx264","-threads","2","-preset","veryfast","-crf","19",
+                    "-c:a","aac","-ar","48000",part,cwd=workspace)
+                parts.append(part)
+            if not parts:
+                raise ValueError("Укажите хотя бы один интервал Shorts.")
+            (Path(workspace)/"parts.txt").write_text("".join(f"file {part}\n" for part in parts))
+            run("ffmpeg","-v","error","-f","concat","-safe","0","-i","parts.txt","-c","copy","short.mp4",cwd=workspace)
+            run(sys.executable,LEGACY/"tools/norm_audio.py","short.mp4",dest,cwd=workspace)
+
+    elif action in ("replace_cover","set_title"):
+        state = OUTPUT/"metadata.json"
+        value = read(state) if state.exists() else {}
+        if action == "set_title":
+            if not 1 <= len(a.title) <= 100:
+                raise ValueError("Название должно содержать от 1 до 100 символов.")
+            value["title"] = a.title
+        else:
+            OUTPUT.mkdir(exist_ok=True)
+            cover = Path(a.file)
+            target = OUTPUT/("cover"+cover.suffix.lower())
+            shutil.copyfile(cover,target)
+            value["cover"] = target.name
+        write(state,value)
+    elif action == "check_video":
+        from qa import inspect, words
+        transcript = Path(a.input).with_suffix(".words.jsonl")
+        if a.transcribe:
+            words(a.input,transcript)
+        print(json.dumps(inspect(a.input,transcript),ensure_ascii=False,indent=2))
+    elif action == "status":
+        for path in sorted(OUTPUT.glob("*")):
+            if path.is_file():
+                print(f"{path.name}\t{path.stat().st_size}")
+    elif action == "free_disk":
+        print(shutil.disk_usage(ROOT).free)
+    else:
+        print("Откройте YouTube Studio и загрузите проверенный файл вручную.")
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (ValueError,OSError) as exc:
+        raise SystemExit(str(exc)) from exc

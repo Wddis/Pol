@@ -1,0 +1,171 @@
+{
+  "failures": [
+    "speech",
+    "mask_coverage_review"
+  ],
+  "master": {
+    "duration": 478.7,
+    "video": {
+      "codec_name": "h264",
+      "profile": "Constrained Baseline",
+      "level": 32,
+      "width": 1280,
+      "height": 720,
+      "avg_frame_rate": "60/1",
+      "nb_frames": "28722",
+      "bit_rate": "8083742",
+      "pix_fmt": "yuv420p",
+      "color_space": "bt709",
+      "color_range": "tv",
+      "color_primaries": null,
+      "color_transfer": null
+    },
+    "audio": {
+      "lufs": -15.7,
+      "lra": 15.0,
+      "true_peak_dbtp": -1.2,
+      "sample_rate": "44100",
+      "bit_rate": "145979"
+    },
+    "asr_candidates": null,
+    "platform_checks": "Content ID и возрастные ограничения проверяются в YouTube Studio владельцем.",
+    "gaps": 0,
+    "frames": 28722,
+    "aac_hash": "SHA256=1c8980bb2621bb3df52adcfa2eb350cc58e6cda8422da8b902833b071dbe93c3"
+  },
+  "preview": {
+    "duration": 478.7,
+    "video": {
+      "codec_name": "h264",
+      "profile": "Constrained Baseline",
+      "level": 31,
+      "width": 854,
+      "height": 480,
+      "avg_frame_rate": "60/1",
+      "nb_frames": "28722",
+      "bit_rate": "2866082",
+      "pix_fmt": "yuv420p",
+      "color_space": "bt709",
+      "color_range": "tv",
+      "color_primaries": null,
+      "color_transfer": null
+    },
+    "audio": {
+      "lufs": -15.7,
+      "lra": 15.0,
+      "true_peak_dbtp": -1.2,
+      "sample_rate": "44100",
+      "bit_rate": "145979"
+    },
+    "asr_candidates": null,
+    "platform_checks": "Content ID и возрастные ограничения проверяются в YouTube Studio владельцем.",
+    "gaps": 0,
+    "frames": 28722,
+    "aac_hash": "SHA256=1c8980bb2621bb3df52adcfa2eb350cc58e6cda8422da8b902833b071dbe93c3"
+  },
+  "speech": [
+    {
+      "iteration": 1,
+      "hits": [
+        {
+          "start": 19.041,
+          "end": 20.261,
+          "word": " блять",
+          "probability": 0.4381489008665085
+        },
+        {
+          "start": 68.442,
+          "end": 68.912,
+          "word": " блять!",
+          "probability": 0.5454448685050011
+        },
+        {
+          "start": 71.423,
+          "end": 71.763,
+          "word": " блять",
+          "probability": 0.8507095277309418
+        },
+        {
+          "start": 74.794,
+          "end": 75.634,
+          "word": " блять",
+          "probability": 0.9077732264995575
+        },
+        {
+          "start": 76.714,
+          "end": 77.454,
+          "word": " блять!",
+          "probability": 0.22845450788736343
+        },
+        {
+          "start": 126.08,
+          "end": 126.42,
+          "word": " блять!",
+          "probability": 0.9451078176498413
+        },
+        {
+          "start": 163.371,
+          "end": 163.791,
+          "word": " ебан",
+          "probability": 0.27080261210600537
+        },
+        {
+          "start": 208.371,
+          "end": 209.491,
+          "word": " блядь.",
+          "probability": 0.5224042311310768
+        },
+        {
+          "start": 213.331,
+          "end": 213.471,
+          "word": " блядь.",
+          "probability": 0.9854146391153336
+        },
+        {
+          "start": 259.612,
+          "end": 259.772,
+          "word": " блядь.",
+          "probability": 0.9805250614881516
+        },
+        {
+          "start": 321.537,
+          "end": 322.497,
+          "word": " блядь.",
+          "probability": 0.9944170117378235
+        },
+        {
+          "start": 381.266,
+          "end": 381.506,
+          "word": " блядь.",
+          "probability": 0.981654092669487
+        },
+        {
+          "start": 397.696,
+          "end": 397.976,
+          "word": " блядь?",
+          "probability": 0.9943634122610092
+        },
+        {
+          "start": 408.567,
+          "end": 408.627,
+          "word": " блядь.",
+          "probability": 0.8978274166584015
+        }
+      ]
+    }
+  ],
+  "mask_frames": 28122,
+  "mask_missing_detections": 72,
+  "contact_sheets": [
+    "b5de37f57b1cf692450f80b40.jpg",
+    "49088a9d72bb9f808807a325d.jpg",
+    "237bca8a4c9abe09a13297a12.jpg",
+    "b1f0c551ef00edb103612d391.jpg",
+    "42f142f6f6314e27848d82df8.jpg",
+    "b7c24109956d2415ec7dd0128.jpg",
+    "338ee9760f930326672214d23.jpg",
+    "318e1ed426ac24cc65d5f24f9.jpg",
+    "6abc90c2d1fefd30e62719db8.jpg"
+  ],
+  "platform": "pending_youtube_studio"
+}

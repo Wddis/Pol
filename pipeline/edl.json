@@ -1,0 +1,25 @@
+{
+  "source": "evidence/vod-720p60.mp4",
+  "offset": 6010,
+  "intro": "evidence/intro-original-2026-11-12.mp4",
+  "intro_seconds": 10,
+  "vod_keep": [
+    [
+      6042,
+      6197.2
+    ],
+    [
+      6213,
+      6526.5
+    ]
+  ],
+  "censorship": "censorship.json",
+  "track_banners": true,
+  "donations": [
+    {
+      "start": 6197.2,
+      "end": 6213.0,
+      "reason": "Архивный разрез убирает озвучку благодарности и формальное «Спасибо». Плашка появляется до разреза и остаётся до склейки."
+    }
+  ]
+}

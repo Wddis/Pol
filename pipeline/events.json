@@ -1,0 +1,10 @@
+{
+  "vod": "https://www.twitch.tv/videos/2929609163",
+  "date": "15.11.26",
+  "scope": "Архивно подтверждённые события этого эфира",
+  "events": [
+    {"id":1,"start":1090,"title":"MrBeast воссоздал Голодные игры","type":"reaction","source":"https://youtu.be/q6fgVVmdpgY","decision":"Уже подготовлен отдельный архивный монтаж."},
+    {"id":2,"start":4440.4,"end":6034.9,"title":"Half Sword — The Crypts","type":"game","decision":"Уже опубликовано.","publication":"https://youtu.be/KDtTj_jd5SA"},
+    {"id":3,"start":6042,"end":6526.5,"title":"Самое Глупое Место, Чтобы Стоять","type":"reaction","source":"https://youtu.be/p169Re3Vy9I","decision":"Контрольная пересборка по тому же сырому VOD.","publication":"https://youtu.be/A92f8XDq4Tw"}
+  ]
+}

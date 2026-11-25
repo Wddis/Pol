@@ -1,0 +1,7 @@
+av==19.0.2
+faster-whisper==1.2.1
+opencv-python==5.1.0.95
+Pillow
+scenedetect==0.7.3
+scipy
+yt-dlp

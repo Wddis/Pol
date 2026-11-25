@@ -1,0 +1,27 @@
+[
+  {
+    "output_s": 434.5,
+    "vod_s": 6482.2408,
+    "correlation": 0.9995
+  },
+  {
+    "output_s": 440.5,
+    "vod_s": 6488.2408,
+    "correlation": 0.9993
+  },
+  {
+    "output_s": 448.2,
+    "vod_s": 6495.7742,
+    "correlation": 0.9994
+  },
+  {
+    "output_s": 461.4,
+    "vod_s": 6509.1408,
+    "correlation": 0.9995
+  },
+  {
+    "output_s": 476.4,
+    "vod_s": 6524.1408,
+    "correlation": 0.9993
+  }
+]
