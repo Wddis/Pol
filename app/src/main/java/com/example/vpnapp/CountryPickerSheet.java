@@ -20,8 +20,10 @@ import com.google.android.material.bottomsheet.BottomSheetDialog;
 import com.google.android.material.bottomsheet.BottomSheetDialogFragment;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.Set;
 
 /** Нижний лист со списком стран. Результат отдаётся через Fragment Result API. */
 public class CountryPickerSheet extends BottomSheetDialogFragment {
@@ -58,12 +60,15 @@ public class CountryPickerSheet extends BottomSheetDialogFragment {
             row.findViewById(R.id.check).setVisibility(isSelected ? View.VISIBLE : View.INVISIBLE);
             row.setSelected(isSelected);
             row.setOnClickListener(v -> pick(country.code));
-            readings.put(country.code, row.findViewById(R.id.region_latency));
+            if (!Country.isAny(country.code)) {
+                readings.put(country.code, row.findViewById(R.id.region_latency));
+            }
             list.addView(row);
         }
 
         View measure = root.findViewById(R.id.measure_region_latency);
-        measure.setOnClickListener(v -> measureLatency(measure, readings, selected));
+        TextView progress = root.findViewById(R.id.region_latency_progress);
+        measure.setOnClickListener(v -> measureLatency(measure, progress, readings, selected));
 
         // Отступ под системную панель навигации
         final int basePadding = root.getPaddingBottom();
@@ -77,7 +82,8 @@ public class CountryPickerSheet extends BottomSheetDialogFragment {
         return root;
     }
 
-    private void measureLatency(View button, Map<String, TextView> readings, String selected) {
+    private void measureLatency(View button, TextView progress, Map<String, TextView> readings,
+                                String selected) {
         latency = new RegionLatency(requireContext());
         ArrayList<String> codes = new ArrayList<>(readings.keySet());
         if (codes.remove(selected)) codes.add(0, selected);
@@ -86,14 +92,35 @@ public class CountryPickerSheet extends BottomSheetDialogFragment {
             TextView reading = item.getValue();
             reading.setVisibility(View.VISIBLE);
             if (cached >= 0) showLatency(reading, cached, true);
-            else reading.setText(R.string.region_latency_wait);
+            else showState(reading, R.string.region_latency_wait);
         }
         button.setEnabled(false);
         button.setContentDescription(getString(R.string.region_latency_running));
+        progress.setVisibility(View.VISIBLE);
+        progress.setText(getString(R.string.region_latency_progress, 0, codes.size()));
+        Set<String> completed = new HashSet<>();
         latency.start(codes, new RegionLatency.Listener() {
             @Override
-            public void result(String code, long milliseconds) {
-                showLatency(readings.get(code), milliseconds, false);
+            public void update(String code, RegionLatency.State state, long milliseconds) {
+                TextView reading = readings.get(code);
+                switch (state) {
+                    case RUNNING:
+                        if (latency.cached(code) < 0) showState(reading, R.string.region_latency_active);
+                        break;
+                    case VERIFIED:
+                        showLatency(reading, milliseconds, false);
+                        break;
+                    case TIMEOUT:
+                        showState(reading, R.string.region_latency_unavailable);
+                        break;
+                    case OUTDATED:
+                        showState(reading, R.string.region_latency_outdated);
+                        break;
+                }
+                if (state != RegionLatency.State.RUNNING) {
+                    completed.add(code);
+                    progress.setText(getString(R.string.region_latency_progress, completed.size(), codes.size()));
+                }
             }
 
             @Override
@@ -105,18 +132,17 @@ public class CountryPickerSheet extends BottomSheetDialogFragment {
         });
     }
 
+    private void showState(TextView reading, int label) {
+        reading.setTextColor(ContextCompat.getColor(requireContext(), R.color.text_secondary));
+        reading.setText(label);
+    }
+
     private void showLatency(TextView reading, long milliseconds, boolean cached) {
-        int color = milliseconds < 0 || milliseconds >= 600 ? R.color.region_latency_bad
+        int color = milliseconds >= 600 ? R.color.region_latency_bad
                 : milliseconds >= 250 ? R.color.region_latency_medium : R.color.region_latency_good;
         reading.setTextColor(ContextCompat.getColor(requireContext(), color));
-        if (milliseconds < 0) {
-            reading.setText(R.string.region_latency_unavailable);
-            reading.setContentDescription(getString(R.string.region_latency_failed_cd));
-        } else {
-            reading.setText(getString(cached ? R.string.region_latency_cached : R.string.region_latency_value,
-                    milliseconds));
-            reading.setContentDescription(null);
-        }
+        reading.setText(getString(cached ? R.string.region_latency_cached : R.string.region_latency_value,
+                milliseconds));
     }
 
     @Override

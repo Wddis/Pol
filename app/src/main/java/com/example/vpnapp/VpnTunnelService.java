@@ -100,6 +100,7 @@ public class VpnTunnelService extends VpnService
     @Nullable private ParcelFileDescriptor tun;
     private boolean active;
     private boolean tunnelRunning;
+    private int tunnelRun;
     private int socksPort;
     private int generation;  // отсекает устаревшие результаты фоновых задач
     private int connection;  // номер подключения: отсекает ответы прошлого подключения
@@ -1079,7 +1080,33 @@ public class VpnTunnelService extends VpnService
             return false;
         }
         tunnelRunning = true;
+        int run = ++tunnelRun;
+        if (StatusBus.ENGINE_PSIPHON.equals(engine)) {
+            reportPsiphonDataPath();
+            worker.postDelayed(() -> {
+                if (!tunnelRunning || tunnelRun != run) return;
+                if (!Tun2Socks.isRunning()) {
+                    DiagLog.add("Путь VPN: нативный обработчик TUN завершился");
+                    return;
+                }
+                long[] stats = Tun2Socks.stats();
+                if (stats != null) {
+                    DiagLog.add("Путь VPN за первые 10 с: от приложений " + stats[0]
+                            + " пакетов, к приложениям " + stats[2] + " пакетов");
+                }
+            }, 10_000L);
+        }
         return true;
+    }
+
+    private void reportPsiphonDataPath() {
+        String privateDns = "неизвестно";
+        if (Build.VERSION.SDK_INT >= 28 && connectivity != null && underlyingNetwork != null) {
+            LinkProperties link = connectivity.getLinkProperties(underlyingNetwork);
+            if (link != null) privateDns = link.isPrivateDnsActive() ? "активен" : "не активен";
+        }
+        DiagLog.add("Путь VPN: HTTPS через SOCKS проверен, запуск обработчика TUN, DNS mapdns, "
+                + "Private DNS исходной сети " + privateDns);
     }
 
     /** Список «мимо VPN» изменился при подключённом VPN: новый интерфейс, способ остаётся тем же. */

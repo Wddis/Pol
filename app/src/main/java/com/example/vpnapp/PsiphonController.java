@@ -233,13 +233,17 @@ final class PsiphonController {
                 return;
             }
         }
-        handler.post(() -> {
+        boolean posted = handler.post(() -> {
             if (s == session) {
                 process = p;
             } else {
                 p.destroy();
             }
         });
+        if (!posted) {
+            p.destroy();
+            return;
+        }
         new Reader(s).read(p);
         int code;
         try {

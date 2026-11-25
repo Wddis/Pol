@@ -39,6 +39,16 @@
             android:tint="@color/text_secondary" />
     </LinearLayout>
 
+    <TextView
+        android:id="@+id/region_latency_progress"
+        style="@style/Text.Oda.Caption"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:paddingStart="@dimen/space_3"
+        android:paddingEnd="@dimen/space_3"
+        android:textColor="@color/text_secondary"
+        android:visibility="gone" />
+
     <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
         android:layout_height="wrap_content">

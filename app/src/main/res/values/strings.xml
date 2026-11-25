@@ -33,9 +33,11 @@
     <string name="region_latency_running">Измеряем задержку через туннели</string>
     <string name="region_latency_value">%1$d мс</string>
     <string name="region_latency_cached">~%1$d мс</string>
-    <string name="region_latency_unavailable">—</string>
-    <string name="region_latency_wait">…</string>
-    <string name="region_latency_failed_cd">HTTPS через регион недоступен</string>
+    <string name="region_latency_unavailable">Нет ответа</string>
+    <string name="region_latency_wait">В очереди</string>
+    <string name="region_latency_active">Замер…</string>
+    <string name="region_latency_outdated">Сеть сменилась</string>
+    <string name="region_latency_progress">Задержка HTTPS · %1$d из %2$d</string>
 
     <!-- Обход DPI (ByeDPI) -->
     <string name="bypass_trying">Обход DPI: проверяю %1$s…</string>

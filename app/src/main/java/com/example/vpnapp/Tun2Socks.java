@@ -45,6 +45,10 @@ final class Tun2Socks {
         }
     }
 
+    static boolean isRunning() {
+        return TProxyIsRunning();
+    }
+
     static void stop() {
         TProxyStopService();
     }
