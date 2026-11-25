@@ -1,0 +1,17 @@
+scenario,selected_region,reported_region,protocol,verified_https,seconds_to_first_https,https_latency_ms,elapsed_seconds
+regional,auto,GB,UNFRONTED-MEEK-OSSH,True,10.662,2006,13.117
+regional,NL,NL,UNFRONTED-MEEK-OSSH,True,14.692,1405,16.353
+regional,DE,DE,UNFRONTED-MEEK-OSSH,True,17.539,1999,19.997
+regional,SE,SE,UNFRONTED-MEEK-OSSH,True,12.812,1926,15.485
+regional,CH,CH,UNFRONTED-MEEK-OSSH,True,13.322,2081,15.846
+regional,FR,FR,UNFRONTED-MEEK-OSSH,True,12.007,2758,15.687
+regional,CA,CA,UNFRONTED-MEEK-OSSH,True,7.715,1285,9.302
+regional,US,US,UNFRONTED-MEEK-OSSH,True,10.871,1188,12.614
+regional,GB,GB,UNFRONTED-MEEK-OSSH,True,21.001,1284,22.902
+regional,IN,IN,UNFRONTED-MEEK-OSSH,False,,,30.157
+regional,IT,,,False,,,30.154
+retest,IN,IN,UNFRONTED-MEEK-OSSH,True,10.638,1968,12.978
+retest,IT,IT,UNFRONTED-MEEK-OSSH,True,19.225,1784,21.212
+strict-allowlist,SE,,,False,,,35.009
+strict-allowlist,NL,,,False,,,35.007
+strict-allowlist,DE,,,False,,,35.139
