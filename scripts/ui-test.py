@@ -280,6 +280,9 @@ def main():
     print("2) Страна выхода и приложения")
     tap(rid="modeRow")
     time.sleep(1.5)  # лист выезжает
+    ok(find(rid="measure_region_latency") is not None, "в списке стран есть спидометр")
+    if tap(rid="measure_region_latency"):
+        ok(wait(5, rid="region_latency") is not None, "в строках стран появились индикаторы")
     shot("ода-сервера")
     tap(text="Германия (Анти-глушилка)")
     time.sleep(1.5)

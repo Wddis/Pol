@@ -380,13 +380,19 @@ final class NetProbe {
 
     /** Проверка HTTPS с DNS на стороне Psiphon. Никогда не выполняется напрямую. */
     static boolean psiphonHealth(int socksPort) {
-        if (socksPort <= 0) return false;
+        return psiphonLatency(socksPort) >= 0;
+    }
+
+    /** Время до успешного HTTPS-ответа через SOCKS, без времени запуска туннеля. */
+    static long psiphonLatency(int socksPort) {
+        if (socksPort <= 0) return -1;
         for (Site site : new Site[]{FOREIGN[0], FOREIGN[1]}) {
+            long started = System.nanoTime();
             if (fetchError(site.host, site.path, null, 443, socksPort, 2_500, true) == null) {
-                return true;
+                return Math.max(1, TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
             }
         }
-        return false;
+        return -1;
     }
 
     /**

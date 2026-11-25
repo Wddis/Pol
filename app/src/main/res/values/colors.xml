@@ -10,6 +10,9 @@
     <color name="nav_bg">#090C0E</color>
     <color name="text">#F1F4F3</color>
     <color name="text_secondary">#8B959A</color>
+    <color name="region_latency_good">#57D99D</color>
+    <color name="region_latency_medium">#F5CF65</color>
+    <color name="region_latency_bad">#FF8181</color>
     <color name="text_label">#6E7A80</color>
     <color name="line">#232C31</color>
     <color name="scrim">#B3000000</color>

@@ -29,6 +29,13 @@
     <string name="psiphon_recovery_timeout">Туннель не восстановился за отведённое время</string>
     <string name="psiphon_wrong_country">Сервер находится в другой стране</string>
     <string name="country_anti_label">%1$s (Анти-глушилка)</string>
+    <string name="region_latency_measure">Измерить задержку HTTPS по регионам</string>
+    <string name="region_latency_running">Измеряем задержку через туннели</string>
+    <string name="region_latency_value">%1$d мс</string>
+    <string name="region_latency_cached">~%1$d мс</string>
+    <string name="region_latency_unavailable">—</string>
+    <string name="region_latency_wait">…</string>
+    <string name="region_latency_failed_cd">HTTPS через регион недоступен</string>
 
     <!-- Обход DPI (ByeDPI) -->
     <string name="bypass_trying">Обход DPI: проверяю %1$s…</string>

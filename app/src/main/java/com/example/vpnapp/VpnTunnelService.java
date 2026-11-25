@@ -253,7 +253,7 @@ public class VpnTunnelService extends VpnService
         netCountry = networkCountry();
         // Тип сети определяем до подъёма VPN, пока активна сеть оператора
         underlyingNetwork = activeNetwork();
-        networkId = networkId();
+        networkId = networkId(this);
         underlyingIpv6 = underlyingHasIpv6();
         engine = null;
         probe = null;
@@ -1325,7 +1325,7 @@ public class VpnTunnelService extends VpnService
         if (capabilities != null && capabilities.hasTransport(NetworkCapabilities.TRANSPORT_VPN)) return;
         if (Objects.equals(next, underlyingNetwork)) return;
         underlyingNetwork = next;
-        networkId = networkId();
+        networkId = networkId(this);
         netCountry = networkCountry();
         if (next != null && StatusBus.ENGINE_PSIPHON.equals(engine)) {
             // Сохраняем соединение, пока новый маршрут пропускает трафик через текущий туннель.
@@ -1386,8 +1386,8 @@ public class VpnTunnelService extends VpnService
     }
 
     /** Тип сети для Psiphon: "WIFI", "MOBILE-25001" (код оператора), … */
-    private String networkId() {
-        ConnectivityManager cm = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+    static String networkId(Context context) {
+        ConnectivityManager cm = context.getSystemService(ConnectivityManager.class);
         if (cm == null) return "UNKNOWN";
         try {
             Network n = cm.getActiveNetwork();
@@ -1395,7 +1395,7 @@ public class VpnTunnelService extends VpnService
             if (caps == null) return "UNKNOWN";
             if (caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) return "WIFI";
             if (caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)) {
-                TelephonyManager tm = (TelephonyManager) getSystemService(TELEPHONY_SERVICE);
+                TelephonyManager tm = context.getSystemService(TelephonyManager.class);
                 String op = tm != null ? tm.getNetworkOperator() : null;
                 return op != null && !op.isEmpty() ? "MOBILE-" + op : "MOBILE";
             }

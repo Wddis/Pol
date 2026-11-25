@@ -43,4 +43,7 @@ oda_setsockopt (int fd, int level, int name, const void *val, socklen_t len)
    weak — одна на все файлы; экспортируемый символ компоновщик не выбрасывает */
 __attribute__((weak, used)) const char oda_hev_mark[] = "oda-hev: MSG_MORE=0 NODELAY=1";
 #endif
+#if __has_include(<lwip/ip4.h>) && !__has_include(<hev-socks5.h>)
+#include "oda-udp-policy.h"
+#endif
 #endif

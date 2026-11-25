@@ -14,9 +14,11 @@ import static com.example.vpnapp.PsiphonHealth.Change.*;
 final class PsiphonHealthTest {
     public static void main(String[] args) throws Exception {
         if (args.length == 1) {
-            if (!NetProbe.psiphonHealth(Integer.parseInt(args[0]))) {
+            long latency = NetProbe.psiphonLatency(Integer.parseInt(args[0]));
+            if (latency < 0) {
                 throw new AssertionError("No successful HTTPS response through Psiphon");
             }
+            System.out.println(latency);
             return;
         }
         PsiphonHealth health = new PsiphonHealth();
@@ -42,6 +44,7 @@ final class PsiphonHealthTest {
 
         rejectsUnusableProxy();
         checksCountryAffinity();
+        checksTransportPriority();
         System.out.println("Psiphon health and SOCKS routing: OK");
     }
 
@@ -61,6 +64,27 @@ final class PsiphonHealthTest {
         if (PsiphonRoute.acceptsRegion("DE", "NL") || !PsiphonRoute.acceptsRegion("DE", "de")
                 || !PsiphonRoute.acceptsRegion("", "NL")) {
             throw new AssertionError("A manual region must reject a different reported country");
+        }
+    }
+
+    private static void checksTransportPriority() {
+        String mobile = "MOBILE-25001";
+        var netherlands = PsiphonRoute.initialTransports("NL", mobile, "");
+        var sweden = PsiphonRoute.initialTransports("SE", mobile, "");
+        if (!netherlands.equals(List.of("QUIC-OSSH"))
+                || PsiphonRoute.initialCandidateCount(netherlands) != 2
+                || !PsiphonRoute.initialTransports("NL", "WIFI", "").isEmpty()
+                || !PsiphonRoute.initialTransports("DE", mobile, "").isEmpty()
+                || !sweden.equals(List.of("UNFRONTED-MEEK-OSSH", "UNFRONTED-MEEK-HTTPS-OSSH"))
+                || PsiphonRoute.initialCandidateCount(sweden) != 8) {
+            throw new AssertionError("Unexpected cold-start transport policy");
+        }
+        if (!PsiphonRoute.initialTransports("DE", mobile, "QUIC-OSSH").equals(netherlands)
+                || !PsiphonRoute.initialTransports("NL", mobile, "OSSH").equals(List.of("OSSH"))
+                || !PsiphonRoute.initialTransports("NL", mobile, "unsupported").equals(netherlands)
+                || !PsiphonRoute.initialTransports("FR", mobile, "OSSH").isEmpty()
+                || PsiphonRoute.historyKey("nl", mobile).equals(PsiphonRoute.historyKey("NL", "WIFI"))) {
+            throw new AssertionError("Unexpected learned transport policy");
         }
     }
 

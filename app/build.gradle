@@ -17,8 +17,8 @@ android {
         applicationId = 'com.example.vpnapp'
         minSdk = 24
         targetSdk = 36
-        versionCode = 28
-        versionName = '0.13.0'
+        versionCode = 29
+        versionName = '0.14.0'
         manifestPlaceholders.odaAppLabel = odaPreview ? 'ODA Preview' : '@string/app_name'
 
         // Только ARM: реальные телефоны (x86 нужен лишь эмуляторам, экономим ~15 МБ).
