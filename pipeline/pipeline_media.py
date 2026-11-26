@@ -162,10 +162,16 @@ def make_audio(spec,dest):
 def make_pair(parts,audio,profile,dur,preview,master):
     width,height,_=profile
     small=(min(854,width)//2*2,min(480,height)//2*2)
-    playlist=preview.parent/"video.ffconcat"
+    playlist=master.parent/"video.ffconcat"
     playlist.write_text("ffconcat version 1.0\n"+"".join("file '"+str(p).replace("'","'\\''")+"'\n" for p in parts))
     def mapping(total):
         return ["-map","0:v:0","-map","1:a:0","-t",str(total),"-movflags","+faststart","-c:a","copy"]
+    if preview is None:
+        tmp=master.with_suffix(".tmp.mp4")
+        run(*FF,"-f","concat","-safe",0,"-i",playlist,"-i",audio,*mapping(dur),
+            "-c:v","copy",tmp,timeout=max(180,dur/2))
+        tmp.replace(master)
+        return
     mobile=[Path(part).with_suffix(".preview.mp4") for part in parts]
     if all(p.exists() for p in mobile):
         secondary=preview.parent/"mobile.ffconcat"

@@ -338,7 +338,8 @@ def work(args):
         from pipeline_speech import force_align
         force_align(spec["source"],read_words(spec["transcript"],spec["offset"]),spec["keep"],spec["offset"],dest)
     if kind=="review": review_sample(spec,dest)
-    if kind=="pair": make_pair(spec["parts"],spec["audio"],spec["profile"],spec["duration"],dest,Path(spec["master"]))
+    if kind=="pair": make_pair(spec["parts"],spec["audio"],spec["profile"],spec["duration"],
+                               None if spec.get("master_only") else dest,Path(spec["master"]))
 
 def prepare_words(plan,segments):
     if "censorship" in plan:
@@ -432,6 +433,8 @@ def clip_spec(args):
     master=home/(target+f"_{profile[1]}p{label}.mp4")
     if preview==master:
         preview=preview.with_stem(preview.stem+"_preview")
+    if not (args.with_preview or args.regression):
+        preview=None
     cache=ROOT/"output/pipeline-cache"
     cache.mkdir(parents=True,exist_ok=True)
     video_inputs=[(str(INTRO),checksum(INTRO),0,10,False)]
@@ -450,7 +453,7 @@ def clip_spec(args):
             override=plan.get("mask_overrides",{}).get(str(i))
             spec={"source":file,"fingerprint":sha,"start":a,"end":b,"profile":profile,"track":track,
                   "override":override,"override_hash":checksum(override) if override else None,
-                  "fast":total>=900 and not plan.get("mask_overrides")}
+                  "fast":preview is not None and total>=900 and not plan.get("mask_overrides")}
             out=cache/(digest([code,spec])[:25]+".mp4")
             required=([out.with_suffix(".masks.json")] if track else [])
             if spec["fast"]: required.append(out.with_suffix(".preview.mp4"))
@@ -475,11 +478,15 @@ def clip_spec(args):
     def pair():
         spec={**bundle,"profile":profile,"duration":input_duration,"master":str(master),
               "audio_hash":checksum(bundle["audio"]),"parts_hashes":[checksum(p) for p in bundle["parts"]]}
+        if preview is None:
+            make("pair",dict(spec,master_only=True),master,max(600,total))
+            return {"master":str(master)}
         make("pair",spec,preview,max(600,total),[master])
         return {"preview":str(preview),"master":str(master)}
-    versions=stage("RENDER",[bundle,checksum(bundle["audio"]),profile,total,target],pair,
-                   lambda x:path_ok(x["preview"]) and path_ok(x["master"]))
-    emit("PREVIEW",path=versions["preview"],state="rendered")
+    versions=stage("RENDER",[bundle,checksum(bundle["audio"]),profile,total,target,bool(preview)],pair,
+                   lambda x:all(path_ok(p) for p in x.values()))
+    if preview is not None:
+        emit("PREVIEW",path=versions["preview"],state="rendered")
     def review():
         reports=[]
         for iteration in range(3):
@@ -488,10 +495,10 @@ def clip_spec(args):
             with ThreadPoolExecutor(3) as pool:
                 speech=pool.submit(make,"review",review_spec,review_path,340,[review_path.with_suffix(".hits.json")])
                 main=pool.submit(qa_file,master)
-                small=pool.submit(qa_file,preview)
+                small=pool.submit(qa_file,preview) if preview is not None else None
                 speech.result()
                 hits=read(review_path.with_suffix(".hits.json"))
-                huge,mini=main.result(),small.result()
+                huge,mini=main.result(),small.result() if small else None
             reports.append({"iteration":iteration+1,"hits":hits})
             # Preserve the historical window set exactly on regression.
             if not hits or args.regression or iteration==2:
@@ -516,11 +523,11 @@ def clip_spec(args):
         gaps=sum(x["missing_right"]+x["missing_left"] for x in masks)
         failures=[]
         if hits: failures.append("speech")
-        if any(x["audio"]["true_peak_dbtp"]>LIMIT for x in (huge,mini)):
+        if any(x["audio"]["true_peak_dbtp"]>LIMIT for x in (huge,mini) if x is not None):
             failures.append("true_peak")
-        if huge["frames"]!=mini["frames"] or abs(huge["duration"]-mini["duration"])>.001 or huge["aac_hash"]!=mini["aac_hash"]:
+        if mini and (huge["frames"]!=mini["frames"] or abs(huge["duration"]-mini["duration"])>.001 or huge["aac_hash"]!=mini["aac_hash"]):
             failures.append("mismatched_versions")
-        if huge["gaps"] or mini["gaps"] or count!=huge["frames"]-round(10*float(Fraction(profile[2]))):
+        if huge["gaps"] or (mini and mini["gaps"]) or count!=huge["frames"]-round(10*float(Fraction(profile[2]))):
             failures.append("frame_timeline")
         if gaps and not args.review_masks_passed:
             failures.append("mask_coverage_review")
@@ -534,13 +541,13 @@ def clip_spec(args):
                 "platform":"pending_youtube_studio"}
         write(home/"qa.json",result)
         return result
-    qa=stage("QA",[versions,checksum(master),checksum(preview),args.review_masks_passed,inputplan,code],review)
+    qa=stage("QA",[versions,checksum(master),checksum(preview) if preview else None,args.review_masks_passed,inputplan,code],review)
     meta=stage("META",[plan,qa["failures"]],lambda:metadata(plan,home/"metadata.json"),lambda _:path_ok(home/"metadata.txt"))
     report=["Монтаж T2x2",f"Источник {loc['id']} · {profile[0]}×{profile[1]} @ {profile[2]}",
             f"Оставлено {plan['keep']} в исходном времени. Длительность {total:.3f} с.",
             f"Удалено {[(a['start'],a['end']) for a in plan.get('cuts',[])]}.",
             plan.get("note",""),f"Окна цензуры {len(plan['censorship'])}.",
-            f"Обе дорожки AAC совпали: {qa['preview']['aac_hash']==qa['master']['aac_hash']}. Кадров {qa['master']['frames']}.",
+            f"Кадров {qa['master']['frames']}." + (f" Обе дорожки AAC совпали: {qa['preview']['aac_hash']==qa['master']['aac_hash']}." if qa["preview"] else ""),
             f"LUFS-I {qa['master']['audio']['lufs']}. True peak {qa['master']['audio']['true_peak_dbtp']} dBTP.",
             f"QA: {', '.join(qa['failures']) or 'локальные проверки пройдены'}.",
             "Content ID и возрастная проверка доступны в YouTube Studio.",
@@ -595,6 +602,7 @@ def main(argv=None):
     command.add_argument("--review-transcript",type=Path)
     command.add_argument("--review-masks-passed",action="store_true")
     command.add_argument("--regression",action="store_true")
+    command.add_argument("--with-preview",action="store_true",help="Дополнительно собрать мобильную версию 480p")
     w=sub.add_parser("worker")
     w.add_argument("worker_args",nargs=3)
     args=parser.parse_args(argv)
