@@ -6,7 +6,8 @@
 - Сохраняй source.words.jsonl, EDL, маски и QA. Машинный вывод в JSONL, подробности в логах.
 - Ограничивай FFmpeg длительностью и тайм-аутом. Приоритет у реального разрешения и fps.
 - Не вырезай реакцию и контекст. Сомнительный разрез оставь. Отклонения от референса требуют подтверждения.
-- По умолчанию собирай только мастер. Для двух версий добавь `--with-preview` и проверь совпадение AAC и числа кадров.
+- Основные выпуски собирай с `--with-preview`. Проверь совпадение AAC и числа кадров, сохраняй реальное качество исходника.
+- Пакет запускай через `python3 batch_journal.py TASKS.json RUN_DIR --workers 2`. Пиши этапы в `journal.jsonl` и `journal.txt`.
 - Публикация требует явной команды, подтверждённого QA и OAuth. Content ID и возраст проверяются в Studio.
 - Регрессия `./.venv/bin/python clip run "проверка эталона" --regression --job runs/reference`.
 - Материалы [STYLE_SPEC.md](STYLE_SPEC.md), [MONTAGE.md](MONTAGE.md), [PIPELINE.md](PIPELINE.md), [PITFALLS.md](PITFALLS.md).

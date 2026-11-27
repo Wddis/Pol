@@ -111,6 +111,7 @@ class Graph:
         self.data["stages"][name]=row
         self.data.update(stage=name,status="running")
         write(self.file,self.data)
+        emit(name,status="running")
         t=time.monotonic()
         try:
             result=task()

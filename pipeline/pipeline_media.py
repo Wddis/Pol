@@ -70,10 +70,28 @@ def overlays(frame):
         out["right"]=tuple(map(int,(1050+max(0,x-5),max(0,y-5),right,min(390,y+h+5))))
     return out
 
+def overlay_proxy(frame):
+    """Resize the detector's pixel bands at the same phase as a full-frame resize."""
+    import cv2
+    import numpy as np
+
+    if frame.shape != (1080,1920,3):
+        return cv2.resize(frame,(1280,720),interpolation=cv2.INTER_AREA)
+
+    # render.detect_mask reads [:75,:185] and the right-hand 250 columns.
+    # overlays additionally reads [:390,1050:1280]. The right-hand band
+    # extends through y=434 to include the lowest chat-mask reads.
+    # Even proxy boundaries are multiples of three in the native image:
+    # INTER_AREA then samples exactly the pixels of the full-frame resize.
+    proxy=np.zeros((720,1280,3),dtype=frame.dtype)
+    for x,y,right,bottom in ((0,0,186,76),(1030,0,1280,434)):
+        region=frame[y*3//2:bottom*3//2,x*3//2:right*3//2]
+        proxy[y:bottom,x:right]=cv2.resize(region,(right-x,bottom-y),interpolation=cv2.INTER_AREA)
+    return proxy
+
 def native_part(src,start,end,profile,out,track=True,override=None):
     import cv2
     import numpy as np
-    from render import detect_mask
     width,height,fps=profile
     count=round((end-start)*float(Fraction(fps)))
     length=count/float(Fraction(fps))
@@ -105,7 +123,7 @@ def native_part(src,start,end,profile,out,track=True,override=None):
             if len(buf)!=size:
                 raise RuntimeError(f"Ожидалось {count} кадров, получено {i}.")
             frame=np.frombuffer(buf,dtype=np.uint8).reshape(height,width,3).copy()
-            active=overlays(cv2.resize(frame,(1280,720),interpolation=cv2.INTER_AREA)) if supplied is None else supplied[i]
+            active=overlays(overlay_proxy(frame)) if supplied is None else supplied[i]
             if supplied is None:
                 active={k:([tuple(round(a*b) for a,b in zip(box,scale)) for box in v] if k=="chat" else
                          tuple(round(a*b) for a,b in zip(v,scale)) if v else None) for k,v in active.items()}
