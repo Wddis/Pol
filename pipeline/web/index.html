@@ -1,0 +1,353 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Двойная резка</title>
+<style>
+:root{color-scheme:dark;font:16px system-ui,sans-serif;background:#101118;color:#f5f3ff;--muted:#b0afc2;--line:#323346;--panel:#1a1b27;--accent:#d3c3ff;--green:#9ae6be;--warn:#ffce91}
+*{box-sizing:border-box}body{margin:0}main{max-width:850px;margin:auto;padding:20px 16px 84px}h1,h2,h3,p{margin:0 0 10px}h1{font-size:clamp(1.8rem,6vw,2.75rem);letter-spacing:-.045em;line-height:1.06}h2{font-size:1.4rem}h3{font-size:1.1rem;overflow-wrap:anywhere}header{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:center;margin-bottom:22px}.muted,small{color:var(--muted)}.pill{display:inline-block;padding:6px 10px;border:1px solid var(--line);border-radius:30px;font-size:.84rem}.good{color:var(--green)}.warn,.error{color:var(--warn)}nav{position:sticky;top:0;z-index:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;background:#101118;padding:7px 0 13px}.actions,.chips{display:flex;gap:8px;flex-wrap:wrap}.chips{margin:12px 0}button,input,select{border:1px solid var(--line);border-radius:12px;background:#202131;color:inherit;font:inherit;padding:10px 11px;min-height:44px}button{cursor:pointer}button[aria-pressed=true],.primary{background:var(--accent);color:#211536;border-color:transparent;font-weight:700}button:disabled{opacity:.55;cursor:default}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;margin:12px 0;padding:clamp(14px,4vw,22px)}.source-date{display:block;color:var(--accent);font-weight:650;margin-bottom:7px}details{margin-top:12px}summary{cursor:pointer;padding:8px 0;color:var(--accent)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}label{display:grid;gap:5px;margin:8px 0;color:var(--muted)}input,select{width:100%;min-width:0}.check{display:flex;align-items:center;gap:8px}.check input{width:20px;min-height:20px}.separator{border-top:1px solid var(--line);margin-top:15px;padding-top:12px}.steps{list-style:none;padding:0;margin:10px 0;display:grid;gap:7px}.steps li{color:var(--muted);display:flex;gap:9px;align-items:center}.steps i{display:block;width:8px;height:8px;border-radius:50%;background:#575970}.steps .done i{background:var(--green)}.steps .current{font-weight:700;color:var(--accent)}.steps .current i{background:var(--accent);box-shadow:0 0 0 4px #403959}progress{width:100%;accent-color:var(--accent)}.description{white-space:pre-wrap;overflow-wrap:anywhere}.no-data{padding:16px 0;color:var(--muted)}#notice:empty{display:none}#notice{padding:10px;border:1px solid var(--line);border-radius:10px;margin-bottom:12px}a{color:var(--accent)}[hidden]{display:none!important}
+</style>
+</head>
+<body><main>
+<header><h1>Двойная резка</h1><span id="connection" class="pill" role="status">Подключение…</span></header>
+<nav aria-label="Разделы"><button data-tab="streams">Стримы</button><button data-tab="work">В работе</button><button data-tab="ready">Готовые</button></nav>
+<p id="notice" role="status"></p>
+<section id="streams"><h2>Стримы T2x2</h2><p id="live-status" class="muted"></p><div id="sources"></div><div class="actions"><button id="refresh-catalog">Обновить список</button><button id="more" hidden>Ещё стримы</button></div></section>
+<section id="work" hidden><h2>В работе</h2><p class="muted">Можно закрыть вкладку. Обработка идёт на сервере.</p><div id="tasks"></div></section>
+<section id="ready" hidden><h2>Готовые нарезки</h2><div class="chips" aria-label="Формат"><button data-format="all">Все</button><button data-format="master">Основные видео</button><button data-format="short">Shorts</button></div><div id="library"></div></section>
+</main>
+<script>
+'use strict';
+const $ = id => document.getElementById(id);
+const edge = location.hostname.endsWith('.workers.dev');
+const technicalJobs=new Set(['2697fd41c56b42879f9970427c5f7faa','1ccac7c80dce4045a5e67ed10f3389cc','ccce2debe84845b79d690cb17d64ab23','fdb1eec3e39645788828cb6a596f8fe9']);
+const kinds = {game:'Прохождение',reaction:'Реакция',chat:'Разговор'};
+const failureLabels = {speech:'Повторная расшифровка нашла возможный мат',mask_coverage_review:'Нужно проверить кадры с баннерами',true_peak:'Пиковая громкость выше нормы',frame_timeline:'Нарушена непрерывность кадров',mismatched_versions:'Версии различаются по таймингу',editorial_review:'Нужна проверка монтажа',owner_confirmation:'Нужно подтверждение владельца'};
+const phases = ['Загрузка','Расшифровка','Выбор эпизода','Цензура и трекинг','Рендер','Проверка'];
+const localState = {
+ get(key){try{return JSON.parse(localStorage.getItem('montage:'+key));}catch{return null;}},
+ set(key,value){try{localStorage.setItem('montage:'+key,JSON.stringify(value));}catch{}},
+ remove(key){try{localStorage.removeItem('montage:'+key);}catch{}}
+};
+const delay = ms => new Promise(resolve => setTimeout(resolve,ms));
+let tab='streams', format='all', nextPage, selectedJob=localState.get('selected-job'), snapshot=[], online=!edge, updating=false, lastPaint='';
+let catalogLoaded=false;
+const catalogTitles=new Map();
+const n = (tag,text='',cls='') => Object.assign(document.createElement(tag),{textContent:text,className:cls});
+function notice(text='',error=false){$('notice').textContent=text;$('notice').className=error?'error':'muted';}
+function date(value){
+ if(!value)return 'Дата неизвестна';
+ const raw=String(value);
+ const plain=raw.match(/^(\d{4})-?(\d{2})-?(\d{2})$/);
+ const old=raw.match(/^(\d{2})\.(\d{2})\.(\d{2}|\d{4})$/);
+ const d=plain ? new Date(Date.UTC(+plain[1],+plain[2]-1,+plain[3])) :
+   old ? new Date(Date.UTC(+old[3]+(old[3].length===2?2000:0),+old[2]-1,+old[1])) : new Date(raw);
+ return Number.isFinite(+d) ? new Intl.DateTimeFormat('ru-RU',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}).format(d) : 'Дата неизвестна';
+}
+function clock(seconds){
+ if(seconds==null)return '—';
+ const whole=Math.max(0,Math.floor(seconds));
+ const min=Math.floor(whole/60);
+ const pad=x=>String(x).padStart(2,'0');
+ return (min>=60 ? Math.floor(min/60)+':'+pad(min%60) : min)+':'+pad(whole%60);
+}
+const span = (start,end) => clock(start)+' — '+(end==null?'до конца':clock(end));
+function seconds(value,empty=null){
+ const s=value.trim();
+ if(!s)return empty;
+ if(/^\d+(\.\d+)?$/.test(s))return +s;
+ if(/^\d+(?::[0-5]\d){1,2}(?:\.\d+)?$/.test(s))return s.split(':').reduce((out,v)=>out*60+Number(v),0);
+ throw Error('Введи время, например 12:40 или 760 секунд.');
+}
+function time(value){return value?new Date(value).toLocaleTimeString('ru-RU',{hour:'2-digit',minute:'2-digit'}):'';}
+function action(text,fn,cls=''){
+ const btn=n('button',text,cls);
+ btn.onclick=async()=>{btn.disabled=true;try{await fn();}catch(e){notice(e.message,true);}finally{btn.disabled=false;}};
+ return btn;
+}
+function field(label,value,type='text'){
+ const node=n('label',label),input=n('input');input.type=type;input.value=value??'';
+ node.append(input);return [node,input];
+}
+function card(title,tag){
+ const root=n('article','','card');
+ if(tag)root.append(n('small',tag,'source-date'));
+ root.append(n('h3',title));return root;
+}
+async function api(path,body,id){
+ const options=body===undefined?{cache:'no-store'}:{method:'POST',headers:{'Content-Type':'application/json','X-T2X2-Panel':'1','X-T2X2-Command':id||crypto.randomUUID()},body:JSON.stringify(body)};
+ const r=await fetch(path,options);
+ const data=await r.json().catch(()=>null);
+ if(!r.ok)throw Error(typeof data?.detail==='string'?data.detail:'Запрос не выполнен ('+r.status+').');
+ return data;
+}
+async function waitCommand({id,method,path,body}){
+ await api('/relay/command',{id,method,path,body});
+ for(let i=0;i<60;i++){
+  const reply=await api('/relay/command/'+id);
+  if(reply.result){
+   if(reply.result.status>=400){const e=Error(reply.result.body?.detail||'Проверь настройки задачи.');e.definitive=true;throw e;}
+   return reply.result.body;
+  }
+  if(reply.state==='failed')throw Error('Связь прервалась. Проверь очередь и повтори отправку.');
+  await delay(1500);
+ }
+ throw Error('Ответ задерживается. Проверь очередь перед повтором.');
+}
+async function submit(path,body){
+ const saved=localState.get('pending');
+ if(saved && (saved.path!==path||JSON.stringify(saved.body)!==JSON.stringify(body))){
+  throw Error('Сначала проверь предыдущую команду во вкладке «В работе».');
+ }
+ const cmd=saved||{id:crypto.randomUUID(),method:'POST',path,body};
+ localState.set('pending',cmd);
+ try{
+  const result=edge?await waitCommand(cmd):await api(path,body,cmd.id);
+  localState.remove('pending');
+  selectedJob=result.id;
+  localState.set('selected-job',selectedJob);
+  choose('work');
+  notice('Задание принято. Можно закрыть вкладку.');
+  await sync();
+ }catch(e){
+  if(e.definitive||!edge)localState.remove('pending');
+  throw e;
+ }
+}
+function choose(value){
+ tab=value;
+ localState.set('tab',value);
+ for(const id of ['streams','work','ready'])$(id).hidden=id!==tab;
+ for(const btn of document.querySelectorAll('[data-tab]'))btn.setAttribute('aria-pressed',btn.dataset.tab===tab);
+ paint(true);
+ if(tab!=='streams')sync();
+ if(tab==='streams'&&!catalogLoaded)loadCatalog().catch(e=>notice(e.message,true));
+}
+async function loadCatalog(page=1){
+ notice('Загружаю список Twitch…');
+ const path='/api/catalog?page='+page;
+ const data=edge?await waitCommand({id:crypto.randomUUID(),method:'GET',path}):await api(path);
+ if(page===1){
+  $('sources').replaceChildren();
+  $('live-status').textContent=data.live?'Текущий эфир доступен для захвата.':(data.live===false?'Сейчас эфира нет.':'Статус эфира неизвестен.');
+  if(data.live)$('sources').append(sourceCard(data.live,true));
+ }
+ for(const row of data.entries){catalogTitles.set(row.id,row.title);$('sources').append(sourceCard(row,false));}
+ if(page===1&&!data.entries.length)$('sources').append(n('p','Twitch не вернул записи.','no-data'));
+ nextPage=data.next;$('more').hidden=!nextPage;catalogLoaded=true;notice();
+}
+function sourceCard(row,live){
+ const root=card(row.title||'Стрим T2x2',live?'● В эфире':date(row.date));
+ root.append(n('p',[row.category||'Категория неизвестна',row.duration!=null?clock(row.duration):null].filter(Boolean).join(' · '),'muted'));
+ const detail=n('details'), summary=n('summary',live?'Настроить захват':'Выбрать диапазон для анализа');
+ const [a,start]=field('Начало', '0:00'),[b,end]=field(live?'Длительность захвата':'Конец (необязательно)',live?'3:00':'');
+ const box=n('div','','grid');
+ if(!live)box.append(a);
+ box.append(b);
+ detail.append(summary,box,action(live?'Начать захват':'Анализировать фрагмент',()=>submit('/api/jobs',{
+  vod:row.id,start:live?0:seconds(start.value,0),end:seconds(end.value)
+ }),'primary'));
+ root.append(detail);return root;
+}
+function phase(s){
+ if(s.operation?.status==='queued'||s.stage==='Возобновление')return -1;
+ if(s.stage==='Проверка Shorts')return 5;
+ if(s.stage==='Рендер Shorts')return 4;
+ if(s.stage==='Карта готова')return 2;
+ if(s.stage==='Расшифровка')return 1;
+ if(s.stage==='Готовлю видео')return 0;
+ if(s.stage==='На проверке'||s.stage==='Готово')return 5;
+ if(s.stage!=='Монтаж')return 0;
+ return {LOCATE:0,ANALYZE:1,JUDGE:2,PREPARE:3,RENDER:4,QA:5,META:5,DELIVERY:5}[s.pipeline?.stage]??0;
+}
+function results(s){
+ const outputs=[];
+ const meta=s.metadata||{},video=s.qa?.master?.video,shorts=s.short_results||[];
+ if(s.pipeline?.status==='ready'){
+  outputs.push({...meta,type:'master',title:meta.title||s.title||'Основное видео',duration:s.qa?.master?.duration,
+   quality:video?.height ? video.width+' × '+video.height+' · '+(video.avg_frame_rate==='60/1'?'60 fps':video.avg_frame_rate?.replace('/1','')+' fps') : '',
+   frames_checked:s.qa?.mask_frames,speech_hits:s.qa?.speech?.at(-1)?.hits_count??s.qa?.speech?.at(-1)?.hits?.length,
+   censor_windows:s.censor_windows,job:s});
+ }
+ for(const short of shorts.filter(x=>x.status==='ready'))outputs.push({...short,type:'short',job:s});
+ return outputs;
+}
+function qaArea(data,failures=[]){
+ const root=n('div','','separator');
+ const banner=failures.includes('mask_coverage_review')?'Требуется просмотр'+(data.mask_missing_detections!=null?' · пропуски: '+data.mask_missing_detections:''):
+  (data.frames_checked!=null?'Проверено кадров: '+data.frames_checked:'Ожидает проверки');
+ const speech=failures.includes('speech')?'Найдены спорные слова':(data.speech_hits===0?'Повторная проверка пройдена':'Ожидает проверки');
+ root.append(n('p','Баннеры · '+banner),n('p','Мат · '+speech+(Number.isInteger(data.censor_windows)?' · окон заглушения: '+data.censor_windows:'')));
+ if(data.mask_review_ranges?.length||data.contact_images?.length){
+  const detail=n('details');detail.append(n('summary','Спорные кадры баннеров'));
+  for(const [a,b,sides] of (data.mask_review_ranges||[]).slice(0,25))
+   detail.append(n('p',a.toFixed(3)+'–'+b.toFixed(3)+' с · '+sides.map(x=>x==='left'?'слева':'справа').join(', '),'muted'));
+  for(const encoded of data.contact_images||[]){
+   const img=n('img');img.src='data:image/jpeg;base64,'+encoded;img.alt='Контактная сетка спорных кадров';img.style.maxWidth='100%';detail.append(img);
+  }
+  root.append(detail);
+ }
+ for(const f of failures.filter(x=>!['speech','mask_coverage_review'].includes(x)))root.append(n('p',failureLabels[f]||f,'warn'));
+ return root;
+}
+function taskCard(s){
+ const short=s.operation?.action==='short';
+ const selection=short?s.short_selection:s.render_selection;
+ const root=card(selection?.title||s.metadata?.title||s.title||catalogTitles.get(s.vod)||(s.vod==='live'?'Прямой эфир T2x2':'Стрим T2x2 · VOD '+s.vod),short?'Shorts':selection?'Основное видео':'Анализ стрима');
+ root.dataset.job=s.id;
+ root.append(n('p',[date(s.date),s.category,span(selection?.start??s.requested_start,selection?.end??s.requested_end)].filter(Boolean).join(' · '),'muted'));
+ if(selection&&!short){
+  const source=n('details');
+  source.append(n('summary','Диапазон анализа'),n('p',span(s.requested_start,s.requested_end),'muted'));
+  root.append(source);
+ }
+ if(short)root.append(n('p','Диапазон в основном видео','muted'));
+ if(selection?.kind)root.append(n('p',kinds[selection.kind],'muted'));
+ const held=s.stage==='На проверке';
+ root.append(n('p',held?'Нужно исправить':(s.pipeline?.stage==='QA'&&s.stage==='Монтаж'?'Проверяется':s.stage),'pill '+(held?'warn':'')));
+ const since=s.stage==='Монтаж'?(s.pipeline?.stage_since||s.stage_since):s.stage_since;
+ if(since)root.append(n('p','Этап начат в '+time(since),'muted'));
+ const index=held?phases.length:phase(s),list=n('ol','','steps');
+ phases.forEach((label,i)=>{const item=n('li','',i===index?'current':i<index?'done':'');if(i===index)item.setAttribute('aria-current','step');item.append(n('i'),document.createTextNode(label));list.append(item);});
+ root.append(list);
+ const count=index===1?s.asr:index===3?s.chunks:null;
+ if(count?.total){const p=n('progress');p.max=count.total;p.value=count.done;p.setAttribute('aria-label','Части этапа');root.append(p,n('p',count.done+' из '+count.total+' частей','muted'));}
+ if(s.error)root.append(n('p',s.error,'error'));
+ if(held){
+  const qa=short?s.current_short:s.qa;
+  root.append(qaArea({...qa,frames_checked:short?qa?.frames_checked:qa?.mask_frames,censor_windows:short?qa?.censor_windows:s.censor_windows,speech_hits:short?qa?.speech_hits:qa?.speech?.at(-1)?.hits_count??qa?.speech?.at(-1)?.hits?.length},qa?.failures||[]));
+ }
+ if(['Ошибка','Ожидает перезапуска','Прямой эфир прерван'].includes(s.stage)){
+  const live=s.stage==='Прямой эфир прерван';
+  if(live){
+   const saved=s.captured_live_seconds!=null?'Сохранено от начала захвата: '+clock(s.captured_live_seconds)+'. ':'Длительность сохранённой части неизвестна. ';
+   root.append(n('p',saved+'Новый захват начнётся с текущего момента.','warn'));
+  }
+  root.append(action(live?'Подтвердить новый захват':'Повторить этап',()=>submit('/api/jobs/'+s.id+'/retry',{})));
+ }
+ if(s.stage==='Карта готова'){
+  if(!s.proposals?.length)root.append(n('p','В диапазоне не найдено достаточно речи для предложения. Попробуй другой отрезок.','muted'));
+  for(const p of s.proposals||[])root.append(proposal(s,p));
+ }
+ return root;
+}
+function proposal(s,p){
+ const detail=n('details','','separator');
+ const [a,start]=field('Начало',clock(p.start)),[b,end]=field('Конец',clock(Math.ceil(p.end)));
+ const [t,title]=field('Название нарезки',p.suggested_title||'');
+ const kind=n('select');for(const [key,name] of Object.entries(kinds)){const option=n('option',name);option.value=key;kind.append(option);}kind.value=p.kind;
+ const kindLabel=n('label','Тип эпизода');kindLabel.append(kind);
+ const [o,original]=field('Ссылка на оригинал (для реакции)','','url');
+ o.hidden=kind.value!=='reaction';kind.onchange=()=>{o.hidden=kind.value!=='reaction';};
+ const [g,next]=field('Следующая категория (если известна)');
+ const [c,confirmed]=field('Подтверждаю границы и сохранение донатов','','checkbox');c.className='check';
+ const bounds=n('div','','grid');bounds.append(a,b);
+ detail.append(n('summary',kinds[p.kind]+' · '+span(p.start,p.end)+' · '+clock(p.end-p.start)),n('p',p.excerpt,'muted'),bounds,kindLabel,t,o,g,c,
+  action('Запустить рендер',async()=>{
+   if(!title.value.trim()||!confirmed.checked)throw Error('Укажи название и подтверди границы.');
+   await submit('/api/jobs/'+s.id+'/render',{
+    start:start.value===clock(p.start)?p.start:seconds(start.value),end:end.value===clock(Math.ceil(p.end))?p.end:seconds(end.value),
+    kind:kind.value,title:title.value.trim(),confirmed:true,original:kind.value==='reaction'?original.value.trim()||null:null,next_game:next.value.trim()||null
+   });
+  },'primary'));
+ return detail;
+}
+function libraryCard(item){
+ const s=item.job,root=card(item.title,item.type==='short'?'Shorts':'Основное видео');
+ root.append(n('p',[date(s.date),item.duration!=null?clock(item.duration):null,item.quality].filter(Boolean).join(' · '),'muted'));
+ if(item.type==='short')root.append(n('p','В основном видео · '+span(item.start,item.end),'muted'));
+ root.append(qaArea(item));
+ const fragment=n('details');
+ fragment.append(n('summary','Описание и тайм-коды'),n('p',item.description||'Описание недоступно','description'));
+ const chapters=(item.chapters||[]).map(([at,label])=>clock(at)+' - '+label).join('\n');
+ if(chapters)fragment.append(n('p',chapters,'description'));
+ const copy=n('div','','actions');
+ for(const [label,value] of [['Копировать описание',item.description],['Копировать тайм-коды',chapters]])if(value)copy.append(action(label,async()=>{await navigator.clipboard.writeText(value);notice('Скопировано.');}));
+ fragment.append(copy);root.append(fragment);
+ if(item.pending?.length)root.append(n('p','В метаданных есть поля, которые нужно уточнить.','warn'));
+ if(edge)root.append(n('p','MP4 выдаётся отдельно.','muted'));
+ else{
+  const link=n('a','Скачать MP4');link.href='/api/jobs/'+s.id+(item.type==='short'?'/short/'+item.name:'/file/master?download=true');root.append(link);
+ }
+ if(item.type==='master'){
+  const edit=n('details','','separator'),[t,title]=field('Название',item.title);
+  const desc=n('textarea'),times=n('textarea');
+  desc.value=item.description||'';times.value=chapters;
+  desc.setAttribute('aria-label','Описание');times.setAttribute('aria-label','Тайм-коды');
+  for(const input of [desc,times]){input.style.width='100%';input.rows=4;}
+  edit.append(n('summary','Исправить метаданные'),t,n('p','Описание'),desc,n('p','Тайм-коды'),times,
+   action('Сохранить',async()=>{
+    const metadata={title:title.value.trim(),description:desc.value,chapters:times.value.trim().split('\n').map(row=>{
+     const match=row.match(/^([^ ]+)\s+-\s+(.+)$/);if(!match)throw Error('Пиши главы в формате 0:00 - Название.');
+     return [seconds(match[1]),match[2]];
+    })};
+    await submit('/api/jobs/'+s.id+(edge?'/render':'/metadata'),edge?{metadata_edit:metadata}:metadata);
+    choose('ready');notice('Метаданные сохранены.');
+   }));
+  root.append(edit);
+  const box=n('details','','separator'),[a,start]=field('Начало в готовом видео','0:10'),[b,end]=field('Конец в готовом видео','0:25');
+  const grid=n('div','','grid');grid.append(a,b);
+  box.append(n('summary','Сделать Shorts'),grid,action('Рендер Shorts',()=>submit('/api/jobs/'+s.id+'/short',{start:seconds(start.value),end:seconds(end.value)}),'primary'));
+  root.append(box);
+ }
+ return root;
+}
+function paint(force=false){
+ if(tab==='streams')return;
+ const root=$(tab==='work'?'tasks':'library');
+ const stamp=JSON.stringify([tab,format,snapshot,localState.get('pending')]);
+ if(!force&&(stamp===lastPaint||root.contains(document.activeElement)&&document.activeElement.matches('input,select')))return;
+ const open=[...root.querySelectorAll('details[open]')].map(d=>d.querySelector('summary')?.textContent);
+ lastPaint=stamp;
+ if(tab==='work'){
+  const states=snapshot.filter(s=>!technicalJobs.has(s.id)&&!s.duplicate_of).filter(s=>s.stage!=='Готово'||s.operation?.status==='queued');
+  states.sort((a,b)=>Number(b.id===selectedJob)-Number(a.id===selectedJob));
+  root.replaceChildren(...states.map(taskCard));
+  if(!states.length)root.append(n('p','Здесь появятся задачи после выбора стрима.','no-data'));
+  const pending=localState.get('pending');
+  if(pending)root.prepend(action('Проверить отправку последней команды',()=>submit(pending.path,pending.body)));
+ }else{
+  const rows=snapshot.filter(s=>!technicalJobs.has(s.id)&&!s.duplicate_of).flatMap(results).filter(i=>i.type===format||format==='all');
+  root.replaceChildren(...rows.map(libraryCard));
+  if(!rows.length)root.append(n('p','Пока нет нарезок, прошедших проверку.','no-data'));
+ }
+ for(const d of root.querySelectorAll('details'))if(open.includes(d.querySelector('summary')?.textContent))d.open=true;
+}
+async function sync(){
+ if(updating)return;
+ updating=true;
+ try{
+  const state=edge?await api('/relay/status'):{online:true};
+  online=state.online;
+  if(edge){
+   const states=[];
+   for(let page=1;page;){
+    const response=await fetch('/api/jobs/page/'+page,{cache:'no-store'});
+    if(page===1&&response.status===404){states.push(...await api('/api/jobs'));break;}
+    if(!response.ok)throw Error('История задач недоступна.');
+    const result=await response.json();
+    states.push(...result.states);
+    page=tab==='streams'?null:result.next;
+   }
+   snapshot=[...new Map(states.map(s=>[s.id,s])).values()];
+  }else snapshot=await api('/api/jobs');
+  $('connection').textContent=online?'Сервер работает':'Сервер спит'+(state.heartbeat?' · '+time(state.heartbeat):'');
+  $('connection').className='pill '+(online?'good':'warn');
+  paint();
+ }catch{
+  $('connection').textContent='Нет связи с сайтом';$('connection').className='pill warn';
+ }finally{updating=false;}
+}
+for(const btn of document.querySelectorAll('[data-tab]'))btn.onclick=()=>choose(btn.dataset.tab);
+function filter(value){format=value;for(const btn of document.querySelectorAll('[data-format]'))btn.setAttribute('aria-pressed',btn.dataset.format===format);paint(true);}
+for(const btn of document.querySelectorAll('[data-format]'))btn.onclick=()=>filter(btn.dataset.format);
+$('refresh-catalog').onclick=()=>loadCatalog().catch(e=>notice(e.message,true));
+$('more').onclick=()=>loadCatalog(nextPage).catch(e=>notice(e.message,true));
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)sync();});
+setInterval(()=>{if(!document.hidden)sync();},5000);
+const savedTab=localState.get('tab');
+filter('all');choose(localState.get('pending')?'work':['streams','work','ready'].includes(savedTab)?savedTab:'streams');sync();
+</script>
+</body>
+</html>

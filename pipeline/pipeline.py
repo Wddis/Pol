@@ -59,14 +59,50 @@ def chapter_times(plan, chapters, opening):
             out.append((int(loc),label))
     return out
 
+def kill_worker_tree(pid):
+    # Panel workers share the server's process group so a service restart
+    # also stops their FFmpeg subprocesses.
+    try:
+        os.kill(pid, signal.SIGSTOP)
+    except ProcessLookupError:
+        return
+    try:
+        processes = subprocess.check_output(["ps", "-eo", "pid=,ppid="], text=True, timeout=5)
+        children = {}
+        for row in processes.splitlines():
+            child, parent = map(int, row.split())
+            children.setdefault(parent, []).append(child)
+        pending = list(children.get(pid, ()))
+        descendants = []
+        while pending:
+            child = pending.pop()
+            descendants.append(child)
+            pending.extend(children.get(child, ()))
+        for child in reversed(descendants):
+            try:
+                os.kill(child, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+    finally:
+        try:
+            os.kill(pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+
+
 def bounded(args, log, timeout):
+    panel_group = os.environ.get("T2X2_PANEL_GROUP") == "1"
     with Path(log).open("wb") as f:
-        proc=subprocess.Popen([str(a) for a in args],stdout=f,stderr=subprocess.STDOUT,start_new_session=True)
+        proc=subprocess.Popen([str(a) for a in args],stdout=f,stderr=subprocess.STDOUT,
+                              start_new_session=not panel_group)
         try:
             code=proc.wait(timeout)
         except (subprocess.TimeoutExpired,KeyboardInterrupt):
-            try: os.killpg(proc.pid,signal.SIGKILL)
-            except ProcessLookupError: pass
+            if panel_group:
+                kill_worker_tree(proc.pid)
+            else:
+                try: os.killpg(proc.pid,signal.SIGKILL)
+                except ProcessLookupError: pass
             proc.wait()
             raise
         if code:
@@ -334,7 +370,8 @@ def work(args):
         prepare(spec,dest)
     if kind=="part":
         fn=fast_part if spec.get("fast") else native_part
-        fn(spec["source"],spec["start"],spec["end"],spec["profile"],dest,spec["track"],spec.get("override"))
+        kw={"banners_only":True} if spec.get("banners_only") else {}
+        fn(spec["source"],spec["start"],spec["end"],spec["profile"],dest,spec["track"],spec.get("override"),**kw)
     if kind=="align":
         from pipeline_speech import force_align
         force_align(spec["source"],read_words(spec["transcript"],spec["offset"]),spec["keep"],spec["offset"],dest)
@@ -454,7 +491,9 @@ def clip_spec(args):
             override=plan.get("mask_overrides",{}).get(str(i))
             spec={"source":file,"fingerprint":sha,"start":a,"end":b,"profile":profile,"track":track,
                   "override":override,"override_hash":checksum(override) if override else None,
-                  "fast":preview is not None and total>=900 and not plan.get("mask_overrides")}
+                  "fast":preview is not None and total>=900 and not plan.get("mask_overrides") and not args.banners_only}
+            if args.banners_only:
+                spec["banners_only"]=True
             out=cache/(digest([code,spec])[:25]+".mp4")
             required=([out.with_suffix(".masks.json")] if track else [])
             if spec["fast"]: required.append(out.with_suffix(".preview.mp4"))
@@ -468,13 +507,16 @@ def clip_spec(args):
         spec=audio_parameters()
         with ThreadPoolExecutor(2) as pool:
             sound=pool.submit(make,"audio",spec,home/"audio.m4a",max(260,total))
-            parts=[guarded(i,item) for i,item in enumerate(video_inputs)]
+            parts=[]
+            for i,item in enumerate(video_inputs):
+                parts.append(guarded(i,item))
+                emit("CHUNKS",status="running",done=i+1,total=len(video_inputs))
             return {"parts":parts,"audio":sound.result()}
     def audio_parameters():
         windows=source_windows(plan,plan["censorship"]+[{"start":a,"end":b} for a,b in plan.get("silence",[])])
         return dict(source=src,offset=offset,intro=str(INTRO),intro_seconds=10,keep=plan["keep"],
                     windows=windows,fingerprint=fingerprint,audio_code=checksum(ROOT/"pipeline_audio.py"))
-    bundle=stage("PREPARE",[code,fingerprint,video_inputs,profile,plan["censorship"],plan.get("silence"),plan.get("mask_overrides")],
+    bundle=stage("PREPARE",[code,fingerprint,video_inputs,profile,plan["censorship"],plan.get("silence"),plan.get("mask_overrides"),args.banners_only],
                  prepared,lambda x:all(Path(p).is_file() for p in [*x["parts"],x["audio"]]))
     def pair():
         spec={**bundle,"profile":profile,"duration":input_duration,"master":str(master),
@@ -522,6 +564,20 @@ def clip_spec(args):
         masks=[read(Path(p).with_suffix(".masks.json")) for p in bundle["parts"][1:]]
         count=sum(len(x["frames"]) for x in masks)
         gaps=sum(x["missing_right"]+x["missing_left"] for x in masks)
+        mask_ranges=[]
+        cursor=plan["intro_seconds"]
+        for mask in masks:
+            fps=float(Fraction(mask["fps"]))
+            for i,row in enumerate(mask["frames"]):
+                missing=[side for side in ("left","right") if not row[side]]
+                if not missing:
+                    continue
+                a,b=cursor+i/fps,cursor+(i+1)/fps
+                if mask_ranges and mask_ranges[-1][2]==missing and abs(mask_ranges[-1][1]-a)<.001:
+                    mask_ranges[-1][1]=b
+                else:
+                    mask_ranges.append([a,b,missing])
+            cursor+=len(mask["frames"])/fps
         failures=[]
         if hits: failures.append("speech")
         if any(x["audio"]["true_peak_dbtp"]>LIMIT for x in (huge,mini) if x is not None):
@@ -538,6 +594,7 @@ def clip_spec(args):
             failures.append("owner_confirmation")
         result={"failures":failures,"master":huge,"preview":mini,"speech":reports,
                 "mask_frames":count,"mask_missing_detections":gaps,
+                "mask_review_ranges":[[round(a,3),round(b,3),sides] for a,b,sides in mask_ranges],
                 "contact_sheets":[str(Path(p).with_suffix(".jpg")) for p in bundle["parts"] if Path(p).with_suffix(".jpg").exists()],
                 "platform":"pending_youtube_studio"}
         write(home/"qa.json",result)
@@ -604,6 +661,7 @@ def main(argv=None):
     command.add_argument("--review-masks-passed",action="store_true")
     command.add_argument("--regression",action="store_true")
     command.add_argument("--with-preview",action="store_true",help="Дополнительно собрать мобильную версию 480p")
+    command.add_argument("--banners-only",action="store_true",help="Применять маски только к баннерам")
     w=sub.add_parser("worker")
     w.add_argument("worker_args",nargs=3)
     args=parser.parse_args(argv)

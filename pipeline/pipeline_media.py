@@ -89,7 +89,57 @@ def overlay_proxy(frame):
         proxy[y:bottom,x:right]=cv2.resize(region,(right-x,bottom-y),interpolation=cv2.INTER_AREA)
     return proxy
 
-def native_part(src,start,end,profile,out,track=True,override=None):
+def recover_banner(frame, previous):
+    """Use the last verified banner template only on short detector gaps."""
+    import cv2
+    if previous is None:
+        return None
+    box, template, age = previous
+    if age > 8:
+        return None
+    x,y,right,bottom = box
+    x0,y0 = max(0,x-12),max(0,y-12)
+    region = frame[y0:min(frame.shape[0],bottom+12),x0:min(frame.shape[1],right+12)]
+    if template.std() < 8:
+        return None
+    _, score, _, (dx,dy) = cv2.minMaxLoc(cv2.matchTemplate(region,template,cv2.TM_CCOEFF_NORMED))
+    if score < .94:
+        return None
+    return (x0+dx,y0+dy,x0+dx+right-x,y0+dy+bottom-y)
+
+
+def rotating_right_banner(frame, previous, chat):
+    """Find the rotating red graphic when it narrows below the standard detector."""
+    import cv2
+    import numpy as np
+    if previous is None or previous[2] > 24:
+        return None
+    (left, top, right, bottom), _, _ = previous
+    px, py = frame.shape[1]/1920, frame.shape[0]/1080
+    x0, x1 = max(0,left-round(150*px)), min(frame.shape[1],right+round(97*px))
+    y0, y1 = max(0,top-round(27*py)), min(frame.shape[0],bottom+round(38*py))
+    for x,y,r,b in chat:
+        if x < x1 and r > x0 and y > top:
+            y1 = min(y1,y)
+    if x1 <= x0 or y1 <= y0:
+        return None
+    crop = frame[y0:y1,x0:x1]
+    b,g,r = crop.astype(np.int16).transpose(2,0,1)
+    red = ((r>87)&(r-g>48)&(r-b>31)).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(cv2.dilate(red,np.ones((3,3),np.uint8)))
+    supported = [i for i in range(1,count) if stats[i,cv2.CC_STAT_AREA] >= max(12,125*px*py)]
+    if not supported:
+        return None
+    points = cv2.findNonZero(np.isin(labels,supported).astype(np.uint8))
+    x,y,w,h = cv2.boundingRect(points)
+    if w < 13*px or h < 7*py:
+        return None
+    margin = max(3,round(6*px))
+    return (x0+max(0,x-margin),y0+max(0,y-margin),
+            x0+min(x1-x0,x+w+margin),y0+min(y1-y0,y+h+margin))
+
+
+def native_part(src,start,end,profile,out,track=True,override=None,banners_only=False):
     import cv2
     import numpy as np
     width,height,fps=profile
@@ -111,6 +161,8 @@ def native_part(src,start,end,profile,out,track=True,override=None):
              "-i","-","-t",str(length),"-vf","scale=out_color_matrix=bt709","-frames:v",str(count),*encode,str(video_tmp)]
     log=[]
     exceptions=[]
+    previous = {"left": None, "right": None}
+    recovered = 0
     supplied=read(override)["frames"] if override else None
     if supplied is not None and len(supplied)!=count:
         raise ValueError("Длина исправленной маски отличается от длины видеочасти.")
@@ -127,9 +179,33 @@ def native_part(src,start,end,profile,out,track=True,override=None):
             if supplied is None:
                 active={k:([tuple(round(a*b) for a,b in zip(box,scale)) for box in v] if k=="chat" else
                          tuple(round(a*b) for a,b in zip(v,scale)) if v else None) for k,v in active.items()}
+            if banners_only and supplied is None:
+                for key in previous:
+                    box = active[key]
+                    if box:
+                        x,y,right,bottom = box
+                        if right-x >= 8 and bottom-y >= 8:
+                            previous[key] = (box,frame[y:bottom,x:right].copy(),0)
+                    elif previous[key]:
+                        prior, template, age = previous[key]
+                        previous[key] = (prior,template,age+1)
+                        box = recover_banner(frame,previous[key])
+                        if not box and key == "right":
+                            box = rotating_right_banner(frame,previous[key],active["chat"])
+                        if box:
+                            active[key] = box
+                            recovered += 1
+            if banners_only:
+                chat=active["chat"]
+                active={**active,"chat":[]}
+                for key in ("left","right"):
+                    box=active[key]
+                    if box and any(max(box[0],c[0])<min(box[2],c[2]) and
+                                   max(box[1],c[1])<min(box[3],c[3]) for c in chat):
+                        active[key]=None
             if not active["left"] or not active["right"]:
-                if len(exceptions)<24 and (not exceptions or i-exceptions[-1][0]>=round(float(Fraction(fps)))):
-                    top=cv2.resize(frame[:max(1,round(height*.115)),:],(480,56))
+                if len(exceptions)<9 and (not exceptions or i-exceptions[-1][0]>=round(float(Fraction(fps)))):
+                    top=cv2.resize(frame,(320,180))
                     exceptions.append((i,top))
             for x,y,r,b in (box for box in [active["left"],active["right"],*active["chat"]] if box):
                 if not (0<=x<r<=width and 0<=y<b<=height):
@@ -146,11 +222,11 @@ def native_part(src,start,end,profile,out,track=True,override=None):
     if exceptions:
         images=[]
         for at,image in exceptions:
-            cv2.putText(image,str(at),(4,51),cv2.FONT_HERSHEY_SIMPLEX,.5,(255,255,255),1)
+            cv2.putText(image,str(at),(4,175),cv2.FONT_HERSHEY_SIMPLEX,.5,(255,255,255),1)
             images.append(image)
         images += [np.zeros_like(images[0])]*(-len(images)%3)
-        cv2.imwrite(str(out.with_suffix(".jpg")),np.vstack([np.hstack(images[j:j+3]) for j in range(0,len(images),3)]))
-    write(out.with_suffix(".masks.json"),{"width":width,"height":height,"fps":fps,"frames":log,
+        cv2.imwrite(str(out.with_suffix(".jpg")),np.vstack([np.hstack(images[j:j+3]) for j in range(0,len(images),3)]),[cv2.IMWRITE_JPEG_QUALITY,60])
+    write(out.with_suffix(".masks.json"),{"width":width,"height":height,"fps":fps,"frames":log,"tracked_recoveries":recovered,
           "missing_left":sum(not row["left"] for row in log),"missing_right":sum(not row["right"] for row in log)})
     video_tmp.replace(out)
 

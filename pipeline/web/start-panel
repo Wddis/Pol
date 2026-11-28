@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+set -eu
+cd -- "$(dirname -- "$0")"
+webpy="${T2X2_WEB_PYTHON:-/workspace/t2x2/.web-venv/bin/python}"
+logs="${T2X2_WEB_DATA:-/workspace/t2x2/web-jobs}"
+mkdir -p "$logs"
+exec 9>"$logs/panel.lock"
+flock -n 9
+export T2X2_RELAY_URL="${T2X2_RELAY_URL:-https://t2x2-montage.dimazoltinsky.workers.dev}"
+export T2X2_RELAY_SECRET="$(cat "${T2X2_RELAY_SECRET_FILE:-$HOME/.config/t2x2/relay-secret}")"
+setsid env -u T2X2_RELAY_SECRET T2X2_PANEL_GROUP=1 "$webpy" -m uvicorn server:app --host 127.0.0.1 --port 8787 >>"$logs/web-server.log" 2>&1 &
+server_pid=$!
+cleanup() {
+  kill -KILL -- "-$server_pid" 2>/dev/null || true
+  if [[ -n ${agent_pid:-} ]]; then kill "$agent_pid" 2>/dev/null || true; fi
+}
+trap cleanup EXIT
+trap 'exit 0' INT TERM
+for i in {1..20}; do
+  kill -0 "$server_pid"
+  if curl -fsS --max-time 1 http://127.0.0.1:8787/api/jobs >/dev/null 2>&1; then break; fi
+  sleep 1
+done
+"$webpy" relay_agent.py >>"$logs/relay-agent.log" 2>&1 &
+agent_pid=$!
+wait -n "$server_pid" "$agent_pid"
