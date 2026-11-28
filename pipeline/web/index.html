@@ -191,7 +191,16 @@ function parseIntervals(value){
   return {start:seconds(pair[0]),end:seconds(pair[1])};
  }):[];
 }
-function qaArea(data,failures=[]){
+function sourceTime(selection, output){
+ if(!selection||output<10)return null;
+ let remaining=output-10, cursor=selection.start;
+ for(const cut of [...(selection.omit||[]),{start:selection.end,end:selection.end}]){
+  if(remaining<cut.start-cursor)return cursor+remaining;
+  remaining-=cut.start-cursor;cursor=cut.end;
+ }
+ return null;
+}
+function qaArea(data,failures=[],selection=null){
  const root=n('div','','separator');
  const banner=failures.includes('mask_coverage_review')?'Требуется просмотр'+(data.mask_missing_detections!=null?' · пропуски: '+data.mask_missing_detections:''):
   (data.frames_checked!=null?'Проверено кадров: '+data.frames_checked:'Ожидает проверки');
@@ -210,7 +219,10 @@ function qaArea(data,failures=[]){
  const timestamps=residuals?.timestamps||residuals?.hits?.map(hit=>[hit.start,hit.end]);
  if(timestamps?.length){
   const detail=n('details');detail.append(n('summary','Тайм-коды спорных слов в готовом видео'));
-  for(const [a,b] of timestamps)detail.append(n('p',a.toFixed(3)+'–'+b.toFixed(3)+' с','muted'));
+  for(const [a,b] of timestamps){
+   const x=sourceTime(selection,a),y=sourceTime(selection,b);
+   detail.append(n('p',a.toFixed(3)+'–'+b.toFixed(3)+' с'+(x!=null&&y!=null?' · VOD '+x.toFixed(3)+'–'+y.toFixed(3)+' с':''),'muted'));
+  }
   root.append(detail);
  }
  for(const f of failures.filter(x=>!['speech','mask_coverage_review'].includes(x)))root.append(n('p',failureLabels[f]||f,'warn'));
@@ -243,7 +255,7 @@ function taskCard(s){
  if(s.error)root.append(n('p',s.error,'error'));
  if(held){
   const qa=short?s.current_short:s.qa;
-  root.append(qaArea({...qa,frames_checked:short?qa?.frames_checked:qa?.mask_frames,censor_windows:short?qa?.censor_windows:s.censor_windows,speech_hits:short?qa?.speech_hits:qa?.speech?.at(-1)?.hits_count??qa?.speech?.at(-1)?.hits?.length},qa?.failures||[]));
+  root.append(qaArea({...qa,frames_checked:short?qa?.frames_checked:qa?.mask_frames,censor_windows:short?qa?.censor_windows:s.censor_windows,speech_hits:short?qa?.speech_hits:qa?.speech?.at(-1)?.hits_count??qa?.speech?.at(-1)?.hits?.length},qa?.failures||[],short?null:selection));
   root.append(n('p','Автопроверка завершилась. Файл удержан до устранения замечаний.','muted'));
   root.append(action('Повторить после исправления',()=>submit('/api/jobs/'+s.id+'/retry',{})));
   if(!short&&s.render_selection&&qa?.failures?.includes('speech')){

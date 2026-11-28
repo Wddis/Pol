@@ -70,6 +70,34 @@ def overlays(frame):
         out["right"]=tuple(map(int,(1050+max(0,x-5),max(0,y-5),right,min(390,y+h+5))))
     return out
 
+def bright_right_banner(frame):
+    """Recover the red board on red game scenery using its brighter color and shape."""
+    import cv2
+    import numpy as np
+    x0,y0 = 1068,145
+    band = frame[y0:228,x0:1278].astype(np.int16)
+    b,g,r = band.transpose(2,0,1)
+    saturated = ((r>187)&(r-g>131)&(r-b>105)).astype(np.uint8)
+    n,_,stats,_ = cv2.connectedComponentsWithStats(
+        cv2.morphologyEx(saturated,cv2.MORPH_CLOSE,np.ones((3,3),np.uint8)))
+    candidates = [(area,x,y,w,h) for x,y,w,h,area in stats[1:n]
+                  if 60<=w<=153 and 32<=h<=66 and x<=33 and y<=29 and area>=.33*w*h]
+    if not candidates:
+        return None
+    _,x,y,w,h = max(candidates)
+    # The artwork attached to the board is visible as a separate colored
+    # rectangle. Verify it is present before extending the mask.
+    rx,ry = x+w,y+h
+    icon = band[max(0,y+2):min(len(band),ry+7),rx:min(len(band[0]),rx+60)]
+    if icon.shape[1] < 23:
+        return None
+    blue,green,red = icon.transpose(2,0,1)
+    accented = ((red>167)&(red-green>75))|((green>150)&(blue>120)&(red>140))
+    if accented.mean()<.075:
+        return None
+    return (x0+max(0,x-5),y0+max(0,y-5),min(1278,x0+rx+53),min(228,y0+ry+6))
+
+
 def overlay_proxy(frame):
     """Resize the detector's pixel bands at the same phase as a full-frame resize."""
     import cv2
@@ -252,7 +280,12 @@ def native_part(src,start,end,profile,out,track=True,override=None,banners_only=
             if len(buf)!=size:
                 raise RuntimeError(f"Ожидалось {count} кадров, получено {i}.")
             frame=np.frombuffer(buf,dtype=np.uint8).reshape(height,width,3).copy()
-            active=overlays(overlay_proxy(frame)) if supplied is None else supplied[i]
+            proxy = overlay_proxy(frame) if supplied is None else None
+            active=overlays(proxy) if supplied is None else supplied[i]
+            if banners_only and supplied is None and not active["right"]:
+                candidate = bright_right_banner(proxy)
+                if candidate:
+                    active["right"] = candidate
             if supplied is None:
                 active={k:([tuple(round(a*b) for a,b in zip(box,scale)) for box in v] if k=="chat" else
                          tuple(round(a*b) for a,b in zip(v,scale)) if v else None) for k,v in active.items()}
