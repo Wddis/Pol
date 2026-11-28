@@ -76,7 +76,8 @@ def collect():
         state["separate_delivery"]=True
         state["proposals"]=state.get("proposals",[])[:25]
         if "qa" in state:
-            state["qa"]["speech"] = [{"hits_count":len(x["hits"])} for x in state["qa"].get("speech") or []]
+            state["qa"]["speech"] = [{"hits_count":len(x["hits"]), "timestamps":[[hit["start"],hit["end"]] for hit in x["hits"][:30]]}
+                                      for x in state["qa"].get("speech") or []]
         states.append(state)
         if len(json.dumps(states,ensure_ascii=False).encode())>400000:
             states.pop()

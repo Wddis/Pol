@@ -15,7 +15,7 @@ import sys
 import time
 
 from clip_core import ROOT, LEGACY, probe, read, run, timeline, write
-from pipeline_media import FF, checksum
+from pipeline_media import FF, checksum, vittrack_fingerprint
 
 INTRO=LEGACY/"assets/intro/intro_t2x2.mp4"
 CHANNEL="https://www.twitch.tv/t2x2"
@@ -473,6 +473,7 @@ def clip_spec(args):
         preview=preview.with_stem(preview.stem+"_preview")
     if not (args.with_preview or args.regression):
         preview=None
+    model_fingerprint = vittrack_fingerprint() if args.banners_only else None
     cache=ROOT/"output/pipeline-cache"
     cache.mkdir(parents=True,exist_ok=True)
     video_inputs=[(str(INTRO),checksum(INTRO),0,10,False)]
@@ -494,6 +495,7 @@ def clip_spec(args):
                   "fast":preview is not None and total>=900 and not plan.get("mask_overrides") and not args.banners_only}
             if args.banners_only:
                 spec["banners_only"]=True
+                spec["banner_model"]=model_fingerprint
             out=cache/(digest([code,spec])[:25]+".mp4")
             required=([out.with_suffix(".masks.json")] if track else [])
             if spec["fast"]: required.append(out.with_suffix(".preview.mp4"))
@@ -516,7 +518,7 @@ def clip_spec(args):
         windows=source_windows(plan,plan["censorship"]+[{"start":a,"end":b} for a,b in plan.get("silence",[])])
         return dict(source=src,offset=offset,intro=str(INTRO),intro_seconds=10,keep=plan["keep"],
                     windows=windows,fingerprint=fingerprint,audio_code=checksum(ROOT/"pipeline_audio.py"))
-    bundle=stage("PREPARE",[code,fingerprint,video_inputs,profile,plan["censorship"],plan.get("silence"),plan.get("mask_overrides"),args.banners_only],
+    bundle=stage("PREPARE",[code,fingerprint,video_inputs,profile,plan["censorship"],plan.get("silence"),plan.get("mask_overrides"),args.banners_only,model_fingerprint],
                  prepared,lambda x:all(Path(p).is_file() for p in [*x["parts"],x["audio"]]))
     def pair():
         spec={**bundle,"profile":profile,"duration":input_duration,"master":str(master),
@@ -533,7 +535,8 @@ def clip_spec(args):
     def review():
         reports=[]
         for iteration in range(3):
-            review_spec={"master":str(master),"duration":total,"windows":source_windows(plan,plan["censorship"]),
+            review_spec={"master":str(master),"duration":total,"windows":source_windows(plan,plan["censorship"]+[
+                             {"start":a,"end":b} for a,b in plan.get("silence",[])]),
                          "hash":checksum(master)}
             with ThreadPoolExecutor(3) as pool:
                 speech=pool.submit(make,"review",review_spec,review_path,340,[review_path.with_suffix(".hits.json")])

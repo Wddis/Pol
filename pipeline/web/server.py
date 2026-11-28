@@ -56,6 +56,11 @@ class Analysis(BaseModel):
         return self
 
 
+class Omission(BaseModel):
+    start: float = Field(ge=0, le=1000000)
+    end: float = Field(gt=0, le=1000000)
+
+
 class Render(BaseModel):
     start: float = Field(ge=0, le=1000000)
     end: float = Field(gt=0, le=1000000)
@@ -65,6 +70,25 @@ class Render(BaseModel):
     preview: bool = False
     original: str | None = Field(default=None, pattern=r"^https://[^\s]+$")
     next_game: str | None = Field(default=None, max_length=80)
+    omit: list[Omission] = Field(default_factory=list, max_length=20)
+    mute: list[Omission] = Field(default_factory=list, max_length=40)
+
+    @model_validator(mode="after")
+    def check_omissions(self):
+        cursor = self.start
+        for cut in self.omit:
+            if not cursor+.1 < cut.start < cut.end < self.end-.1:
+                raise ValueError("Интервалы удаления должны идти по порядку внутри выбранного отрывка.")
+            cursor = cut.end
+        for mute in self.mute:
+            if not self.start <= mute.start < mute.end <= self.end or mute.end-mute.start > 1.6:
+                raise ValueError("Окно заглушения должно быть внутри отрывка и не длиннее 1,6 секунды.")
+        return self
+
+    def intervals(self):
+        left = [self.start, *(cut.end for cut in self.omit)]
+        right = [*(cut.start for cut in self.omit), self.end]
+        return [[a,b] for a,b in zip(left,right)]
 
 
 class Short(BaseModel):
@@ -366,6 +390,32 @@ def analyze(folder, request):
           start=manifest["offset"], end=manifest["offset"]+manifest["duration"])
 
 
+def reference_frames(folder, source, offset, intervals, master=None):
+    frames = []
+    elapsed = 10
+    for a,b in intervals:
+        sample = min(b-.04, a+min(1,(b-a)/2))
+        points = [("Исходник", source, sample-offset, sample)]
+        if master:
+            points.append(("Готовый кадр", master, elapsed+sample-a, elapsed+sample-a))
+        for label,path,seek,stamp in points:
+            try:
+                image = subprocess.check_output([
+                    "ffmpeg","-nostdin","-v","error","-ss",str(max(0,seek)),"-i",str(path),
+                    "-t","1","-frames:v","1","-vf","scale=480:-2","-c:v","mjpeg","-q:v","7",
+                    "-threads","1","-f","image2pipe","-"
+                ], timeout=15)
+            except (subprocess.SubprocessError, OSError):
+                continue
+            if 0 < len(image) <= 35000:
+                frames.append({"label": label, "time": stamp, "jpeg": base64.b64encode(image).decode()})
+        elapsed += b-a
+        if len(frames) >= 6:
+            break
+    if frames:
+        save(folder / "references.json", frames)
+
+
 def render(folder, request):
     state = read(folder / "job.json")
     folder = folder / "montage"
@@ -389,7 +439,9 @@ def render(folder, request):
                     max(180, (request.end-request.start)/2), parent)
         offset = read(source.with_suffix(".manifest.json"))["offset"]
     verb = {"game":"ИГРАЕТ", "reaction":"СМОТРИТ", "chat":"ОБСУЖДАЕТ"}[request.kind]
-    plan = dict(keep=[[request.start,request.end]], cuts=[], kind=request.kind,
+    keep = request.intervals()
+    cuts = [dict(start=x.start, end=x.end, reason="dead_air", thought_complete=True) for x in request.omit]
+    plan = dict(keep=keep, cuts=cuts, silence=[[x.start,x.end] for x in request.mute], kind=request.kind,
                 title=f"T2x2 {verb}: {request.title}", opening="Начало эпизода",
                 reviewed=True, deviations=[], tags=["t2x2","нарезка"], hashtags="#t2x2 #нарезка",
                 date=state.get("date"), next_game=request.next_game,
@@ -434,9 +486,13 @@ def render(folder, request):
         command.extend(["--review-transcript",str(transcript)])
     if request.preview:
         command.append("--with-preview")
+    reference_frames(folder, source, offset, keep)
     stage(parent, "Монтаж")
     execute(command, 14400, parent)
     run = read(folder / "run.json")
+    master = run.get("deliverables", {}).get("master")
+    if master and Path(master).is_file():
+        reference_frames(folder, source, offset, keep, master)
     stage(parent, "Готово" if run.get("status")=="ready" else "На проверке")
 
 
@@ -551,9 +607,19 @@ def start_render(job: str, request: Render, x_t2x2_command: str | None = Header(
         state = read(folder / "job.json")
         if not request.confirmed or not state.get("proposals") or not state["start"] <= request.start < request.end <= state["end"]:
             raise HTTPException(400, "Подтверди границы и сохранность донатов.")
+        if request.omit:
+            manifest = read(folder/"source.manifest.json")
+            base = manifest["offset"]
+            words = [w for line in (folder/"words.jsonl").read_text().splitlines()
+                     for w in json.loads(line)["words"]]
+            for cut in request.omit:
+                if any(base+w["start"] < cut.end+.12 and base+w["end"] > cut.start-.12 for w in words):
+                    raise HTTPException(400, "Интервал удаления пересекает речь. Выбери паузу без речи и донатов.")
         previous = state.get("render_selection")
-        if previous and previous != request.model_dump():
-            raise HTTPException(409, "Для других настроек создай отдельную задачу.")
+        if previous:
+            previous = Render.model_validate(previous)
+            if previous.intervals() != request.intervals():
+                raise HTTPException(409, "Для других границ создай отдельную задачу.")
         state["render_selection"] = request.model_dump()
         return enqueue(folder, state, "render", request.model_dump(), command_id(x_t2x2_command))
 
@@ -619,6 +685,9 @@ def state_for(folder):
                     result[key]["contact_images"] = sheets
             else:
                 result[key]=data
+    refs = folder/"montage"/"references.json"
+    if refs.exists():
+        result["references"] = read(refs)
     edit = folder/"metadata-edit.json"
     if edit.exists() and "metadata" in result:
         result["metadata"].update(read(edit))
@@ -681,7 +750,7 @@ def make_short(job: str, selection: Short, x_t2x2_command: str | None = Header(N
         plan = read(folder / "montage" / "panel-plan.json")
         if not 5 <= selection.end-selection.start <= 59.9:
             raise HTTPException(400, "Выбери от 5 до 59,9 секунды готового видео.")
-        if selection.start < 10 or selection.end > 10 + plan["keep"][0][1] - plan["keep"][0][0]:
+        if selection.start < 10 or selection.end > 10 + sum(b-a for a,b in plan["keep"]):
             raise HTTPException(400, "Диапазон должен быть внутри готового эпизода после интро.")
         return enqueue(folder, read(folder/"job.json"), "short", selection.model_dump(),
                        command_id(x_t2x2_command))

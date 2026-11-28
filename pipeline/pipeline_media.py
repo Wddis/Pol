@@ -139,6 +139,82 @@ def rotating_right_banner(frame, previous, chat):
             x0+min(x1-x0,x+w+margin),y0+min(y1-y0,y+h+margin))
 
 
+VITTRACK = Path("/workspace/t2x2/models/vittrack.onnx")
+VITTRACK_SHA256 = "2990f0b7cd44d92afa48cd97db6de7be113fc1d9594fddb74e2725c10478e91d"
+
+
+def vittrack_fingerprint():
+    return VITTRACK_SHA256 if VITTRACK.is_file() and checksum(VITTRACK) == VITTRACK_SHA256 else None
+
+
+class RightBannerTracker:
+    """Use a verified banner seed to distinguish banner content from chat-like colors."""
+    def __init__(self):
+        self.enabled = bool(vittrack_fingerprint())
+        self.seed = None
+        self.tracker = None
+        self.last_clear = -1
+        self.recoveries = 0
+
+    def remember(self, frame, box, frame_index):
+        if not self.enabled:
+            return
+        if self.seed is None or frame_index-self.last_clear >= 9 or self.tracker is not None:
+            x,y,r,b = box
+            sy = frame.shape[0]/1080
+            sx = frame.shape[1]/1920
+            if 145*sx <= r-x <= 365*sx and 48*sy <= b-y <= 140*sy:
+                self.seed = (frame.copy(), box)
+                self.last_clear = frame_index
+                self.tracker = None
+
+    def locate(self, frame, observed, frame_index):
+        import cv2
+        import numpy as np
+        if self.seed is None or frame_index-self.last_clear > 90:
+            return None
+        image, anchor = self.seed
+        ax,ay,ar,ab = anchor
+        if self.tracker is None:
+            try:
+                params = cv2.TrackerVit_Params()
+                params.net = str(VITTRACK)
+                params.tracking_score_threshold = .72
+                self.tracker = cv2.TrackerVit_create(params)
+                self.tracker.init(image, (ax,ay,ar-ax,ab-ay))
+            except cv2.error:
+                self.enabled = False
+                self.seed = None
+                return None
+        ok, (x,y,w,h) = self.tracker.update(frame)
+        if not ok or self.tracker.getTrackingScore() < .72:
+            return None
+        sx,sy = frame.shape[1]/1920,frame.shape[0]/1080
+        if abs(x-ax)>36*sx or abs(y-ay)>19*sy or not .75 <= w/(ar-ax) <= 1.18 or not .72 <= h/(ab-ay) <= 1.13:
+            return None
+        r,b = x+w,y+h
+        if not 0 <= x < r <= frame.shape[1] or not 0 <= y < b <= frame.shape[0]:
+            return None
+        ox,oy,orr,ob = observed or (x,y,r,b)
+        if observed:
+            intersection = max(0,min(r,orr)-max(x,ox))*max(0,min(b,ob)-max(y,oy))
+            if intersection < .61*w*h:
+                return None
+        crop = frame[y:b,x:r].astype(np.int16)
+        blue,green,red = crop.transpose(2,0,1)
+        board = (red>130)&(red-green>65)&(red-blue>45)
+        if board.mean() < (.19 if observed else .27):
+            return None
+        # Recover the template's clipped sides while staying above the original
+        # banner/chat boundary learned from an uncontested frame.
+        left = max(0,min(x,ox,ax)-round(3*sx))
+        top = max(0,min(y,oy,ay)-round(2*sy))
+        right = min(frame.shape[1],max(r,ar)+round(2*sx))
+        bottom = min(frame.shape[0],ab,max(b,min(ob,ab)))
+        self.recoveries += 1
+        return (left,top,right,bottom)
+
+
 def native_part(src,start,end,profile,out,track=True,override=None,banners_only=False):
     import cv2
     import numpy as np
@@ -163,6 +239,7 @@ def native_part(src,start,end,profile,out,track=True,override=None,banners_only=
     exceptions=[]
     previous = {"left": None, "right": None}
     recovered = 0
+    tracked_right = RightBannerTracker() if banners_only and not override else None
     supplied=read(override)["frames"] if override else None
     if supplied is not None and len(supplied)!=count:
         raise ValueError("Длина исправленной маски отличается от длины видеочасти.")
@@ -202,7 +279,12 @@ def native_part(src,start,end,profile,out,track=True,override=None,banners_only=
                     box=active[key]
                     if box and any(max(box[0],c[0])<min(box[2],c[2]) and
                                    max(box[1],c[1])<min(box[3],c[3]) for c in chat):
-                        active[key]=None
+                        active[key] = tracked_right.locate(frame,box,i) if key=="right" and tracked_right else None
+                    elif key=="right" and tracked_right:
+                        if box:
+                            tracked_right.remember(frame,box,i)
+                        elif supplied is None:
+                            active[key] = tracked_right.locate(frame,None,i)
             if not active["left"] or not active["right"]:
                 if len(exceptions)<9 and (not exceptions or i-exceptions[-1][0]>=round(float(Fraction(fps)))):
                     top=cv2.resize(frame,(320,180))
@@ -227,6 +309,7 @@ def native_part(src,start,end,profile,out,track=True,override=None,banners_only=
         images += [np.zeros_like(images[0])]*(-len(images)%3)
         cv2.imwrite(str(out.with_suffix(".jpg")),np.vstack([np.hstack(images[j:j+3]) for j in range(0,len(images),3)]),[cv2.IMWRITE_JPEG_QUALITY,60])
     write(out.with_suffix(".masks.json"),{"width":width,"height":height,"fps":fps,"frames":log,"tracked_recoveries":recovered,
+          "model_recoveries":tracked_right.recoveries if tracked_right else 0,
           "missing_left":sum(not row["left"] for row in log),"missing_right":sum(not row["right"] for row in log)})
     video_tmp.replace(out)
 

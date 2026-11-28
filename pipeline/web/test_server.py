@@ -142,3 +142,27 @@ class QueueTests(unittest.TestCase):
             metadata = server.state_for(folder)["metadata"]
             self.assertEqual((metadata["title"],metadata["tags"]),("Новое",["t2x2"]))
             self.assertEqual(master.read_bytes(),b"fixture")
+
+    def test_render_keeps_source_coordinates_and_rejects_overlaps(self):
+        fields = dict(start=10, end=60, kind="game", title="Эпизод", confirmed=True)
+        render = server.Render(**fields, omit=[dict(start=15,end=17),dict(start=35,end=38)],
+                               mute=[dict(start=40,end=40.5)])
+        self.assertEqual(render.intervals(), [[10,15],[17,35],[38,60]])
+        with self.assertRaises(ValidationError):
+            server.Render(**fields, omit=[dict(start=15,end=17),dict(start=16,end=18)])
+        with self.assertRaises(ValidationError):
+            server.Render(**fields, mute=[dict(start=40,end=42)])
+
+    def test_render_rejects_cut_containing_transcribed_speech(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(server, "DATA", Path(temp)):
+            key = "a"*32
+            folder = Path(temp)/key
+            folder.mkdir()
+            server.save(folder/"job.json",dict(id=key, stage="Карта готова", start=100, end=155, proposals=[{}]))
+            server.save(folder/"source.manifest.json",dict(offset=100))
+            (folder/"words.jsonl").write_text('{"words":[{"start":12,"end":13}]}\n')
+            request = server.Render(start=101,end=154,kind="game",title="Эпизод",confirmed=True,
+                                    omit=[dict(start=110,end=114)])
+            with self.assertRaises(HTTPException) as error:
+                server.start_render(key,request,"b"*32)
+            self.assertEqual(error.exception.status_code,400)

@@ -1,0 +1,9 @@
+#!/usr/bin/env bash
+set -eu
+dest=/workspace/t2x2/models/vittrack.onnx
+mkdir -p "$(dirname "$dest")"
+tmp=$(mktemp "$dest.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+curl -fsSL --max-time 45 https://huggingface.co/opencv/object_tracking_vittrack/resolve/main/object_tracking_vittrack_2023sep.onnx -o "$tmp"
+printf '%s  %s\n' '2990f0b7cd44d92afa48cd97db6de7be113fc1d9594fddb74e2725c10478e91d' "$tmp" | sha256sum --check --status
+mv -f "$tmp" "$dest"

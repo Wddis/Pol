@@ -173,6 +173,24 @@ function results(s){
  for(const short of shorts.filter(x=>x.status==='ready'))outputs.push({...short,type:'short',job:s});
  return outputs;
 }
+function referenceGallery(s){
+ const box=n('details','','separator');
+ box.append(n('summary','Кадры для референса'));
+ for(const frame of s.references||[]){
+  const img=n('img');img.alt=frame.label;img.loading='lazy';
+  img.src='data:image/jpeg;base64,'+frame.jpeg;
+  img.style.maxWidth='100%';
+  box.append(n('p',frame.label+' · '+clock(frame.time),'muted'),img);
+ }
+ return box;
+}
+function parseIntervals(value){
+ return value.trim()?value.trim().split('\n').map(line=>{
+  const pair=line.trim().split(/\s*[-–—]\s*/);
+  if(pair.length!==2||pair.some(t=>!t))throw Error('Укажи начало и конец интервала через тире.');
+  return {start:seconds(pair[0]),end:seconds(pair[1])};
+ }):[];
+}
 function qaArea(data,failures=[]){
  const root=n('div','','separator');
  const banner=failures.includes('mask_coverage_review')?'Требуется просмотр'+(data.mask_missing_detections!=null?' · пропуски: '+data.mask_missing_detections:''):
@@ -186,6 +204,13 @@ function qaArea(data,failures=[]){
   for(const encoded of data.contact_images||[]){
    const img=n('img');img.src='data:image/jpeg;base64,'+encoded;img.alt='Контактная сетка спорных кадров';img.style.maxWidth='100%';detail.append(img);
   }
+  root.append(detail);
+ }
+ const residuals=data.speech?.at(-1);
+ const timestamps=residuals?.timestamps||residuals?.hits?.map(hit=>[hit.start,hit.end]);
+ if(timestamps?.length){
+  const detail=n('details');detail.append(n('summary','Тайм-коды спорных слов в готовом видео'));
+  for(const [a,b] of timestamps)detail.append(n('p',a.toFixed(3)+'–'+b.toFixed(3)+' с','muted'));
   root.append(detail);
  }
  for(const f of failures.filter(x=>!['speech','mask_coverage_review'].includes(x)))root.append(n('p',failureLabels[f]||f,'warn'));
@@ -204,6 +229,8 @@ function taskCard(s){
  }
  if(short)root.append(n('p','Диапазон в основном видео','muted'));
  if(selection?.kind)root.append(n('p',kinds[selection.kind],'muted'));
+ if(selection?.omit?.length)root.append(n('p','Удалено: '+selection.omit.map(x=>span(x.start,x.end)).join(', '),'muted'));
+ if(s.references?.length)root.append(referenceGallery(s));
  const held=s.stage==='На проверке';
  root.append(n('p',held?'Нужно исправить':(s.pipeline?.stage==='QA'&&s.stage==='Монтаж'?'Проверяется':s.stage),'pill '+(held?'warn':'')));
  const since=s.stage==='Монтаж'?(s.pipeline?.stage_since||s.stage_since):s.stage_since;
@@ -219,6 +246,13 @@ function taskCard(s){
   root.append(qaArea({...qa,frames_checked:short?qa?.frames_checked:qa?.mask_frames,censor_windows:short?qa?.censor_windows:s.censor_windows,speech_hits:short?qa?.speech_hits:qa?.speech?.at(-1)?.hits_count??qa?.speech?.at(-1)?.hits?.length},qa?.failures||[]));
   root.append(n('p','Автопроверка завершилась. Файл удержан до устранения замечаний.','muted'));
   root.append(action('Повторить после исправления',()=>submit('/api/jobs/'+s.id+'/retry',{})));
+  if(!short&&s.render_selection&&qa?.failures?.includes('speech')){
+   const edit=n('details'),input=n('textarea');
+   input.rows=3;input.style.width='100%';input.placeholder='Точные окна в исходном VOD, по одному на строке';
+   edit.append(n('summary','Поправить цензуру'),n('p','Укажи время исходника. Используй только прослушанные окончания слов.','muted'),input,
+    action('Пересобрать звук',()=>submit('/api/jobs/'+s.id+'/render',{...s.render_selection,mute:[...(s.render_selection.mute||[]),...parseIntervals(input.value)]})));
+   root.append(edit);
+  }
  }
  if(['Ошибка','Ожидает перезапуска','Прямой эфир прерван'].includes(s.stage)){
   const live=s.stage==='Прямой эфир прерван';
@@ -243,14 +277,17 @@ function proposal(s,p){
  const [o,original]=field('Ссылка на оригинал (для реакции)','','url');
  o.hidden=kind.value!=='reaction';kind.onchange=()=>{o.hidden=kind.value!=='reaction';};
  const [g,next]=field('Следующая категория (если известна)');
+ const cuts=n('textarea');cuts.rows=2;cuts.style.width='100%';cuts.placeholder='Например: 3:59:43.2 – 3:59:46';
+ const edit=n('details');edit.append(n('summary','Убрать паузы без речи и донатов'),cuts);
  const [c,confirmed]=field('Подтверждаю границы и сохранение донатов','','checkbox');c.className='check';
  const bounds=n('div','','grid');bounds.append(a,b);
- detail.append(n('summary',kinds[p.kind]+' · '+span(p.start,p.end)+' · '+clock(p.end-p.start)),n('p',p.excerpt,'muted'),bounds,kindLabel,t,o,g,c,
+ detail.append(n('summary',kinds[p.kind]+' · '+span(p.start,p.end)+' · '+clock(p.end-p.start)),n('p',p.excerpt,'muted'),bounds,kindLabel,t,o,g,edit,c,
   action('Запустить рендер',async()=>{
    if(!title.value.trim()||!confirmed.checked)throw Error('Укажи название и подтверди границы.');
+   const omit=parseIntervals(cuts.value);
    await submit('/api/jobs/'+s.id+'/render',{
     start:start.value===clock(p.start)?p.start:seconds(start.value),end:end.value===clock(Math.ceil(p.end))?p.end:seconds(end.value),
-    kind:kind.value,title:title.value.trim(),confirmed:true,original:kind.value==='reaction'?original.value.trim()||null:null,next_game:next.value.trim()||null
+    kind:kind.value,title:title.value.trim(),confirmed:true,omit,original:kind.value==='reaction'?original.value.trim()||null:null,next_game:next.value.trim()||null
    });
   },'primary'));
  return detail;
@@ -260,6 +297,7 @@ function libraryCard(item){
  root.append(n('p',[date(s.date),item.duration!=null?clock(item.duration):null,item.quality].filter(Boolean).join(' · '),'muted'));
  if(item.type==='short')root.append(n('p','В основном видео · '+span(item.start,item.end),'muted'));
  root.append(qaArea(item));
+ if(item.type==='master'&&s.references?.length)root.append(referenceGallery(s));
  const fragment=n('details');
  fragment.append(n('summary','Описание и тайм-коды'),n('p',item.description||'Описание недоступно','description'));
  const chapters=(item.chapters||[]).map(([at,label])=>clock(at)+' - '+label).join('\n');
