@@ -563,13 +563,19 @@ def clip_spec(args):
             versions.update(pair())
         masks=[read(Path(p).with_suffix(".masks.json")) for p in bundle["parts"][1:]]
         count=sum(len(x["frames"]) for x in masks)
-        gaps=sum(x["missing_right"]+x["missing_left"] for x in masks)
+        verified_absences = plan.get("verified_absences", {})
+        covered_absences = 0
+        gaps = 0
         mask_ranges=[]
         cursor=plan["intro_seconds"]
-        for mask in masks:
+        for chunk, mask in enumerate(masks, 1):
             fps=float(Fraction(mask["fps"]))
+            absent = {int(frame): set(sides) for frame,sides in verified_absences.get(str(chunk), {}).items()}
             for i,row in enumerate(mask["frames"]):
-                missing=[side for side in ("left","right") if not row[side]]
+                absent_sides=absent.get(i, set())
+                covered_absences+=sum(not row[side] and side in absent_sides for side in ("left","right"))
+                missing=[side for side in ("left","right") if not row[side] and side not in absent_sides]
+                gaps+=len(missing)
                 if not missing:
                     continue
                 a,b=cursor+i/fps,cursor+(i+1)/fps
@@ -593,7 +599,7 @@ def clip_spec(args):
         if plan.get("deviations"):
             failures.append("owner_confirmation")
         result={"failures":failures,"master":huge,"preview":mini,"speech":reports,
-                "mask_frames":count,"mask_missing_detections":gaps,
+                "mask_frames":count,"mask_missing_detections":gaps,"mask_verified_absences":covered_absences,
                 "mask_review_ranges":[[round(a,3),round(b,3),sides] for a,b,sides in mask_ranges],
                 "contact_sheets":[str(Path(p).with_suffix(".jpg")) for p in bundle["parts"] if Path(p).with_suffix(".jpg").exists()],
                 "platform":"pending_youtube_studio"}

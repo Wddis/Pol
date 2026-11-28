@@ -394,6 +394,21 @@ def render(folder, request):
                 reviewed=True, deviations=[], tags=["t2x2","нарезка"], hashtags="#t2x2 #нарезка",
                 date=state.get("date"), next_game=request.next_game,
                 original=request.original, original_verified=bool(request.original))
+    review_path = folder / "mask-review.json"
+    if review_path.is_file():
+        import hashlib
+        review = read(review_path)
+        with source.open("rb") as handle:
+            fingerprint = hashlib.file_digest(handle, "sha256").hexdigest()
+        if review.get("source_sha256") != fingerprint or review.get("keep") != plan["keep"]:
+            raise ValueError("Проверка масок относится к другому исходнику или диапазону.")
+        overrides = {}
+        for index, value in review.get("overrides", {}).items():
+            override = (folder / value).resolve()
+            if not override.is_relative_to(folder) or not override.is_file():
+                raise ValueError("Файл исправленных масок недоступен.")
+            overrides[index] = str(override)
+        plan.update(mask_overrides=overrides, verified_absences=review.get("verified_absences", {}))
     save(folder / "panel-plan.json", plan)
     command=[PYTHON,str(PIPE/"clip"),"run","Монтаж T2x2","--job",str(folder),"--input",str(source),
              "--offset",str(offset),"--plan",str(folder/"panel-plan.json"),"--banners-only"]
@@ -591,7 +606,7 @@ def state_for(folder):
                                  files=[k for k in ("master","preview") if k in files],
                                  stage_since=datetime.fromtimestamp(path.stat().st_mtime, timezone.utc).isoformat())
             elif key=="qa":
-                result[key]={k:data.get(k) for k in ("failures","mask_frames","mask_missing_detections","mask_review_ranges","speech","master")}
+                result[key]={k:data.get(k) for k in ("failures","mask_frames","mask_missing_detections","mask_verified_absences","mask_review_ranges","speech","master")}
                 if result[key]["mask_review_ranges"]:
                     result[key]["mask_review_ranges"] = result[key]["mask_review_ranges"][:50]
                 sheets = []
