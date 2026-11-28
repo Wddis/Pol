@@ -105,3 +105,40 @@ class QueueTests(unittest.TestCase):
             server.recover_jobs()
             self.assertEqual(server.read(path)["stage"], "Прямой эфир прерван")
             self.assertEqual(server.read(path)["operation"]["status"], "interrupted")
+
+    def test_same_vod_range_reuses_existing_job(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(server, "DATA", Path(temp)):
+            source = server.Analysis(vod="123", start=20, end=40)
+            first = server.start(source, "b" * 32)
+            self.assertEqual(server.start(source, "c" * 32), first)
+            self.assertEqual(len(list(Path(temp).glob("*/job.json"))), 1)
+
+    def test_technical_and_duplicate_jobs_are_hidden(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(server, "DATA", Path(temp)):
+            technical = next(iter(server.TECHNICAL_JOBS))
+            for key, extra in ((technical, {}), ("b" * 32, {"duplicate_of": "c" * 32}), ("c" * 32, {})):
+                path = Path(temp) / key
+                path.mkdir()
+                server.save(path / "job.json", {"id": key, "stage": "На проверке", **extra})
+            self.assertEqual([s["id"] for s in server.jobs()], ["c" * 32])
+
+    def test_metadata_edit_preserves_master_and_uses_output_clock(self):
+        with tempfile.TemporaryDirectory() as temp, patch.object(server, "DATA", Path(temp)):
+            key = "f" * 32
+            folder = Path(temp) / key
+            output = folder / "montage"
+            output.mkdir(parents=True)
+            master = output / "master.mp4"
+            master.write_bytes(b"fixture")
+            server.save(folder / "job.json", {"id": key, "stage": "Готово"})
+            server.save(output / "run.json", {"status": "ready", "deliverables": {"master": str(master)}})
+            server.save(output / "metadata.json", {"title": "Старое", "tags": ["t2x2"]})
+            server.save(output / "qa.json", {"master": {"duration": 35}})
+            invalid = server.MetadataEdit(title="Новое", description="Описание", chapters=[(0,"Начало"),(28,"Финал")])
+            with self.assertRaises(HTTPException):
+                server.edit_metadata(key, invalid)
+            valid = server.MetadataEdit(title="Новое", description="Описание", chapters=[(0,"Начало"),(15,"Эпизод")])
+            server.edit_metadata(key, valid)
+            metadata = server.state_for(folder)["metadata"]
+            self.assertEqual((metadata["title"],metadata["tags"]),("Новое",["t2x2"]))
+            self.assertEqual(master.read_bytes(),b"fixture")

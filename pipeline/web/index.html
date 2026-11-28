@@ -217,6 +217,8 @@ function taskCard(s){
  if(held){
   const qa=short?s.current_short:s.qa;
   root.append(qaArea({...qa,frames_checked:short?qa?.frames_checked:qa?.mask_frames,censor_windows:short?qa?.censor_windows:s.censor_windows,speech_hits:short?qa?.speech_hits:qa?.speech?.at(-1)?.hits_count??qa?.speech?.at(-1)?.hits?.length},qa?.failures||[]));
+  root.append(n('p','Автопроверка завершилась. Файл удержан до устранения замечаний.','muted'));
+  root.append(action('Повторить после исправления',()=>submit('/api/jobs/'+s.id+'/retry',{})));
  }
  if(['Ошибка','Ожидает перезапуска','Прямой эфир прерван'].includes(s.stage)){
   const live=s.stage==='Прямой эфир прерван';

@@ -597,7 +597,8 @@ def state_for(folder):
                 sheets = []
                 for raw in data.get("contact_sheets", [])[:2]:
                     sheet = Path(raw).resolve()
-                    if sheet.is_relative_to(folder.resolve()) and sheet.is_file() and sheet.stat().st_size <= 80_000:
+                    cache = (PIPE/"output"/"pipeline-cache").resolve()
+                    if (sheet.is_relative_to(folder.resolve()) or sheet.is_relative_to(cache)) and sheet.suffix == ".jpg" and sheet.is_file() and sheet.stat().st_size <= 80_000:
                         sheets.append(base64.b64encode(sheet.read_bytes()).decode())
                 if sheets:
                     result[key]["contact_images"] = sheets
