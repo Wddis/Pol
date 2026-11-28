@@ -61,6 +61,7 @@ class Analysis(BaseModel):
 
 class EditorQuestion(BaseModel):
     question: str = Field(min_length=2, max_length=500)
+    return_to: str = Field(default="Карта готова", pattern=r"^(Карта готова|Готово|На проверке)$")
 
 
 class Omission(BaseModel):
@@ -245,7 +246,7 @@ def recover_jobs():
             captured = all((path.parent / name).is_file() for name in ("source.mkv", "source.manifest.json"))
             already_done = {
                 "analysis": {"Карта готова"}, "render": {"Готово", "На проверке"},
-                "short": {"Готово", "На проверке"}, "editor": {"Карта готова"},
+                "short": {"Готово", "На проверке"}, "editor": {"Карта готова","Готово","На проверке"},
             }
             if state["stage"] in already_done[operation["action"]]:
                 operation["status"] = "completed"
@@ -420,13 +421,15 @@ def run_editor(folder, request):
     context_questions = "\n".join(x["question"] for x in exchanges[-2:])
     prompt = (context_questions+"\nТекущий вопрос: "+request.question) if context_questions else request.question
     try:
-        reply = editorial.answer(prompt, rows, offset, candidates, state["start"], state["end"])
-        available = True
+        external = request.question.lower().lstrip().startswith("searchcode")
+        reply = (editorial.code_lookup(request.question) if external else
+                 editorial.answer(prompt, rows, offset, candidates, state["start"], state["end"]))
+        available = not external
     except RuntimeError as e:
         reply = str(e)+" Расшифровка и предложенные эпизоды сохранены."
         available = False
     exchanges.append({"question":request.question,"answer":reply,"model":available})
-    stage(folder,"Карта готова",editor_chat=exchanges[-8:])
+    stage(folder,request.return_to,editor_chat=exchanges[-8:])
 
 
 @app.post("/api/jobs/{job}/editor")
@@ -436,9 +439,10 @@ def ask_editor(job: str, question: EditorQuestion, x_t2x2_command: str | None = 
         state = read(folder/"job.json")
         if not (folder/"words.jsonl").is_file() or "start" not in state:
             raise HTTPException(409,"Сначала дождись расшифровки стрима.")
-        if state["stage"] not in {"Карта готова", "Ошибка"}:
-            raise HTTPException(409,"Редактор доступен на этапе выбора эпизода.")
-        return enqueue(folder,state,"editor",question.model_dump(),command_id(x_t2x2_command))
+        if state["stage"] not in {"Карта готова", "Готово", "На проверке"}:
+            raise HTTPException(409,"Дождись завершения текущего этапа.")
+        return enqueue(folder,state,"editor",question.model_copy(update={"return_to":state["stage"]}).model_dump(),
+                       command_id(x_t2x2_command))
 
 
 def reference_frames(folder, source, offset, intervals, master=None):

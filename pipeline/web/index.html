@@ -275,6 +275,7 @@ function taskCard(s){
  if(count?.total){const p=n('progress');p.max=count.total;p.value=count.done;p.setAttribute('aria-label','Части этапа');root.append(p,n('p',count.done+' из '+count.total+' частей','muted'));}
  if(s.error)root.append(n('p',s.error,'error'));
  if(held){
+  if(s.start!=null)root.append(editorPanel(s));
   const qa=short?s.current_short:s.qa;
   root.append(qaArea({...qa,frames_checked:short?qa?.frames_checked:qa?.mask_frames,censor_windows:short?qa?.censor_windows:s.censor_windows,speech_hits:short?qa?.speech_hits:qa?.speech?.at(-1)?.hits_count??qa?.speech?.at(-1)?.hits?.length},qa?.failures||[],short?null:selection));
   root.append(n('p','Автопроверка завершилась. Файл удержан до устранения замечаний.','muted'));
@@ -317,10 +318,12 @@ function editorPanel(s){
  const chips=n('div','','chips');
  for(const prompt of ['Были реакции?','Какие были игровые моменты?','Что подойдёт для Shorts?'])
   chips.append(action(prompt,()=>{input.value=prompt;input.focus();}));
+ const advanced=n('details');
+ advanced.append(n('summary','Поиск по коду'),n('p','Пример: SearchCode opencv TrackerVit','muted'));
  box.append(chips,label,action('Спросить',async()=>{
   const question=input.value.trim();if(question.length<2)throw Error('Напиши вопрос.');
   await submit('/api/jobs/'+s.id+(edge?'/render':'/editor'),edge?{editor_question:{question}}:{question});
- },'primary'));
+ },'primary'),advanced);
  return box;
 }
 function proposal(s,p){
@@ -354,6 +357,7 @@ function libraryCard(item){
  if(item.type==='short')root.append(n('p','В основном видео · '+span(item.start,item.end),'muted'));
  root.append(qaArea(item));
  if(item.type==='master'&&s.references?.length)root.append(referenceGallery(s));
+ if(s.start!=null&&s.operation?.status!=='queued'&&s.operation?.status!=='running')root.append(editorPanel(s));
  const fragment=n('details');
  fragment.append(n('summary','Описание и тайм-коды'),n('p',item.description||'Описание недоступно','description'));
  const chapters=(item.chapters||[]).map(([at,label])=>clock(at)+' - '+label).join('\n');
