@@ -159,14 +159,15 @@ function sourceCard(row,live,example=false){
  root.append(n('p',[row.category||'Twitch',row.duration!=null&&!example?clock(row.duration):null].filter(Boolean).join(' · '),'muted'));
  const detail=n('details'), summary=n('summary',live?'Длительность захвата':'Указать время вручную');
  const [a,start]=field('Начало',example?'1:40:30':'0:00');
- const [b,end]=field(live?'Длительность захвата':'Конец',example?'1:49:00':live?'3:00':'');
+ const [b,end]=field(live?'Длительность захвата':'Конец',example?'1:49:00':'');
  const box=n('div','','grid');
  if(!live)box.append(a);
+ else end.placeholder='По умолчанию: 12 мин для реакции';
  box.append(b);detail.append(summary,box);
  root.append(detail,action(example?'Разобрать эту реакцию':live?'Начать захват':'Анализировать этот стрим',()=>{
   const brief=$('editor-brief').value.trim();
   if(brief.length===1)throw Error('Добавь немного контекста к запросу.');
-  return submit('/api/jobs',{vod:row.id,start:live?0:seconds(start.value,0),end:seconds(end.value),mode:example?'reaction':mode,brief});
+  return submit('/api/jobs',{vod:row.id,start:live?0:seconds(start.value,0),end:seconds(end.value,live?(mode==='reaction'?720:180):null),mode:example?'reaction':mode,brief});
  },'primary full source-btn'));
  return root;
 }
