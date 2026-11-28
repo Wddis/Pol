@@ -35,7 +35,7 @@ def perform(command):
     if method=="GET" and re.fullmatch(r"/api/catalog\?page=[1-9][0-9]{0,2}",path):
         data=None
     elif method=="POST" and (path=="/api/jobs" or
-                              re.fullmatch(r"/api/jobs/[a-f0-9]{32}/(render|retry|short|metadata)",path)):
+                              re.fullmatch(r"/api/jobs/[a-f0-9]{32}/(render|retry|short|metadata|editor)",path)):
         data=json.dumps(command["body"],ensure_ascii=False).encode()
         metadata = path.endswith("/metadata") or (
             path.endswith("/render") and isinstance(command["body"], dict) and "metadata_edit" in command["body"]
@@ -45,6 +45,10 @@ def perform(command):
     else:
         return {"status":400,"body":{"detail":"Неизвестная команда."}}
     if method == "POST" and path.endswith("/render") and isinstance(command["body"], dict):
+        question = command["body"].get("editor_question")
+        if question is not None:
+            path = path.removesuffix("/render") + "/editor"
+            data = json.dumps(question, ensure_ascii=False).encode()
         edit = command["body"].get("metadata_edit")
         if edit is not None:
             path = path.removesuffix("/render") + "/metadata"

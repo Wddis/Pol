@@ -14,6 +14,7 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, Field, model_validator
 from access import AccessGate
+import editor as editorial
 
 ROOT = Path(__file__).resolve().parent
 PIPE = ROOT.parent
@@ -44,6 +45,8 @@ gate = AccessGate()
 
 class Analysis(BaseModel):
     vod: str = Field(pattern=r"^(live|[0-9]{1,20})$")
+    mode: str = Field(default="clip", pattern=r"^(reaction|shorts|clip)$")
+    brief: str = Field(default="", max_length=500)
     start: float = Field(default=0, ge=0, le=1000000)
     end: float | None = Field(default=None, gt=0, le=1000000)
 
@@ -54,6 +57,10 @@ class Analysis(BaseModel):
         if self.vod == "live" and self.start:
             raise ValueError("Живой захват начинается с текущего момента.")
         return self
+
+
+class EditorQuestion(BaseModel):
+    question: str = Field(min_length=2, max_length=500)
 
 
 class Omission(BaseModel):
@@ -179,7 +186,7 @@ def enqueue(folder, state, action, recipe, key):
 
 
 def run_queue():
-    actions = {"analysis": (Analysis, analyze), "render": (Render, render), "short": (Short, render_short)}
+    actions = {"analysis": (Analysis, analyze), "render": (Render, render), "short": (Short, render_short), "editor": (EditorQuestion, run_editor)}
     while True:
         with queue:
             waiting = []
@@ -238,7 +245,7 @@ def recover_jobs():
             captured = all((path.parent / name).is_file() for name in ("source.mkv", "source.manifest.json"))
             already_done = {
                 "analysis": {"Карта готова"}, "render": {"Готово", "На проверке"},
-                "short": {"Готово", "На проверке"},
+                "short": {"Готово", "На проверке"}, "editor": {"Карта готова"},
             }
             if state["stage"] in already_done[operation["action"]]:
                 operation["status"] = "completed"
@@ -385,9 +392,53 @@ def analyze(folder, request):
                             raise YieldAnalysis()
         temporary.replace(transcript)
     rows = [json.loads(line) for line in transcript.read_text().splitlines()]
-    selections = proposals(rows, manifest["offset"],read(folder/"job.json").get("category"))
-    stage(folder, "Карта готова", proposals=selections,
-          start=manifest["offset"], end=manifest["offset"]+manifest["duration"])
+    offset, limit = manifest["offset"], manifest["offset"]+manifest["duration"]
+    state = read(folder/"job.json")
+    general = proposals(rows, offset, state.get("category"))
+    reactions = editorial.full_reactions(rows, offset, request.vod, offset, limit)
+    if request.mode == "reaction":
+        selections = reactions
+    elif request.mode == "shorts":
+        selections = [dict(start=round(offset+r["start"],3),end=round(offset+r["end"],3),
+                           kind="chat",excerpt=r["text"][:240])
+                      for r in rows if 8 <= r["end"]-r["start"] < 59.9]
+    else:
+        selections = general
+    stage(folder, "Карта готова", proposals=selections, reactions=reactions[:12], start=offset, end=limit)
+    if request.brief:
+        run_editor(folder, EditorQuestion(question=request.brief))
+
+
+def run_editor(folder, request):
+    state = read(folder/"job.json")
+    stage(folder,"Редактор изучает расшифровку")
+    path = folder/"words.jsonl"
+    offset = read(folder/"source.manifest.json")["offset"]
+    rows = [json.loads(line) for line in path.read_text().splitlines()]
+    candidates = [*state.get("reactions",[]),*state.get("proposals",[])]
+    exchanges = state.get("editor_chat",[])
+    context_questions = "\n".join(x["question"] for x in exchanges[-2:])
+    prompt = (context_questions+"\nТекущий вопрос: "+request.question) if context_questions else request.question
+    try:
+        reply = editorial.answer(prompt, rows, offset, candidates, state["start"], state["end"])
+        available = True
+    except RuntimeError as e:
+        reply = str(e)+" Расшифровка и предложенные эпизоды сохранены."
+        available = False
+    exchanges.append({"question":request.question,"answer":reply,"model":available})
+    stage(folder,"Карта готова",editor_chat=exchanges[-8:])
+
+
+@app.post("/api/jobs/{job}/editor")
+def ask_editor(job: str, question: EditorQuestion, x_t2x2_command: str | None = Header(None)):
+    folder = job_path(job)
+    with queue:
+        state = read(folder/"job.json")
+        if not (folder/"words.jsonl").is_file() or "start" not in state:
+            raise HTTPException(409,"Сначала дождись расшифровки стрима.")
+        if state["stage"] not in {"Карта готова", "Ошибка"}:
+            raise HTTPException(409,"Редактор доступен на этапе выбора эпизода.")
+        return enqueue(folder,state,"editor",question.model_dump(),command_id(x_t2x2_command))
 
 
 def reference_frames(folder, source, offset, intervals, master=None):
@@ -446,6 +497,12 @@ def render(folder, request):
                 reviewed=True, deviations=[], tags=["t2x2","нарезка"], hashtags="#t2x2 #нарезка",
                 date=state.get("date"), next_game=request.next_game,
                 original=request.original, original_verified=bool(request.original))
+    archive = editorial.verified_reaction()
+    if (archive["vod"],archive["start"],archive["end"]) == (state["vod"],request.start,request.end):
+        historical = read(editorial.REGISTRY)["historical"]["plan"]
+        plan["chapters"] = historical.get("chapters", [])
+        plan["opening"] = historical.get("opening", plan["opening"])
+        plan["next_game"] = request.next_game or historical.get("next_game")
     review_path = folder / "mask-review.json"
     if review_path.is_file():
         import hashlib
@@ -493,7 +550,12 @@ def render(folder, request):
     master = run.get("deliverables", {}).get("master")
     if master and Path(master).is_file():
         reference_frames(folder, source, offset, keep, master)
-    stage(parent, "Готово" if run.get("status")=="ready" else "На проверке")
+    if state.get("mode") == "shorts" and read(folder/"qa.json").get("failures") == []:
+        length = sum(b-a for a,b in keep)
+        short = Short(start=10,end=10+length)
+        render_short(parent,short,parent.name)
+    else:
+        stage(parent, "Готово" if run.get("status")=="ready" else "На проверке")
 
 
 @app.middleware("http")
@@ -563,12 +625,13 @@ def start(request: Analysis, x_t2x2_command: str | None = Header(None)):
                 old = read(candidate)
                 if (old.get("vod"), old.get("requested_start"), old.get("requested_end")) == (
                     request.vod, request.start, request.end
-                ):
+                ) and old.get("mode", "clip") == request.mode and old.get("brief","") == request.brief:
                     return {"id": old["id"]}
         folder.mkdir(parents=True, exist_ok=True)
         path = folder / "job.json"
         state = read(path) if path.exists() else dict(
-            id=key, vod=request.vod, requested_start=request.start, requested_end=request.end
+            id=key, vod=request.vod, requested_start=request.start, requested_end=request.end,
+            mode=request.mode, brief=request.brief
         )
         return enqueue(folder, state, "analysis", request.model_dump(), key)
 
@@ -605,8 +668,12 @@ def start_render(job: str, request: Render, x_t2x2_command: str | None = Header(
     folder = job_path(job)
     with queue:
         state = read(folder / "job.json")
-        if not request.confirmed or not state.get("proposals") or not state["start"] <= request.start < request.end <= state["end"]:
+        if not request.confirmed or "start" not in state or not state["start"] <= request.start < request.end <= state["end"]:
             raise HTTPException(400, "Подтверди границы и сохранность донатов.")
+        if state.get("mode") == "shorts" and not 5 <= sum(b-a for a,b in request.intervals()) <= 59.9:
+            raise HTTPException(400,"Shorts должен длиться от 5 до 59,9 секунды.")
+        if state.get("mode") == "reaction" and (request.kind != "reaction" or request.omit):
+            raise HTTPException(400,"Для цельной реакции оставь весь выбранный эпизод.")
         if request.omit:
             manifest = read(folder/"source.manifest.json")
             base = manifest["offset"]
@@ -689,7 +756,9 @@ def state_for(folder):
     if refs.exists():
         result["references"] = read(refs)
     if (result.get("pipeline", {}).get("stage") == "DELIVERY"
-            and result.get("qa", {}).get("failures") == [] and result.get("pipeline", {}).get("files")):
+            and result.get("qa", {}).get("failures") == [] and result.get("pipeline", {}).get("files")
+            and not (result.get("mode")=="shorts" and not any(item.get("status")=="ready"
+                for item in result.get("short_results",[])))):
         result["pipeline"]["status"] = "ready"
         if result["stage"] == "На проверке":
             result["stage"] = "Готово"
@@ -710,6 +779,8 @@ def state_for(folder):
     edl = folder / "montage" / "edl.json"
     if edl.exists():
         result["censor_windows"] = len(read(edl).get("censorship", []))
+    if result.get("mode")=="shorts" and result["short_results"]:
+        result["current_short"] = result["short_results"][-1]
     if gate.tunnel:
         result["separate_delivery"]=True
     return result

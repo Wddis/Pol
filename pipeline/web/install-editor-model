@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+set -euo pipefail
+dest="${T2X2_EDITOR_DIR:-/workspace/t2x2/models/editor}"
+mkdir -p "$dest"
+staging="$(mktemp -d "$dest/install.XXXXXX")"
+trap 'rm -rf -- "$staging"' EXIT
+cd "$staging"
+curl -fsSL --max-time 90 https://github.com/ggml-org/llama.cpp/releases/download/b12828/llama-b12828-bin-ubuntu-x64.tar.gz -o runtime.tar.gz
+curl -fsSL --max-time 420 https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/91cad51170dc346986eccefdc2dd33a9da36ead9/qwen2.5-1.5b-instruct-q4_k_m.gguf -o editor.gguf
+sha256sum --check <<'SUMS'
+5048d0e26329b1d7096c739ac00b9a3fda3fcd9a1a210243c0cffe79a5b51de1  runtime.tar.gz
+6a1a2eb6d15622bf3c96857206351ba97e1af16c30d7a74ee38970e434e9407e  editor.gguf
+SUMS
+tar -xzf runtime.tar.gz
+if [[ ! -e "$dest/llama-b12828" ]]; then mv llama-b12828 "$dest/"; fi
+mv editor.gguf "$dest/"

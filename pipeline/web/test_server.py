@@ -166,3 +166,17 @@ class QueueTests(unittest.TestCase):
             with self.assertRaises(HTTPException) as error:
                 server.start_render(key,request,"b"*32)
             self.assertEqual(error.exception.status_code,400)
+
+    def test_reaction_mode_preserves_verified_full_range(self):
+        from editor import full_reactions
+        picked = full_reactions([],6030,"2929609163",6030,6540)
+        self.assertEqual((picked[0]["start"],picked[0]["end"]), (6042,6526.5))
+        self.assertEqual(picked[0]["original"],"https://youtu.be/p169Re3Vy9I")
+        self.assertEqual(full_reactions([],6030,"2929609163",6030,6300),[])
+
+    def test_reaction_needs_an_opening_and_ending(self):
+        from editor import full_reactions
+        rows = [{"start":3,"end":7,"text":"Давайте посмотрим видео"}]
+        self.assertEqual(full_reactions(rows,0,"111",0,250),[])
+        rows.append({"start":180,"end":184,"text":"На этом всё, дальше у нас другое"})
+        self.assertEqual([(x["start"],x["end"]) for x in full_reactions(rows,0,"111",0,250)],[(3,184)])

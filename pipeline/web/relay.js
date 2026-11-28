@@ -8,7 +8,7 @@ const matches = async (a,b) => {
   return x.reduce((diff,v,i)=>diff|(v^y[i]),0)===0;
 };
 const allowed=(method,path)=>method==="GET" ? path==="/ping"||/^\/api\/catalog\?page=[1-9][0-9]{0,2}$/.test(path) :
-  method==="POST" && (/^\/api\/jobs$/.test(path)||/^\/api\/jobs\/[a-f0-9]{32}\/(render|retry|short|metadata)$/.test(path));
+  method==="POST" && (/^\/api\/jobs$/.test(path)||/^\/api\/jobs\/[a-f0-9]{32}\/(render|retry|short|metadata|editor)$/.test(path));
 
 export default {
   async fetch(request,env) {

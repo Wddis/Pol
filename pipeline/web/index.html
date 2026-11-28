@@ -7,13 +7,21 @@
 <style>
 :root{color-scheme:dark;font:16px system-ui,sans-serif;background:#101118;color:#f5f3ff;--muted:#b0afc2;--line:#323346;--panel:#1a1b27;--accent:#d3c3ff;--green:#9ae6be;--warn:#ffce91}
 *{box-sizing:border-box}body{margin:0}main{max-width:850px;margin:auto;padding:20px 16px 84px}h1,h2,h3,p{margin:0 0 10px}h1{font-size:clamp(1.8rem,6vw,2.75rem);letter-spacing:-.045em;line-height:1.06}h2{font-size:1.4rem}h3{font-size:1.1rem;overflow-wrap:anywhere}header{display:flex;flex-wrap:wrap;justify-content:space-between;gap:12px;align-items:center;margin-bottom:22px}.muted,small{color:var(--muted)}.pill{display:inline-block;padding:6px 10px;border:1px solid var(--line);border-radius:30px;font-size:.84rem}.good{color:var(--green)}.warn,.error{color:var(--warn)}nav{position:sticky;top:0;z-index:2;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:4px;background:#101118;padding:7px 0 13px}.actions,.chips{display:flex;gap:8px;flex-wrap:wrap}.chips{margin:12px 0}button,input,select{border:1px solid var(--line);border-radius:12px;background:#202131;color:inherit;font:inherit;padding:10px 11px;min-height:44px}button{cursor:pointer}button[aria-pressed=true],.primary{background:var(--accent);color:#211536;border-color:transparent;font-weight:700}button:disabled{opacity:.55;cursor:default}:focus-visible{outline:2px solid var(--accent);outline-offset:2px}.card{background:var(--panel);border:1px solid var(--line);border-radius:18px;margin:12px 0;padding:clamp(14px,4vw,22px)}.source-date{display:block;color:var(--accent);font-weight:650;margin-bottom:7px}details{margin-top:12px}summary{cursor:pointer;padding:8px 0;color:var(--accent)}.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}label{display:grid;gap:5px;margin:8px 0;color:var(--muted)}input,select{width:100%;min-width:0}.check{display:flex;align-items:center;gap:8px}.check input{width:20px;min-height:20px}.separator{border-top:1px solid var(--line);margin-top:15px;padding-top:12px}.steps{list-style:none;padding:0;margin:10px 0;display:grid;gap:7px}.steps li{color:var(--muted);display:flex;gap:9px;align-items:center}.steps i{display:block;width:8px;height:8px;border-radius:50%;background:#575970}.steps .done i{background:var(--green)}.steps .current{font-weight:700;color:var(--accent)}.steps .current i{background:var(--accent);box-shadow:0 0 0 4px #403959}progress{width:100%;accent-color:var(--accent)}.description{white-space:pre-wrap;overflow-wrap:anywhere}.no-data{padding:16px 0;color:var(--muted)}#notice:empty{display:none}#notice{padding:10px;border:1px solid var(--line);border-radius:10px;margin-bottom:12px}a{color:var(--accent)}[hidden]{display:none!important}
+.hero{background:linear-gradient(125deg,#243744,#212237 80%);padding:22px 18px;border-radius:20px;margin-bottom:20px}.workflow{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px;margin:10px 0 16px}.workflow button{text-align:left;padding:11px 8px;min-width:0;font-size:.88rem}.workflow strong,.workflow small{display:block}.workflow small{font-size:.73rem;margin-top:4px;color:inherit;opacity:.84}.prompt{display:block;color:#f5f3ff;margin:12px 0}.prompt textarea{margin-top:7px;width:100%;min-height:65px;background:#151a25;color:#fff;border:1px solid #66708a;border-radius:9px;padding:10px;resize:vertical;font:inherit}.full{width:100%}.editor-line{white-space:pre-wrap;margin:7px 0 14px}.mode-title{padding-top:6px}.source-btn{margin-top:10px}.chosen{outline:1px solid var(--accent)}@media(max-width:350px){.workflow{grid-template-columns:1fr}}
 </style>
 </head>
 <body><main>
 <header><h1>Двойная резка</h1><span id="connection" class="pill" role="status">Подключение…</span></header>
-<nav aria-label="Разделы"><button data-tab="streams">Стримы</button><button data-tab="work">В работе</button><button data-tab="ready">Готовые</button></nav>
+<nav aria-label="Разделы"><button data-tab="streams">Новая нарезка</button><button data-tab="work">В работе</button><button data-tab="ready">Готовые</button></nav>
 <p id="notice" role="status"></p>
-<section id="streams"><h2>Стримы T2x2</h2><p id="live-status" class="muted"></p><div id="sources"></div><div class="actions"><button id="refresh-catalog">Обновить список</button><button id="more" hidden>Ещё стримы</button></div></section>
+<section id="streams"><div class="hero"><h2>Что нарезаем?</h2>
+<div class="workflow" aria-label="Формат нарезки">
+<button data-mode="reaction"><strong>Реакция</strong><small>Весь просмотр и финал</small></button>
+<button data-mode="shorts"><strong>Shorts</strong><small>Вертикально, до минуты</small></button>
+<button data-mode="clip"><strong>Короткое видео</strong><small>Один момент стрима</small></button></div>
+<label class="prompt">Напиши редактору, что искать<textarea id="editor-brief" maxlength="500" placeholder="Например: были ли реакции или смешные моменты в игре?"></textarea></label>
+<small>Выбери стрим ниже. После анализа проверь найденные эпизоды и запусти монтаж.</small>
+</div><h2>Выбери стрим T2x2</h2><div id="archive-example"></div><p id="live-status" class="muted"></p><div id="sources"></div><div class="actions"><button id="refresh-catalog">Обновить список</button><button id="more" hidden>Ещё стримы</button></div></section>
 <section id="work" hidden><h2>В работе</h2><p class="muted">Можно закрыть вкладку. Обработка идёт на сервере.</p><div id="tasks"></div></section>
 <section id="ready" hidden><h2>Готовые нарезки</h2><div class="chips" aria-label="Формат"><button data-format="all">Все</button><button data-format="master">Основные видео</button><button data-format="short">Shorts</button></div><div id="library"></div></section>
 </main>
@@ -33,6 +41,7 @@ const localState = {
 const delay = ms => new Promise(resolve => setTimeout(resolve,ms));
 let tab='streams', format='all', nextPage, selectedJob=localState.get('selected-job'), snapshot=[], online=!edge, updating=false, lastPaint='';
 let catalogLoaded=false;
+let mode=localState.get("mode")||"reaction";
 const catalogTitles=new Map();
 const n = (tag,text='',cls='') => Object.assign(document.createElement(tag),{textContent:text,className:cls});
 function notice(text='',error=false){$('notice').textContent=text;$('notice').className=error?'error':'muted';}
@@ -137,24 +146,36 @@ async function loadCatalog(page=1){
  if(page===1&&!data.entries.length)$('sources').append(n('p','Twitch не вернул записи.','no-data'));
  nextPage=data.next;$('more').hidden=!nextPage;catalogLoaded=true;notice();
 }
-function sourceCard(row,live){
- const root=card(row.title||'Стрим T2x2',live?'● В эфире':date(row.date));
- root.append(n('p',[row.category||'Категория неизвестна',row.duration!=null?clock(row.duration):null].filter(Boolean).join(' · '),'muted'));
- const detail=n('details'), summary=n('summary',live?'Настроить захват':'Выбрать диапазон для анализа');
- const [a,start]=field('Начало', '0:00'),[b,end]=field(live?'Длительность захвата':'Конец (необязательно)',live?'3:00':'');
+function selectMode(value){
+ mode=value;localState.set("mode",value);
+ for(const button of document.querySelectorAll('[data-mode]'))
+  button.setAttribute('aria-pressed',button.dataset.mode===value);
+}
+for(const button of document.querySelectorAll('[data-mode]'))button.onclick=()=>selectMode(button.dataset.mode);
+selectMode(mode);
+const archive={id:'2929609163',date:'20261115',title:'Самое глупое место, чтобы стоять',duration:13219,category:'Daily Dose of Internet'};
+function sourceCard(row,live,example=false){
+ const root=card(row.title||'Стрим T2x2',example?'Проверенный пример · 15 ноября':live?'● В эфире':date(row.date));
+ root.append(n('p',[row.category||'Twitch',row.duration!=null&&!example?clock(row.duration):null].filter(Boolean).join(' · '),'muted'));
+ const detail=n('details'), summary=n('summary',live?'Длительность захвата':'Указать время вручную');
+ const [a,start]=field('Начало',example?'1:40:30':'0:00');
+ const [b,end]=field(live?'Длительность захвата':'Конец',example?'1:49:00':live?'3:00':'');
  const box=n('div','','grid');
  if(!live)box.append(a);
- box.append(b);
- detail.append(summary,box,action(live?'Начать захват':'Анализировать фрагмент',()=>submit('/api/jobs',{
-  vod:row.id,start:live?0:seconds(start.value,0),end:seconds(end.value)
- }),'primary'));
- root.append(detail);return root;
+ box.append(b);detail.append(summary,box);
+ root.append(detail,action(example?'Разобрать эту реакцию':live?'Начать захват':'Анализировать этот стрим',()=>{
+  const brief=$('editor-brief').value.trim();
+  if(brief.length===1)throw Error('Добавь немного контекста к запросу.');
+  return submit('/api/jobs',{vod:row.id,start:live?0:seconds(start.value,0),end:seconds(end.value),mode:example?'reaction':mode,brief});
+ },'primary full source-btn'));
+ return root;
 }
+$('archive-example').append(sourceCard(archive,false,true));
 function phase(s){
  if(s.operation?.status==='queued'||s.stage==='Возобновление')return -1;
  if(s.stage==='Проверка Shorts')return 5;
  if(s.stage==='Рендер Shorts')return 4;
- if(s.stage==='Карта готова')return 2;
+ if(s.stage==='Карта готова'||s.stage==='Редактор изучает расшифровку')return 2;
  if(s.stage==='Расшифровка')return 1;
  if(s.stage==='Готовлю видео')return 0;
  if(s.stage==='На проверке'||s.stage==='Готово')return 5;
@@ -164,7 +185,7 @@ function phase(s){
 function results(s){
  const outputs=[];
  const meta=s.metadata||{},video=s.qa?.master?.video,shorts=s.short_results||[];
- if(s.pipeline?.status==='ready'){
+ if(s.pipeline?.status==='ready'&&s.mode!=='shorts'){
   outputs.push({...meta,type:'master',title:meta.title||s.title||'Основное видео',duration:s.qa?.master?.duration,
    quality:video?.height ? video.width+' × '+video.height+' · '+(video.avg_frame_rate==='60/1'?'60 fps':video.avg_frame_rate?.replace('/1','')+' fps') : '',
    frames_checked:s.qa?.mask_frames,speech_hits:s.qa?.speech?.at(-1)?.hits_count??s.qa?.speech?.at(-1)?.hits?.length,
@@ -229,7 +250,7 @@ function qaArea(data,failures=[],selection=null){
  return root;
 }
 function taskCard(s){
- const short=s.operation?.action==='short';
+ const short=s.operation?.action==='short'||s.mode==='shorts'&&Boolean(s.current_short);
  const selection=short?s.short_selection:s.render_selection;
  const root=card(selection?.title||s.metadata?.title||s.title||catalogTitles.get(s.vod)||(s.vod==='live'?'Прямой эфир T2x2':'Стрим T2x2 · VOD '+s.vod),short?'Shorts':selection?'Основное видео':'Анализ стрима');
  root.dataset.job=s.id;
@@ -275,10 +296,32 @@ function taskCard(s){
   root.append(action(live?'Подтвердить новый захват':'Повторить этап',()=>submit('/api/jobs/'+s.id+'/retry',{})));
  }
  if(s.stage==='Карта готова'){
-  if(!s.proposals?.length)root.append(n('p','В диапазоне не найдено достаточно речи для предложения. Попробуй другой отрезок.','muted'));
-  for(const p of s.proposals||[])root.append(proposal(s,p));
+  root.append(editorPanel(s));
+  const candidates=s.proposals||[];
+  root.append(n('h3',s.mode==='reaction'?'Цельные реакции':s.mode==='shorts'?'Моменты для Shorts':'Эпизоды для монтажа','mode-title'));
+  if(!candidates.length)root.append(n('p',s.mode==='reaction'?'Начало и конец реакции пока не подтверждены. Можно указать проверенный диапазон вручную.':'Подходящие фрагменты не найдены. Можно указать свои границы.','muted'));
+  for(const p of candidates)root.append(proposal(s,p));
+  if(Number.isFinite(s.start)&&Number.isFinite(s.end))
+   root.append(proposal(s,{start:s.start,end:s.mode==='shorts'?Math.min(s.end,s.start+40):s.end,
+    kind:s.mode==='reaction'?'reaction':'chat',excerpt:'Укажи проверенные начало и конец.',manual:true}));
  }
  return root;
+}
+function editorPanel(s){
+ const box=n('section','','separator'),label=n('label','Спроси редактора','prompt'),input=n('textarea');
+ input.maxLength=500;input.placeholder='Что происходило на стриме?';label.append(input);
+ box.append(n('h3','Редактор стрима'));
+ for(const row of s.editor_chat||[]){
+  box.append(n('p',row.question,'muted'),n('p',row.answer,'editor-line'));
+ }
+ const chips=n('div','','chips');
+ for(const prompt of ['Были реакции?','Какие были игровые моменты?','Что подойдёт для Shorts?'])
+  chips.append(action(prompt,()=>{input.value=prompt;input.focus();}));
+ box.append(chips,label,action('Спросить',async()=>{
+  const question=input.value.trim();if(question.length<2)throw Error('Напиши вопрос.');
+  await submit('/api/jobs/'+s.id+(edge?'/render':'/editor'),edge?{editor_question:{question}}:{question});
+ },'primary'));
+ return box;
 }
 function proposal(s,p){
  const detail=n('details','','separator');
@@ -286,15 +329,16 @@ function proposal(s,p){
  const [t,title]=field('Название нарезки',p.suggested_title||'');
  const kind=n('select');for(const [key,name] of Object.entries(kinds)){const option=n('option',name);option.value=key;kind.append(option);}kind.value=p.kind;
  const kindLabel=n('label','Тип эпизода');kindLabel.append(kind);
- const [o,original]=field('Ссылка на оригинал (для реакции)','','url');
+ const [o,original]=field('Ссылка на оригинал (для реакции)',p.original||'','url');
  o.hidden=kind.value!=='reaction';kind.onchange=()=>{o.hidden=kind.value!=='reaction';};
  const [g,next]=field('Следующая категория (если известна)');
  const cuts=n('textarea');cuts.rows=2;cuts.style.width='100%';cuts.placeholder='Например: 3:59:43.2 – 3:59:46';
  const edit=n('details');edit.append(n('summary','Убрать паузы без речи и донатов'),cuts);
  const [c,confirmed]=field('Подтверждаю границы и сохранение донатов','','checkbox');c.className='check';
  const bounds=n('div','','grid');bounds.append(a,b);
- detail.append(n('summary',kinds[p.kind]+' · '+span(p.start,p.end)+' · '+clock(p.end-p.start)),n('p',p.excerpt,'muted'),bounds,kindLabel,t,o,g,edit,c,
-  action('Запустить рендер',async()=>{
+ if(s.mode==='reaction'){edit.hidden=true;kindLabel.hidden=true;}
+ detail.append(n('summary',p.manual?'Указать эпизод вручную':(p.verified_archive?'Проверенная реакция':kinds[p.kind])+' · '+span(p.start,p.end)+' · '+clock(p.end-p.start)),n('p',p.excerpt,'muted'),bounds,kindLabel,t,o,g,edit,c,
+  action(s.mode==='reaction'?'Смонтировать реакцию':s.mode==='shorts'?'Сделать Shorts':'Смонтировать видео',async()=>{
    if(!title.value.trim()||!confirmed.checked)throw Error('Укажи название и подтверди границы.');
    const omit=parseIntervals(cuts.value);
    await submit('/api/jobs/'+s.id+'/render',{
