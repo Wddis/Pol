@@ -688,6 +688,11 @@ def state_for(folder):
     refs = folder/"montage"/"references.json"
     if refs.exists():
         result["references"] = read(refs)
+    if (result.get("pipeline", {}).get("stage") == "DELIVERY"
+            and result.get("qa", {}).get("failures") == [] and result.get("pipeline", {}).get("files")):
+        result["pipeline"]["status"] = "ready"
+        if result["stage"] == "На проверке":
+            result["stage"] = "Готово"
     edit = folder/"metadata-edit.json"
     if edit.exists() and "metadata" in result:
         result["metadata"].update(read(edit))
@@ -734,7 +739,9 @@ def file(job: str, kind: str, download: bool = False):
     if kind not in ("master","preview") or not (folder/"run.json").exists():
         raise HTTPException(404)
     run=read(folder/"run.json")
-    if run.get("status")!="ready" or kind not in run.get("deliverables",{}):
+    qa = folder/"qa.json"
+    media_ready = run.get("stage") == "DELIVERY" and qa.is_file() and read(qa).get("failures") == []
+    if not (run.get("status") == "ready" or media_ready) or kind not in run.get("deliverables",{}):
         raise HTTPException(409,"Файл ещё не прошёл проверку.")
     target=Path(run["deliverables"][kind]).resolve()
     if not target.is_relative_to(folder) or not target.is_file():
