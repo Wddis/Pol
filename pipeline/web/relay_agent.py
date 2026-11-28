@@ -37,7 +37,10 @@ def perform(command):
     elif method=="POST" and (path=="/api/jobs" or
                               re.fullmatch(r"/api/jobs/[a-f0-9]{32}/(render|retry|short|metadata)",path)):
         data=json.dumps(command["body"],ensure_ascii=False).encode()
-        if len(data)>8192:
+        metadata = path.endswith("/metadata") or (
+            path.endswith("/render") and isinstance(command["body"], dict) and "metadata_edit" in command["body"]
+        )
+        if len(data) > (65536 if metadata else 8192):
             return {"status":413,"body":{"detail":"Слишком большое задание."}}
     else:
         return {"status":400,"body":{"detail":"Неизвестная команда."}}
